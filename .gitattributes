@@ -1,0 +1,26 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+*.c text eol=lf
+*.def text eol=lf
+*.h text eol=lf
+*.hlsl text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.nsh text eol=lf
+*.nsi text eol=lf
+*.ps1 text eol=lf
+*.py text eol=lf
+*.txt text eol=lf
+
+*.bin binary
+*.bmp binary
+*.cso binary
+*.dll binary
+*.ico binary
+
+# These files are packaged or rebuilt byte-for-byte.
+vendor/runtime/dgVoodoo.conf binary
+vendor/r185/accepted-dust-source/build_release.ps1 whitespace=-blank-at-eof

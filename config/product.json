@@ -1,0 +1,13 @@
+{
+  "schema": "unofficial-medieval-total-war-patch-product-v1",
+  "product_name": "Unofficial Medieval: Total War Collection Patch",
+  "setup_caption": "Unofficial Medieval: Total War Collection Patch Setup",
+  "version": "1.0.0",
+  "version_quad": "1.0.0.0",
+  "output_filename": "Unofficial Medieval Total War Collection Patch.exe",
+  "company_name": "Louie Woolger",
+  "copyright": "Copyright 2026 Louie Woolger",
+  "component_name": "Terrain Movement Fix",
+  "discord_url": "https://discord.gg/zKbDADqWRC",
+  "kofi_url": "https://ko-fi.com/louiewoolger"
+}

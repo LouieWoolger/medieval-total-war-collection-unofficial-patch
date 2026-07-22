@@ -1,0 +1,49 @@
+{
+  "schema": "unofficial-medieval-total-war-patch-payload-v1",
+  "component": "Terrain Movement Fix",
+  "runtime_identity": "R185",
+  "dgvoodoo_version": "2.87.2",
+  "target_executable": {
+    "name": "Medieval_TW.exe",
+    "sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+  },
+  "files": {
+    "D3D9.dll": {
+      "length": 132096,
+      "sha256": "A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA",
+      "provenance": "accepted R185 reproducible PE32 proxy"
+    },
+    "dgVoodoo_D3D9.dll": {
+      "length": 485888,
+      "sha256": "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6",
+      "provenance": "dgVoodoo2 2.87.2 MS/x86/D3D9.dll"
+    },
+    "ddraw.dll": {
+      "length": 258560,
+      "sha256": "81325E9B5C71F544B9A28AE4C375AF38E12535E8AC57C8F33B5456A342AE1465",
+      "provenance": "dgVoodoo2 2.87.2 MS/x86/DDraw.dll"
+    },
+    "D3DImm.dll": {
+      "length": 210432,
+      "sha256": "FBE72EF46AE87DC80F5AEB3D8FC12F97F9D9B2274C4887C70BA65651458D5BF2",
+      "provenance": "dgVoodoo2 2.87.2 MS/x86/D3DImm.dll"
+    },
+    "dgVoodoo.conf": {
+      "length": 21907,
+      "sha256": "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA",
+      "provenance": "accepted portable R185 configuration"
+    }
+  },
+  "locked_settings": {
+    "Resampling": "lanczos-3",
+    "ScalingMode": "stretched_ar",
+    "FastVideoMemoryAccess": "true",
+    "FPSLimit": "0"
+  },
+  "forbidden_runtime_files": [
+    "D3D8.dll",
+    "Medieval.Cfg",
+    "Medieval_TW.exe",
+    "~tmp.vrp"
+  ]
+}

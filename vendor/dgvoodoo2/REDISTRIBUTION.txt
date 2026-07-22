@@ -1,0 +1,13 @@
+dgVoodoo2 is copyright (c) 2013-2026 Dege.
+
+The official general readme states that individual dgVoodoo files may be
+freely shipped with a game or game mod. This project ships only the three
+individual x86 wrapper files needed by the Medieval: Total War compatibility
+fix; it does not redistribute dgVoodoo2 as a standalone component, launcher,
+or general-purpose framework.
+
+Official documentation:
+https://dege.fw.hu/dgVoodoo2/ReadmeGeneral/
+
+Official release:
+https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2
