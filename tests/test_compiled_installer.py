@@ -130,6 +130,10 @@ def test_compiled_unmanaged_r185_adoption_and_managed_repair(tmp_path: Path) -> 
     second_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     assert second_receipt["installation_id"] == first_receipt["installation_id"]
     assert second_receipt["repair_count"] == 1
+    for name, expected in expected_runtime().items():
+        assert second_receipt["files"][name]["installed_sha256"] == expected
+        assert second_receipt["files"][name]["installed_length"] == (PAYLOAD / name).stat().st_size
+    assert second_receipt["installer_sha256"] == sha256(game / DIST_INSTALLER.name)
     assert_runtime(game)
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before

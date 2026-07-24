@@ -92,6 +92,22 @@ def assert_final_runtime(game: Path) -> None:
         assert sha256(game / name) == record["sha256"]
 
 
+def make_payload_variant(root: Path) -> Path:
+    payload = root / "payload variant"
+    shutil.copytree(PAYLOAD, payload)
+    config = payload / "dgVoodoo.conf"
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n; installer receipt upgrade regression\n",
+        encoding="utf-8",
+    )
+    manifest_path = payload / "payload-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["dgVoodoo.conf"]["length"] = config.stat().st_size
+    manifest["files"]["dgVoodoo.conf"]["sha256"] = sha256(config)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
 def test_engine_uses_standard_user_and_terrain_fix_wording() -> None:
     text = ENGINE.read_text(encoding="utf-8")
     assert "Installed and verified the Terrain Movement Fix." in text
@@ -156,6 +172,31 @@ def test_r185_repair_is_idempotent_and_preserves_receipt(tmp_path: Path) -> None
     assert second_manifest["installation_id"] == first_manifest["installation_id"]
     assert second_manifest["repair_count"] == first_manifest["repair_count"] + 1
     assert relevant_snapshot(game) == first_state
+
+
+def test_managed_payload_upgrade_refreshes_receipt_and_remains_restorable(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Managed Payload Upgrade")
+    before = relevant_snapshot(game)
+    first, _ = invoke("Install", game)
+    assert first.returncode == 0, (first.stdout, first.stderr)
+
+    payload = make_payload_variant(tmp_path)
+    upgraded, report = invoke("Install", game, payload=payload)
+    assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)
+    assert report["action"] == "repair"
+
+    expected = json.loads((payload / "payload-manifest.json").read_text(encoding="utf-8"))
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    for name, record in expected["files"].items():
+        assert sha256(game / name) == record["sha256"]
+        assert receipt["files"][name]["installed_sha256"] == record["sha256"]
+        assert receipt["files"][name]["installed_length"] == record["length"]
+
+    restored, result = invoke("Restore", game, payload=payload)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert result["action"] == "restore"
+    assert relevant_snapshot(game) == before
 
 
 def test_unsupported_executable_refuses_with_zero_changes(tmp_path: Path) -> None:

@@ -38,6 +38,7 @@ $script:KnownD3D9Modes = @{
     '34F855A17C10B6BBCEFD844B99A5B5A7F442DECDDFFDB0D898645FA2FF0B0F0C' = 'dust-only'
     'E421B9A1FF5927A8B93FD7B2A83E0C965EB1EA596D924561713C16F323924892' = 'r6f160'
     'A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA' = 'r185'
+    '3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8' = 'r185'
 }
 
 $compilerWorkingDirectory = [System.IO.Path]::GetFullPath($PayloadDirectory)
@@ -643,6 +644,16 @@ function Repair-Installed {
             Set-FileAtomically (Join-Path $stage $name) $destination $expected
         }
         Test-FinalRuntime $TargetInfo.Directory $Payload.Manifest
+        foreach ($name in $script:PayloadNames) {
+            $record = $Receipt.files.PSObject.Properties[$name].Value
+            $payloadRecord = $Payload.Manifest.files.PSObject.Properties[$name].Value
+            $record.installed_sha256 = [string]$payloadRecord.sha256
+            $record.installed_length = [Int64]$payloadRecord.length
+        }
+        $Receipt.installer_version = $InstallerVersion
+        if ($InstallerPath -and (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
+            $Receipt.installer_sha256 = Get-Sha256 $InstallerPath
+        }
         $Receipt.repair_count = [int]$Receipt.repair_count + 1
         $Receipt | Add-Member -NotePropertyName 'last_repaired_utc' -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
         $Receipt.status = 'installed'

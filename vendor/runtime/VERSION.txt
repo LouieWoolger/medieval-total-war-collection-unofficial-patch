@@ -1,7 +1,7 @@
 Unofficial Medieval: Total War Collection Patch runtime R185
 
 R185 D3D9 proxy SHA-256:
-A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA
+3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8
 
 dgVoodoo2 backend version: 2.87.2
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2

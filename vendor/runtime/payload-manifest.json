@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 132096,
-      "sha256": "A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA",
-      "provenance": "accepted R185 reproducible PE32 proxy"
+      "length": 133120,
+      "sha256": "3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8",
+      "provenance": "accepted R185 reproducible PE32 proxy with resolution-independent loading shadow"
     },
     "dgVoodoo_D3D9.dll": {
       "length": 485888,

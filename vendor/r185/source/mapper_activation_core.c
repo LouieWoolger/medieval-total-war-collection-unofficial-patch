@@ -10,9 +10,9 @@
 #define MTW_FRONTEND_PITCH 1600u
 #define MTW_FRONTEND_BYTES_PER_UNIT 2u
 
-#define MTW_LOADING_WIDTH 2560u
-#define MTW_LOADING_HEIGHT 1440u
-#define MTW_LOADING_PITCH 5120u
+#define MTW_LOADING_BYTES_PER_PIXEL 2u
+#define MTW_LOADING_MAX_DIMENSION 32768u
+#define MTW_LOADING_MAX_BYTES 0x20000000u
 
 int mtw_mapper_mode_after_surface(int current_mode,
                                   uint16_t width,
@@ -34,8 +34,17 @@ int mtw_mapper_mode_after_loading(int current_mode,
                                   uint32_t width,
                                   uint32_t height,
                                   uint32_t pitch) {
-    if (width == MTW_LOADING_WIDTH && height == MTW_LOADING_HEIGHT &&
-        pitch == MTW_LOADING_PITCH) {
+    uint32_t row_bytes;
+
+    if (width == 0u || height == 0u ||
+        width > MTW_LOADING_MAX_DIMENSION ||
+        height > MTW_LOADING_MAX_DIMENSION ||
+        width > UINT32_MAX / MTW_LOADING_BYTES_PER_PIXEL) {
+        return current_mode != 0;
+    }
+    row_bytes = width * MTW_LOADING_BYTES_PER_PIXEL;
+    if (pitch >= row_bytes && pitch != 0u &&
+        height <= MTW_LOADING_MAX_BYTES / pitch) {
         return 0;
     }
     return current_mode != 0;

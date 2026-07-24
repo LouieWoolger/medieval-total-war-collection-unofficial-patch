@@ -56,10 +56,7 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define DGVOODOO_EXPECTED_IMAGE_SIZE 0x001A3000u
 #define MTW_DEVICE_CREATE_PIXEL_SHADER_INDEX 15u
 
-#define MTW_LOADING_WIDTH 2560u
-#define MTW_LOADING_HEIGHT 1440u
-#define MTW_LOADING_PITCH (MTW_LOADING_WIDTH * 2u)
-#define MTW_LOADING_BYTES (MTW_LOADING_PITCH * MTW_LOADING_HEIGHT)
+#define MTW_LOADING_BYTES_PER_PIXEL 2u
 #define MTW_CONSTRUCTOR_THREAD_CAPACITY 32u
 #define MTW_CONSTRUCTOR_RETURN_DEPTH 8u
 #define MTW_FRONTEND_WIDTH 800u
@@ -115,6 +112,9 @@ static INIT_ONCE backend_tracking_once = INIT_ONCE_STATIC_INIT;
 static uintptr_t game_base;
 static uintptr_t backend_base;
 static loading_shadow_state loading_shadow;
+static CRITICAL_SECTION loading_shadow_lock;
+static volatile LONG loading_shadow_operation_active;
+static uintptr_t loading_shadow_epoch;
 static focus_span_state focus_span;
 static focus_plane_shadow_state focus_plane_shadow;
 static unsigned char *frontend_page_snapshot;
@@ -1219,58 +1219,126 @@ static void diagnostic_reverse_event(uintptr_t object,
     diagnostic_write(line);
 }
 
-static int current_loading_surface(void **bits, size_t *size) {
-    unsigned long width;
-    unsigned long height;
-    unsigned long pitch;
-    void *pointer;
+static void *allocate_loading_shadow(size_t size, void *context) {
+    (void)context;
+    return VirtualAlloc(
+        NULL, (SIZE_T)size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+}
 
-    if (game_base == 0u || bits == NULL || size == NULL) return 0;
-    width = *(volatile unsigned long *)(game_base + MTW_BACKING_WIDTH_RVA);
-    height = *(volatile unsigned long *)(game_base + MTW_BACKING_HEIGHT_RVA);
-    pitch = *(volatile unsigned long *)(game_base + MTW_BACKING_PITCH_RVA);
-    pointer = *(void *volatile *)(game_base + MTW_BACKING_BITS_RVA);
-    if (width != MTW_LOADING_WIDTH || height != MTW_LOADING_HEIGHT ||
-        pitch != MTW_LOADING_PITCH || pointer == NULL) {
+static void free_loading_shadow(void *memory, void *context) {
+    (void)context;
+    if (memory != NULL) VirtualFree(memory, 0u, MEM_RELEASE);
+}
+
+static int begin_loading_shadow_operation(void) {
+    if (InterlockedCompareExchange(
+            &loading_shadow_operation_active, 1, 0) != 0) {
         return 0;
     }
-    if (InterlockedExchange(
-            &mapper_frontend_mode,
-            mtw_mapper_mode_after_loading(
-                mapper_frontend_mode, width, height, pitch)) != 0 &&
-        InterlockedIncrement(&mapper_frontend_disarm_events) == 1) {
-        diagnostic_write("frontend mapper fast bypass active r184\r\n");
-    }
-    *bits = pointer;
-    *size = MTW_LOADING_BYTES;
+    EnterCriticalSection(&loading_shadow_lock);
     return 1;
 }
 
-__declspec(noinline) static void capture_loading_plane(void) {
-    void *bits;
+static void end_loading_shadow_operation(void) {
+    LeaveCriticalSection(&loading_shadow_lock);
+    InterlockedExchange(&loading_shadow_operation_active, 0);
+}
+
+static int current_loading_surface(loading_shadow_surface *surface) {
+    loading_shadow_surface first;
+    loading_shadow_surface second;
     size_t size;
-    if (!current_loading_surface(&bits, &size)) return;
-    if (loading_shadow_capture(&loading_shadow, bits, size)) {
+
+    if (game_base == 0u || surface == NULL) return 0;
+    first.width =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_WIDTH_RVA);
+    first.height =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_HEIGHT_RVA);
+    first.pitch =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_PITCH_RVA);
+    first.bits = *(void *volatile *)(game_base + MTW_BACKING_BITS_RVA);
+    MemoryBarrier();
+    second.width =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_WIDTH_RVA);
+    second.height =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_HEIGHT_RVA);
+    second.pitch =
+        *(volatile unsigned long *)(game_base + MTW_BACKING_PITCH_RVA);
+    second.bits = *(void *volatile *)(game_base + MTW_BACKING_BITS_RVA);
+    if (first.width != second.width || first.height != second.height ||
+        first.pitch != second.pitch || first.bits != second.bits) {
+        return 0;
+    }
+    first.bytes_per_pixel = MTW_LOADING_BYTES_PER_PIXEL;
+    first.epoch = 1u;
+    if (!loading_shadow_surface_size(&first, &size)) return 0;
+    *surface = first;
+    return 1;
+}
+
+static void disarm_mapper_after_loading(
+    const loading_shadow_surface *surface) {
+    if (InterlockedExchange(
+            &mapper_frontend_mode,
+            mtw_mapper_mode_after_loading(
+                mapper_frontend_mode,
+                (uint32_t)surface->width,
+                (uint32_t)surface->height,
+                (uint32_t)surface->pitch)) != 0 &&
+        InterlockedIncrement(&mapper_frontend_disarm_events) == 1) {
+        diagnostic_write("frontend mapper fast bypass active r184\r\n");
+    }
+}
+
+__declspec(noinline) static void capture_loading_plane(void) {
+    loading_shadow_surface surface;
+
+    if (!begin_loading_shadow_operation()) return;
+    if (!current_loading_surface(&surface)) {
+        loading_shadow_invalidate(&loading_shadow);
+        end_loading_shadow_operation();
+        return;
+    }
+    ++loading_shadow_epoch;
+    if (loading_shadow_epoch == 0u) ++loading_shadow_epoch;
+    surface.epoch = loading_shadow_epoch;
+    if (loading_shadow_capture(&loading_shadow, &surface)) {
+        disarm_mapper_after_loading(&surface);
         diagnostic_write("capture\r\n");
     }
+    end_loading_shadow_operation();
 }
 
 __declspec(noinline) static void restore_loading_plane_after_lock(void) {
-    void *bits;
-    size_t size;
-    if (!current_loading_surface(&bits, &size)) return;
-    if (loading_shadow_restore_after_lock(&loading_shadow, bits, size)) {
+    loading_shadow_surface surface;
+
+    if (!begin_loading_shadow_operation()) return;
+    if (!current_loading_surface(&surface)) {
+        loading_shadow_invalidate(&loading_shadow);
+        end_loading_shadow_operation();
+        return;
+    }
+    surface.epoch = loading_shadow_epoch;
+    if (loading_shadow_restore_after_lock(&loading_shadow, &surface)) {
         diagnostic_write("restore\r\n");
     }
+    end_loading_shadow_operation();
 }
 
 __declspec(noinline) static void commit_loading_plane_before_unlock(void) {
-    void *bits;
-    size_t size;
-    if (!current_loading_surface(&bits, &size)) return;
-    if (loading_shadow_commit_before_unlock(&loading_shadow, bits, size)) {
+    loading_shadow_surface surface;
+
+    if (!begin_loading_shadow_operation()) return;
+    if (!current_loading_surface(&surface)) {
+        loading_shadow_invalidate(&loading_shadow);
+        end_loading_shadow_operation();
+        return;
+    }
+    surface.epoch = loading_shadow_epoch;
+    if (loading_shadow_commit_before_unlock(&loading_shadow, &surface)) {
         diagnostic_write("commit\r\n");
     }
+    end_loading_shadow_operation();
 }
 
 static int arm_constructor_return(uintptr_t *entry_stack, void *object) {
@@ -2478,12 +2546,14 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     diagnostic_open();
     game_base = (uintptr_t)GetModuleHandleW(NULL);
     backend_base = (uintptr_t)GetModuleHandleW(L"dgVoodoo_D3D9.dll");
+    InitializeCriticalSection(&loading_shadow_lock);
     InitializeCriticalSection(&focus_span_lock);
     InitializeCriticalSection(&constructor_return_lock);
-    loading_shadow.bytes = (unsigned char *)VirtualAlloc(
-        NULL, MTW_LOADING_BYTES, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    loading_shadow.capacity =
-        loading_shadow.bytes != NULL ? MTW_LOADING_BYTES : 0u;
+    loading_shadow_initialize(
+        &loading_shadow,
+        allocate_loading_shadow,
+        free_loading_shadow,
+        NULL);
     focus_plane_shadow_initialize(
         &focus_plane_shadow,
         (unsigned char *)VirtualAlloc(
@@ -2502,12 +2572,8 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     diagnostic_reverse_snapshot = (unsigned char *)VirtualAlloc(
         NULL, MTW_FOCUS_PLANE_BYTES,
         MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (loading_shadow.bytes == NULL || focus_plane_shadow.bytes == NULL ||
-        frontend_page_snapshot == NULL) {
-        if (loading_shadow.bytes != NULL) {
-            VirtualFree(loading_shadow.bytes, 0u, MEM_RELEASE);
-            memset(&loading_shadow, 0, sizeof(loading_shadow));
-        }
+    if (focus_plane_shadow.bytes == NULL || frontend_page_snapshot == NULL) {
+        loading_shadow_release(&loading_shadow);
         if (focus_plane_shadow.bytes != NULL) {
             VirtualFree(focus_plane_shadow.bytes, 0u, MEM_RELEASE);
             memset(&focus_plane_shadow, 0, sizeof(focus_plane_shadow));
@@ -2542,8 +2608,7 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
             "active-generation reverse continuity active r183\r\n");
         diagnostic_write("install active r6f160\r\n");
     } else {
-        VirtualFree(loading_shadow.bytes, 0u, MEM_RELEASE);
-        memset(&loading_shadow, 0, sizeof(loading_shadow));
+        loading_shadow_release(&loading_shadow);
         VirtualFree(focus_plane_shadow.bytes, 0u, MEM_RELEASE);
         memset(&focus_plane_shadow, 0, sizeof(focus_plane_shadow));
         VirtualFree(frontend_page_snapshot, 0u, MEM_RELEASE);
