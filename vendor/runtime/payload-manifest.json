@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 133120,
-      "sha256": "3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8",
-      "provenance": "accepted R185 reproducible PE32 proxy with resolution-independent loading shadow"
+      "length": 137728,
+      "sha256": "D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932",
+      "provenance": "accepted R185 reproducible PE32 proxy with semantic menu/campaign-setup/prebattle/Battle Results mapper ownership, exact prebattle resolution lifecycle, and pre-capture gameplay synchronization"
     },
     "dgVoodoo_D3D9.dll": {
       "length": 485888,
@@ -29,14 +29,15 @@
       "provenance": "dgVoodoo2 2.87.2 MS/x86/D3DImm.dll"
     },
     "dgVoodoo.conf": {
-      "length": 21907,
-      "sha256": "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA",
-      "provenance": "accepted portable R185 configuration"
+      "length": 21910,
+      "sha256": "EF8DF4EBA5AF028891678A641304D297F3D759A7EBF4FBE8FFB735B9808E5A97",
+      "provenance": "accepted portable R185 configuration with fake fullscreen for single-window presentation across resolution, focus, and RDP transitions"
     }
   },
   "locked_settings": {
     "Resampling": "lanczos-3",
     "ScalingMode": "stretched_ar",
+    "FullscreenAttributes": "fake",
     "FastVideoMemoryAccess": "true",
     "FPSLimit": "0"
   },

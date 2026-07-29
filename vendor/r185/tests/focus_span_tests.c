@@ -341,6 +341,25 @@ static void test_registry_is_bounded_and_reset_scoped(void) {
     CHECK(focus_span_live_count(&state) == 0u);
 }
 
+static void test_frontend_lifecycle_confirmation_is_reset_scoped(void) {
+    focus_span_state state;
+
+    memset(&state, 0, sizeof(state));
+    CHECK(!focus_span_observe_surface(
+        &state, 640u, 480u, 2560u, 4u, 0x10000u, 0x20000u));
+    CHECK(focus_span_observe_surface(
+        &state, 800u, 600u, 1600u, 2u, 0x11000u, 0x21000u));
+    CHECK(!focus_span_observe_surface(
+        &state, 800u, 600u, 1600u, 2u, 0x12000u, 0x22000u));
+    CHECK(!focus_span_observe_surface(
+        &state, 800u, 600u, 1600u, 2u, 0x13000u, 0x23000u));
+
+    CHECK(!focus_span_observe_surface(
+        &state, 640u, 480u, 2560u, 4u, 0x14000u, 0x24000u));
+    CHECK(focus_span_observe_surface(
+        &state, 800u, 600u, 1600u, 2u, 0x15000u, 0x25000u));
+}
+
 int main(void) {
     test_actual_publication_establishes_authority();
     test_arbitrary_partial_spans_expand();
@@ -352,6 +371,7 @@ int main(void) {
     test_dormant_generation_requires_one_reverse_handoff();
     test_empty_content_generation_is_bounded_and_idempotent();
     test_registry_is_bounded_and_reset_scoped();
+    test_frontend_lifecycle_confirmation_is_reset_scoped();
 
     if (failures != 0) {
         fprintf(stderr, "%d focus authority test(s) failed\n", failures);

@@ -33,6 +33,20 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_DISPATCH_MESSAGE_IAT_RVA 0x0038428Cu
 #define MTW_FRONTEND_FRAMEBUFFER_BITS_RVA 0x00A4587Cu
 #define MTW_FRONTEND_FRAMEBUFFER_PITCH_RVA 0x00A45878u
+#define MTW_RENDER_INPUT_ROOT_RVA 0x00A6F5D0u
+#define MTW_TOP_LEVEL_GAME_MODE_RVA 0x00A77610u
+#define MTW_FRONTEND_UI_STATE_OFFSET 0x10u
+#define MTW_FRONTEND_PAGE_ARRAY_OFFSET 0x007A2508u
+#define MTW_FRONTEND_PAGE_COUNT_OFFSET 0x007A2CB0u
+#define MTW_FRONTEND_PAGE_METADATA_OFFSET 0x00009CA0u
+#define MTW_FRONTEND_PAGE_CAPACITY 490u
+#define MTW_FRONTEND_OWNER_POLL_INTERVAL_MS 16u
+#define MTW_PREBATTLE_CONTROLLER_RVA 0x007E666Cu
+#define MTW_PREBATTLE_ENTRY_CALL_RVA 0x0024BFA9u
+#define MTW_PREBATTLE_ENTRY_TARGET_RVA 0x002526F0u
+#define MTW_PREBATTLE_RESOLUTION_RETURN_RVA 0x0024BFAEu
+#define MTW_TOP_LEVEL_MODE_CAMPAIGN 1u
+#define MTW_TOP_LEVEL_MODE_QUICK_BATTLE 12u
 
 #define DGVOODOO_FAST_SURFACE_CONSTRUCTOR_RVA 0x0002CC1Cu
 #define DGVOODOO_REVERSE_DISPATCHER_RVA 0x0002D99Fu
@@ -92,6 +106,15 @@ static const unsigned char reverse_dispatcher_expected[] = {
 static const unsigned char primary_surface_unlock_expected[] = {
     0xA1, 0xD0, 0xF5, 0xE6, 0x00
 };
+static const unsigned char prebattle_entry_call_expected[
+    MTW_PREBATTLE_ENTRY_CALL_SIZE] = {
+        0xE8, 0x42, 0x67, 0x00, 0x00
+};
+static const unsigned char prebattle_resolution_return_expected[
+    MTW_PREBATTLE_RESOLUTION_RETURN_SIZE] = {
+        0x83, 0xC4, 0x10, 0x40, 0x89, 0x84,
+        0x24, 0x84, 0x00, 0x00, 0x00
+};
 static const unsigned char outer_acquire_expected[] = {
     0xE8, 0x8F, 0xF3, 0xF6, 0xFF
 };
@@ -143,6 +166,8 @@ static void *constructor_continue;
 static void *fallback_original_target;
 static void *reverse_dispatcher_continue;
 static void *primary_surface_unlock_continue;
+static void *prebattle_entry_original_target;
+static void *prebattle_resolution_return_continue;
 static void *constructor_global_target;
 static void *custom_acquire_target;
 static void *custom_release_target;
@@ -152,6 +177,7 @@ static void *mapper_draw_continue;
 static void *d3d11_create_success_continue;
 static void *d3d11_create_failure_continue;
 static SRWLOCK mapper_shader_lock = SRWLOCK_INIT;
+static SRWLOCK mapper_activation_lock = SRWLOCK_INIT;
 static ID3D11Device *mapper_shader_device;
 static ID3D11Device *mapper_tracking_device;
 static ID3D11PixelShader *mapper_shader_clone;
@@ -164,8 +190,14 @@ static volatile LONG mapper_shader_all_creations;
 static volatile LONG mapper_shader_target_creations;
 static volatile LONG mapper_shader_draw_identity_events;
 static volatile LONG mapper_frontend_mode = 1;
+static volatile LONG mapper_frontend_rearm_armed;
 static volatile LONG mapper_frontend_rearm_events;
 static volatile LONG mapper_frontend_disarm_events;
+static volatile LONG mapper_game_mode_events;
+static volatile LONG mapper_frontend_owner;
+static volatile LONG mapper_prebattle_entry_active;
+static uintptr_t mapper_frontend_owner_root;
+static DWORD mapper_frontend_owner_poll_tick;
 typedef HRESULT (WINAPI *mtw_d3d11_create_device_fn)(
     IDXGIAdapter *adapter,
     D3D_DRIVER_TYPE driver_type,
@@ -227,6 +259,8 @@ static volatile LONG reverse_handoff_events;
 
 __declspec(naked) static void constructor_return_hook_stub(void);
 __declspec(naked) static void d3d11_create_device_hook_stub(void);
+__declspec(naked) static void prebattle_entry_hook_stub(void);
+__declspec(naked) static void prebattle_resolution_return_hook_stub(void);
 static int install_d3d11_create_device_hook(void);
 static int diagnostic_trace_armed(void);
 static void diagnostic_begin_content_epoch(uint32_t generation);
@@ -235,6 +269,362 @@ static void diagnostic_write(const char *text) {
     DWORD written;
     if (diagnostic_log == INVALID_HANDLE_VALUE || text == NULL) return;
     WriteFile(diagnostic_log, text, (DWORD)strlen(text), &written, NULL);
+}
+
+static void diagnostic_mapper_transition(const char *kind,
+                                         const char *reason,
+                                         uintptr_t callsite,
+                                         uintptr_t object,
+                                         uintptr_t backing,
+                                         uint32_t width,
+                                         uint32_t height,
+                                         uint32_t pitch,
+                                         uint32_t bytes_per_unit,
+                                         int frontend_owner_present,
+                                         int frontend_lifecycle_confirmed,
+                                         LONG old_mode,
+                                         LONG new_mode) {
+    char line[384];
+
+    wsprintfA(
+        line,
+        "mapper %s r187 reason=%s tid=%lu callsite=%08lX obj=%08lX backing=%08lX w=%lu h=%lu pitch=%lu bpu=%lu owner=%d lifecycle=%d old=%ld new=%ld\r\n",
+        kind, reason, GetCurrentThreadId(), (DWORD)callsite, (DWORD)object,
+        (DWORD)backing, (DWORD)width, (DWORD)height, (DWORD)pitch,
+        (DWORD)bytes_per_unit, frontend_owner_present,
+        frontend_lifecycle_confirmed, old_mode, new_mode);
+    diagnostic_write(line);
+}
+
+static int read_current_process_memory_exact(uintptr_t address,
+                                             void *destination,
+                                             SIZE_T size) {
+    SIZE_T transferred = 0u;
+
+    if (address == 0u || destination == NULL || size == 0u) return 0;
+    return ReadProcessMemory(
+               GetCurrentProcess(), (const void *)address,
+               destination, size, &transferred) != 0 &&
+           transferred == size;
+}
+
+static mtw_mapper_frontend_owner_kind query_frontend_owner(void) {
+    mtw_mapper_frontend_owner_kind owner =
+        MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+    uintptr_t render_input_root;
+    uintptr_t ui_state;
+    uint32_t page_count;
+    uint32_t index;
+    uint32_t campaign_setup_anchor_mask = 0u;
+
+    if (game_base == 0u ||
+        !read_current_process_memory_exact(
+            game_base + MTW_RENDER_INPUT_ROOT_RVA,
+            &render_input_root, sizeof(render_input_root)) ||
+        render_input_root == 0u ||
+        !read_current_process_memory_exact(
+            render_input_root + MTW_FRONTEND_UI_STATE_OFFSET,
+            &ui_state, sizeof(ui_state)) ||
+        ui_state == 0u ||
+        !read_current_process_memory_exact(
+            ui_state + MTW_FRONTEND_PAGE_COUNT_OFFSET,
+            &page_count, sizeof(page_count)) ||
+        page_count == 0u ||
+        page_count > MTW_FRONTEND_PAGE_CAPACITY) {
+        return MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+    }
+
+    for (index = 0u; index < page_count; ++index) {
+        uintptr_t page;
+        uintptr_t metadata;
+
+        if (!read_current_process_memory_exact(
+                ui_state + MTW_FRONTEND_PAGE_ARRAY_OFFSET +
+                    index * sizeof(uintptr_t),
+                &page, sizeof(page)) ||
+            page == 0u ||
+            !read_current_process_memory_exact(
+                page + MTW_FRONTEND_PAGE_METADATA_OFFSET,
+                &metadata, sizeof(metadata)) ||
+            metadata == 0u) {
+            return MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+        }
+        owner = mtw_mapper_frontend_owner_observe_metadata(
+            owner, game_base, metadata);
+        campaign_setup_anchor_mask |=
+            mtw_mapper_campaign_setup_metadata_anchor(
+                game_base, metadata);
+    }
+    if (owner == MTW_MAPPER_FRONTEND_OWNER_UNKNOWN &&
+        mtw_mapper_campaign_setup_metadata_complete(
+            campaign_setup_anchor_mask)) {
+        owner = MTW_MAPPER_FRONTEND_OWNER_CAMPAIGN_SETUP;
+    }
+    return owner;
+}
+
+static LONG synchronize_mapper_with_game_mode(void) {
+    mtw_mapper_activation_state current;
+    mtw_mapper_activation_state next;
+    mtw_mapper_frontend_owner_kind owner;
+    uint32_t game_mode;
+    LONG previous_mode;
+    LONG previous_armed;
+    LONG previous_owner;
+    LONG event_number;
+    DWORD now;
+    uintptr_t prebattle_controller;
+    uintptr_t render_input_root;
+    char line[256];
+
+    if (game_base == 0u) {
+        return InterlockedCompareExchange(
+            &mapper_frontend_mode, 0, 0);
+    }
+
+    /*
+     * This is the mode consumed by the executable's top-level 13-way state
+     * switch.  Mode 0 constructs the frontend, UINT32_MAX is its idle loop,
+     * and campaign/battle states use other values.
+     */
+    game_mode = *(volatile uint32_t *)(
+        game_base + MTW_TOP_LEVEL_GAME_MODE_RVA);
+
+    AcquireSRWLockExclusive(&mapper_activation_lock);
+    previous_mode = InterlockedCompareExchange(
+        &mapper_frontend_mode, 0, 0);
+    previous_armed = InterlockedCompareExchange(
+        &mapper_frontend_rearm_armed, 0, 0);
+    previous_owner = InterlockedCompareExchange(
+        &mapper_frontend_owner, 0, 0);
+    current.mapper_mode = previous_mode != 0;
+    current.frontend_rearm_armed = previous_armed != 0;
+    owner = (mtw_mapper_frontend_owner_kind)previous_owner;
+    prebattle_controller = 0u;
+    render_input_root = *(volatile uintptr_t *)(
+        game_base + MTW_RENDER_INPUT_ROOT_RVA);
+    (void)read_current_process_memory_exact(
+        game_base + MTW_PREBATTLE_CONTROLLER_RVA,
+        &prebattle_controller, sizeof(prebattle_controller));
+    if (prebattle_controller != 0u) {
+        InterlockedExchange(&mapper_prebattle_entry_active, 0);
+        owner = MTW_MAPPER_FRONTEND_OWNER_PREBATTLE;
+        mapper_frontend_owner_root = 0u;
+        mapper_frontend_owner_poll_tick = 0u;
+    } else if (InterlockedCompareExchange(
+                   &mapper_prebattle_entry_active, 0, 0) != 0) {
+        owner = MTW_MAPPER_FRONTEND_OWNER_PREBATTLE;
+        mapper_frontend_owner_root = 0u;
+        mapper_frontend_owner_poll_tick = 0u;
+    } else if (game_mode == MTW_TOP_LEVEL_MODE_CAMPAIGN) {
+        /*
+         * New Campaign setup shares mode 1 with campaign gameplay.  Preserve
+         * the mapper only for the live setup graph and its exact root.  The
+         * verified loading-plane transition clears this owner, and the core
+         * deliberately refuses to rearm from it.
+         */
+        if (render_input_root == 0u) {
+            owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+            mapper_frontend_owner_root = 0u;
+        } else if (owner !=
+                       MTW_MAPPER_FRONTEND_OWNER_CAMPAIGN_SETUP ||
+                   mapper_frontend_owner_root != render_input_root) {
+            owner = query_frontend_owner();
+            if (owner ==
+                MTW_MAPPER_FRONTEND_OWNER_CAMPAIGN_SETUP) {
+                mapper_frontend_owner_root = render_input_root;
+            } else {
+                owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+                mapper_frontend_owner_root = 0u;
+            }
+        }
+        mapper_frontend_owner_poll_tick = 0u;
+    } else if (game_mode == MTW_TOP_LEVEL_MODE_QUICK_BATTLE) {
+        /*
+         * Mode 12 covers both the 3D Quick Battle and its 800x600 Battle
+         * Results page.  The battle has no render/input frontend root.  The
+         * results page has a live root whose page graph contains immutable
+         * Battle Results descriptors.  Cache only that exact root, and never
+         * let the shared mode value or surface geometry rearm the mapper.
+         */
+        if (render_input_root == 0u) {
+            owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+            mapper_frontend_owner_root = 0u;
+        } else if (owner !=
+                       MTW_MAPPER_FRONTEND_OWNER_BATTLE_RESULTS ||
+                   mapper_frontend_owner_root != render_input_root) {
+            owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+            mapper_frontend_owner_root = 0u;
+            if (current.frontend_rearm_armed) {
+                owner = query_frontend_owner();
+                if (owner ==
+                    MTW_MAPPER_FRONTEND_OWNER_BATTLE_RESULTS) {
+                    mapper_frontend_owner_root = render_input_root;
+                } else {
+                    owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+                }
+            }
+        }
+        mapper_frontend_owner_poll_tick = 0u;
+    } else if (game_mode != 0u && game_mode != UINT32_MAX) {
+        owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+        mapper_frontend_owner_root = 0u;
+        mapper_frontend_owner_poll_tick = 0u;
+    } else if (owner ==
+               MTW_MAPPER_FRONTEND_OWNER_BATTLE_RESULTS) {
+        /*
+         * Replace the cached result owner when the result page hands control
+         * back to the ordinary frontend.  Keeping the mapper enabled is
+         * correct, but carrying the old root identity into a later mode-12
+         * transition is not.
+         */
+        owner = query_frontend_owner();
+        mapper_frontend_owner_root = 0u;
+        mapper_frontend_owner_poll_tick = GetTickCount();
+    } else if (current.frontend_rearm_armed) {
+        mapper_frontend_owner_root = 0u;
+        now = GetTickCount();
+        if (mapper_frontend_owner_poll_tick == 0u ||
+            now - mapper_frontend_owner_poll_tick >=
+                MTW_FRONTEND_OWNER_POLL_INTERVAL_MS) {
+            owner = query_frontend_owner();
+            mapper_frontend_owner_poll_tick = now;
+        }
+    }
+    next = mtw_mapper_activation_after_game_mode(
+        current, game_mode, owner);
+    InterlockedExchange(
+        &mapper_frontend_mode, (LONG)next.mapper_mode);
+    InterlockedExchange(
+        &mapper_frontend_rearm_armed,
+        (LONG)next.frontend_rearm_armed);
+    InterlockedExchange(&mapper_frontend_owner, (LONG)owner);
+    ReleaseSRWLockExclusive(&mapper_activation_lock);
+
+    if (previous_mode != (LONG)next.mapper_mode ||
+        previous_armed != (LONG)next.frontend_rearm_armed ||
+        previous_owner != (LONG)owner) {
+        event_number = InterlockedIncrement(&mapper_game_mode_events);
+        if (event_number <= 32) {
+            wsprintfA(
+                line,
+                "mapper game-mode r194 event=%ld tid=%lu mode=%08lX owner=%ld->%d old=%ld/%ld new=%d/%d\r\n",
+                event_number, GetCurrentThreadId(), (DWORD)game_mode,
+                previous_owner, (int)owner,
+                previous_mode, previous_armed, next.mapper_mode,
+                next.frontend_rearm_armed);
+            diagnostic_write(line);
+        }
+        if (previous_mode == 0 && next.mapper_mode != 0) {
+            InterlockedIncrement(&mapper_frontend_rearm_events);
+        }
+    }
+    return (LONG)next.mapper_mode;
+}
+
+static void mapper_begin_prebattle_entry(void) {
+    mtw_mapper_activation_state current;
+    mtw_mapper_activation_state next;
+
+    AcquireSRWLockExclusive(&mapper_activation_lock);
+    current.mapper_mode = InterlockedCompareExchange(
+        &mapper_frontend_mode, 0, 0) != 0;
+    current.frontend_rearm_armed = InterlockedCompareExchange(
+        &mapper_frontend_rearm_armed, 0, 0) != 0;
+    next = mtw_mapper_activation_after_game_mode(
+        current, 1u, MTW_MAPPER_FRONTEND_OWNER_PREBATTLE);
+    InterlockedExchange(&mapper_prebattle_entry_active, 1);
+    InterlockedExchange(
+        &mapper_frontend_owner,
+        (LONG)MTW_MAPPER_FRONTEND_OWNER_PREBATTLE);
+    mapper_frontend_owner_root = 0u;
+    mapper_frontend_owner_poll_tick = 0u;
+    InterlockedExchange(
+        &mapper_frontend_mode, (LONG)next.mapper_mode);
+    InterlockedExchange(
+        &mapper_frontend_rearm_armed,
+        (LONG)next.frontend_rearm_armed);
+    ReleaseSRWLockExclusive(&mapper_activation_lock);
+    diagnostic_write("mapper prebattle resolution prearmed r194\r\n");
+}
+
+static void mapper_finish_prebattle_resolution(void) {
+    mtw_mapper_activation_state current;
+    mtw_mapper_activation_state next;
+    uint32_t game_mode;
+    uintptr_t prebattle_controller;
+    LONG previous_mode;
+    int controller_present;
+    char line[192];
+
+    if (game_base == 0u) return;
+    game_mode = *(volatile uint32_t *)(
+        game_base + MTW_TOP_LEVEL_GAME_MODE_RVA);
+    prebattle_controller = 0u;
+    (void)read_current_process_memory_exact(
+        game_base + MTW_PREBATTLE_CONTROLLER_RVA,
+        &prebattle_controller, sizeof(prebattle_controller));
+    controller_present = prebattle_controller != 0u;
+
+    AcquireSRWLockExclusive(&mapper_activation_lock);
+    previous_mode = InterlockedCompareExchange(
+        &mapper_frontend_mode, 0, 0);
+    current.mapper_mode = previous_mode != 0;
+    current.frontend_rearm_armed = InterlockedCompareExchange(
+        &mapper_frontend_rearm_armed, 0, 0) != 0;
+    next = mtw_mapper_activation_after_prebattle_resolution(
+        current, game_mode, controller_present);
+    InterlockedExchange(&mapper_prebattle_entry_active, 0);
+    InterlockedExchange(
+        &mapper_frontend_owner,
+        controller_present ?
+            (LONG)MTW_MAPPER_FRONTEND_OWNER_PREBATTLE :
+            (LONG)MTW_MAPPER_FRONTEND_OWNER_UNKNOWN);
+    mapper_frontend_owner_root = 0u;
+    mapper_frontend_owner_poll_tick = 0u;
+    InterlockedExchange(
+        &mapper_frontend_mode, (LONG)next.mapper_mode);
+    InterlockedExchange(
+        &mapper_frontend_rearm_armed,
+        (LONG)next.frontend_rearm_armed);
+    ReleaseSRWLockExclusive(&mapper_activation_lock);
+
+    wsprintfA(
+        line,
+        "mapper prebattle resolution completed r194 controller=%d old=%ld new=%d/%d\r\n",
+        controller_present, previous_mode, next.mapper_mode,
+        next.frontend_rearm_armed);
+    diagnostic_write(line);
+}
+
+static LONG observe_mapper_surface(uint16_t width,
+                                   uint16_t height,
+                                   uint32_t pitch,
+                                   uint8_t bytes_per_unit) {
+    mtw_mapper_activation_state current;
+    mtw_mapper_activation_state next;
+    int render_input_root_present;
+
+    render_input_root_present =
+        game_base != 0u &&
+        *(volatile uintptr_t *)(
+            game_base + MTW_RENDER_INPUT_ROOT_RVA) != 0u;
+
+    AcquireSRWLockExclusive(&mapper_activation_lock);
+    current.mapper_mode = InterlockedCompareExchange(
+        &mapper_frontend_mode, 0, 0) != 0;
+    current.frontend_rearm_armed = InterlockedCompareExchange(
+        &mapper_frontend_rearm_armed, 0, 0) != 0;
+    next = mtw_mapper_activation_after_surface(
+        current, render_input_root_present,
+        width, height, pitch, bytes_per_unit);
+    InterlockedExchange(
+        &mapper_frontend_mode, (LONG)next.mapper_mode);
+    InterlockedExchange(
+        &mapper_frontend_rearm_armed,
+        (LONG)next.frontend_rearm_armed);
+    ReleaseSRWLockExclusive(&mapper_activation_lock);
+    return (LONG)next.mapper_mode;
 }
 
 static void diagnostic_dump_page_snapshot(uint32_t generation,
@@ -266,7 +656,7 @@ static LRESULT WINAPI frontend_dispatch_message(const MSG *message) {
     LRESULT result;
     char line[256];
 
-    if (mapper_frontend_mode == 0) {
+    if (synchronize_mapper_with_game_mode() == 0) {
         return original_dispatch_message == NULL ? 0 :
                original_dispatch_message(message);
     }
@@ -1278,21 +1668,65 @@ static int current_loading_surface(loading_shadow_surface *surface) {
 
 static void disarm_mapper_after_loading(
     const loading_shadow_surface *surface) {
-    if (InterlockedExchange(
-            &mapper_frontend_mode,
-            mtw_mapper_mode_after_loading(
-                mapper_frontend_mode,
-                (uint32_t)surface->width,
-                (uint32_t)surface->height,
-                (uint32_t)surface->pitch)) != 0 &&
-        InterlockedIncrement(&mapper_frontend_disarm_events) == 1) {
-        diagnostic_write("frontend mapper fast bypass active r184\r\n");
+    mtw_mapper_activation_state current;
+    mtw_mapper_activation_state next;
+    LONG previous_mode;
+    LONG previous_armed;
+    LONG event_number;
+
+    AcquireSRWLockExclusive(&mapper_activation_lock);
+    previous_mode = InterlockedCompareExchange(
+        &mapper_frontend_mode, 0, 0);
+    previous_armed = InterlockedCompareExchange(
+        &mapper_frontend_rearm_armed, 0, 0);
+    current.mapper_mode = previous_mode != 0;
+    current.frontend_rearm_armed = previous_armed != 0;
+    next = mtw_mapper_activation_after_loading(
+        current, (uint32_t)surface->width,
+        (uint32_t)surface->height, (uint32_t)surface->pitch);
+    InterlockedExchange(
+        &mapper_frontend_owner,
+        (LONG)MTW_MAPPER_FRONTEND_OWNER_UNKNOWN);
+    mapper_frontend_owner_root = 0u;
+    mapper_frontend_owner_poll_tick = 0u;
+    InterlockedExchange(
+        &mapper_frontend_mode, (LONG)next.mapper_mode);
+    InterlockedExchange(
+        &mapper_frontend_rearm_armed,
+        (LONG)next.frontend_rearm_armed);
+    ReleaseSRWLockExclusive(&mapper_activation_lock);
+
+    if (previous_mode != (LONG)next.mapper_mode ||
+        previous_armed != (LONG)next.frontend_rearm_armed) {
+        event_number = InterlockedIncrement(
+            &mapper_frontend_disarm_events);
+        if (event_number <= 8) {
+            diagnostic_mapper_transition(
+                "transition", "verified-loading",
+                game_base + MTW_INITIAL_COPY_PRE_UNLOCK_RVA, 0u,
+                (uintptr_t)surface->bits, (uint32_t)surface->width,
+                (uint32_t)surface->height, (uint32_t)surface->pitch,
+                (uint32_t)surface->bytes_per_pixel,
+                0, 0,
+                previous_mode, (LONG)next.mapper_mode);
+        }
+        if (event_number == 1) {
+            diagnostic_write(
+                "frontend mapper fast bypass active r184\r\n");
+        }
     }
 }
 
 __declspec(noinline) static void capture_loading_plane(void) {
     loading_shadow_surface surface;
 
+    /*
+     * The first loading copy can run before either the message pump or the
+     * next D3D draw observes a frontend-to-game mode change.  Synchronize
+     * here so a stale menu mapper cannot transform the plane we are about to
+     * preserve, even when frontend and gameplay are both 800x600.
+     */
+    (void)synchronize_mapper_with_game_mode();
     if (!begin_loading_shadow_operation()) return;
     if (!current_loading_surface(&surface)) {
         loading_shadow_invalidate(&loading_shadow);
@@ -1425,7 +1859,12 @@ __declspec(noinline) static void observe_fast_surface(uintptr_t *entry_stack,
                                                       void *object) {
     unsigned char fields[0x24];
     SIZE_T transferred = 0u;
-    int force_startup_slow_lane;
+    uint16_t width;
+    uint16_t height;
+    uint32_t pitch;
+    uint8_t bytes_per_unit;
+    uintptr_t backing;
+    int confirmed_frontend_lifecycle;
 
     if (object == NULL) return;
     if (!ReadProcessMemory(GetCurrentProcess(), object, fields, sizeof(fields),
@@ -1435,41 +1874,31 @@ __declspec(noinline) static void observe_fast_surface(uintptr_t *entry_stack,
         return;
     }
 
-    if (InterlockedExchange(
-            &mapper_frontend_mode,
-            mtw_mapper_mode_after_surface(
-                mapper_frontend_mode,
-                *(const uint16_t *)&fields[0x08],
-                *(const uint16_t *)&fields[0x0A],
-                *(const uint32_t *)&fields[0x10], fields[0x1E])) == 0 &&
-        mapper_frontend_mode != 0 &&
-        InterlockedIncrement(&mapper_frontend_rearm_events) <= 8) {
-        diagnostic_write("frontend mapper lifecycle rearmed r184\r\n");
-    }
+    width = *(const uint16_t *)&fields[0x08];
+    height = *(const uint16_t *)&fields[0x0A];
+    pitch = *(const uint32_t *)&fields[0x10];
+    bytes_per_unit = fields[0x1E];
+    backing = *(const uintptr_t *)&fields[0x20];
 
     EnterCriticalSection(&focus_span_lock);
-    force_startup_slow_lane = focus_span_observe_surface(
-        &focus_span,
-        *(const uint16_t *)&fields[0x08],
-        *(const uint16_t *)&fields[0x0A],
-        *(const uint32_t *)&fields[0x10],
-        fields[0x1E],
-        (uintptr_t)object,
-        *(const uintptr_t *)&fields[0x20]);
+    confirmed_frontend_lifecycle = focus_span_observe_surface(
+        &focus_span, width, height, pitch, bytes_per_unit,
+        (uintptr_t)object, backing);
     LeaveCriticalSection(&focus_span_lock);
-    if ((*(const uint16_t *)&fields[0x08] == 640u &&
-         *(const uint16_t *)&fields[0x0A] == 480u) ||
-        (*(const uint16_t *)&fields[0x08] == 800u &&
-         *(const uint16_t *)&fields[0x0A] == 600u)) {
+
+    (void)synchronize_mapper_with_game_mode();
+    (void)observe_mapper_surface(
+        width, height, pitch, bytes_per_unit);
+
+    if ((width == 640u && height == 480u) ||
+        (width == 800u && height == 600u)) {
         diagnostic_surface_event(
-            force_startup_slow_lane ? "pre-slow" : "pre",
-            (uintptr_t)object, *(const uintptr_t *)&fields[0x20], 0u,
-            *(const uint16_t *)&fields[0x08],
-            *(const uint16_t *)&fields[0x0A],
-            *(const uint32_t *)&fields[0x10], fields[0x1E]);
+            confirmed_frontend_lifecycle ? "pre-slow" : "pre",
+            (uintptr_t)object, backing, 0u, width, height, pitch,
+            bytes_per_unit);
     }
 
-    if (force_startup_slow_lane && entry_stack != NULL &&
+    if (confirmed_frontend_lifecycle && entry_stack != NULL &&
         entry_stack[4] == 1u) {
         entry_stack[4] = 0u;
         if (InterlockedIncrement(&startup_slow_lane_mutations) == 1) {
@@ -1888,7 +2317,7 @@ __declspec(noinline) static void __stdcall mapper_draw_with_exact_clone(
     ID3D11SamplerState *replacement_sampler;
     ID3D11SamplerState *original_sampler = NULL;
 
-    if (mapper_frontend_mode == 0) {
+    if (synchronize_mapper_with_game_mode() == 0) {
         ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
         return;
     }
@@ -1952,6 +2381,31 @@ __declspec(naked) static void mapper_draw_hook_stub(void) {
         call mapper_draw_with_exact_clone
         add esp, 8
         jmp dword ptr [mapper_draw_continue]
+    }
+}
+
+__declspec(naked) static void prebattle_entry_hook_stub(void) {
+    __asm {
+        pushfd
+        pushad
+        call mapper_begin_prebattle_entry
+        popad
+        popfd
+        jmp dword ptr [prebattle_entry_original_target]
+    }
+}
+
+__declspec(naked) static void prebattle_resolution_return_hook_stub(void) {
+    __asm {
+        add esp, 0x10
+        inc eax
+        mov dword ptr [esp + 0x84], eax
+        pushfd
+        pushad
+        call mapper_finish_prebattle_resolution
+        popad
+        popfd
+        jmp dword ptr [prebattle_resolution_return_continue]
     }
 }
 
@@ -2026,7 +2480,13 @@ __declspec(naked) static void constructor_return_hook_stub(void) {
 
 __declspec(naked) static void fallback_callsite_hook_stub(void) {
     __asm {
-        cmp dword ptr [mapper_frontend_mode], 0
+        pushfd
+        pushad
+        call synchronize_mapper_with_game_mode
+        mov dword ptr [esp + 28], eax
+        popad
+        popfd
+        test eax, eax
         je call_original
         pushfd
         pushad
@@ -2058,7 +2518,13 @@ __declspec(naked) static void reverse_dispatcher_original_trampoline(void) {
 
 __declspec(naked) static void reverse_dispatcher_hook_stub(void) {
     __asm {
-        cmp dword ptr [mapper_frontend_mode], 0
+        pushfd
+        pushad
+        call synchronize_mapper_with_game_mode
+        mov dword ptr [esp + 28], eax
+        popad
+        popfd
+        test eax, eax
         jne inspect_frontend
         push ebp
         mov ebp, esp
@@ -2098,7 +2564,13 @@ __declspec(naked) static void reverse_dispatcher_hook_stub(void) {
 
 __declspec(naked) static void primary_surface_unlock_hook_stub(void) {
     __asm {
-        cmp dword ptr [mapper_frontend_mode], 0
+        pushfd
+        pushad
+        call synchronize_mapper_with_game_mode
+        mov dword ptr [esp + 28], eax
+        popad
+        popfd
+        test eax, eax
         jne inspect_frontend
         mov eax, dword ptr [0x00E6F5D0]
         jmp dword ptr [primary_surface_unlock_continue]
@@ -2250,6 +2722,14 @@ static int verify_all_hook_signatures(void) {
            bytes_match(game_base + MTW_PRIMARY_SURFACE_UNLOCK_RVA,
                        primary_surface_unlock_expected,
                        sizeof(primary_surface_unlock_expected)) &&
+           mtw_prebattle_entry_callsite_supported(
+               (const unsigned char *)(
+                   game_base + MTW_PREBATTLE_ENTRY_CALL_RVA),
+               MTW_PREBATTLE_ENTRY_CALL_SIZE) &&
+           mtw_prebattle_resolution_return_supported(
+                (const unsigned char *)(
+                    game_base + MTW_PREBATTLE_RESOLUTION_RETURN_RVA),
+                MTW_PREBATTLE_RESOLUTION_RETURN_SIZE) &&
            mtw_validate_reentrant_callsites(&reentrant_calls);
 }
 
@@ -2396,12 +2876,18 @@ static int install_all_hooks_transactionally(void) {
         backend_base + DGVOODOO_REVERSE_DISPATCHER_RVA;
     uintptr_t primary_surface_unlock_target =
         game_base + MTW_PRIMARY_SURFACE_UNLOCK_RVA;
+    uintptr_t prebattle_entry_call_target =
+        game_base + MTW_PREBATTLE_ENTRY_CALL_RVA;
+    uintptr_t prebattle_resolution_return_target =
+        game_base + MTW_PREBATTLE_RESOLUTION_RETURN_RVA;
     int capture_installed = 0;
     int restore_installed = 0;
     int commit_installed = 0;
     int constructor_installed = 0;
     int reverse_dispatcher_installed = 0;
     int primary_surface_unlock_installed = 0;
+    int prebattle_entry_installed = 0;
+    int prebattle_resolution_return_installed = 0;
 
     if (!verify_all_hook_signatures()) return 0;
     build_constructor_expected(constructor_expected);
@@ -2417,6 +2903,11 @@ static int install_all_hooks_transactionally(void) {
     primary_surface_unlock_continue = (void *)(
         primary_surface_unlock_target +
         sizeof(primary_surface_unlock_expected));
+    prebattle_entry_original_target =
+        (void *)(game_base + MTW_PREBATTLE_ENTRY_TARGET_RVA);
+    prebattle_resolution_return_continue = (void *)(
+        prebattle_resolution_return_target +
+        sizeof(prebattle_resolution_return_expected));
     constructor_global_target =
         (void *)(backend_base + DGVOODOO_CONSTRUCTOR_GLOBAL_RVA);
     custom_acquire_target =
@@ -2510,7 +3001,62 @@ static int install_all_hooks_transactionally(void) {
                          sizeof(capture_expected));
         return 0;
     }
+    prebattle_entry_installed = write_rel_call(
+        prebattle_entry_call_target, prebattle_entry_hook_stub,
+        prebattle_entry_call_expected);
+    if (!prebattle_entry_installed) {
+        restore_original(primary_surface_unlock_target,
+                         primary_surface_unlock_expected,
+                         sizeof(primary_surface_unlock_expected));
+        restore_original(reverse_dispatcher_target,
+                         reverse_dispatcher_expected,
+                         sizeof(reverse_dispatcher_expected));
+        restore_original(fallback_call_target, fallback_call_expected,
+                         sizeof(fallback_call_expected));
+        restore_original(constructor_target, constructor_expected,
+                         sizeof(constructor_expected));
+        restore_original(commit_target, commit_expected,
+                         sizeof(commit_expected));
+        restore_original(restore_target, restore_expected,
+                         sizeof(restore_expected));
+        restore_original(capture_target, capture_expected,
+                         sizeof(capture_expected));
+        return 0;
+    }
+    prebattle_resolution_return_installed = write_rel_jump(
+        prebattle_resolution_return_target,
+        prebattle_resolution_return_hook_stub,
+        prebattle_resolution_return_expected,
+        sizeof(prebattle_resolution_return_expected));
+    if (!prebattle_resolution_return_installed) {
+        restore_original(prebattle_entry_call_target,
+                         prebattle_entry_call_expected,
+                         sizeof(prebattle_entry_call_expected));
+        restore_original(primary_surface_unlock_target,
+                         primary_surface_unlock_expected,
+                         sizeof(primary_surface_unlock_expected));
+        restore_original(reverse_dispatcher_target,
+                         reverse_dispatcher_expected,
+                         sizeof(reverse_dispatcher_expected));
+        restore_original(fallback_call_target, fallback_call_expected,
+                         sizeof(fallback_call_expected));
+        restore_original(constructor_target, constructor_expected,
+                         sizeof(constructor_expected));
+        restore_original(commit_target, commit_expected,
+                         sizeof(commit_expected));
+        restore_original(restore_target, restore_expected,
+                         sizeof(restore_expected));
+        restore_original(capture_target, capture_expected,
+                         sizeof(capture_expected));
+        return 0;
+    }
     if (!install_outer_owned_guard_diversion()) {
+        restore_original(prebattle_resolution_return_target,
+                         prebattle_resolution_return_expected,
+                         sizeof(prebattle_resolution_return_expected));
+        restore_original(prebattle_entry_call_target,
+                         prebattle_entry_call_expected,
+                         sizeof(prebattle_entry_call_expected));
         restore_original(primary_surface_unlock_target,
                          primary_surface_unlock_expected,
                          sizeof(primary_surface_unlock_expected));
@@ -2606,6 +3152,8 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
             "generation-seeded wrapped row-major publication active r181\r\n");
         diagnostic_write(
             "active-generation reverse continuity active r183\r\n");
+        diagnostic_write(
+            "prebattle resolution semantic prearm active r194\r\n");
         diagnostic_write("install active r6f160\r\n");
     } else {
         loading_shadow_release(&loading_shadow);

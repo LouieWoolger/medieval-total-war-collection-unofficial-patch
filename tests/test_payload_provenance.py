@@ -9,16 +9,17 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (133120, "3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8"),
+    "D3D9.dll": (137728, "D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932"),
     "dgVoodoo_D3D9.dll": (485888, "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6"),
     "ddraw.dll": (258560, "81325E9B5C71F544B9A28AE4C375AF38E12535E8AC57C8F33B5456A342AE1465"),
     "D3DImm.dll": (210432, "FBE72EF46AE87DC80F5AEB3D8FC12F97F9D9B2274C4887C70BA65651458D5BF2"),
-    "dgVoodoo.conf": (21907, "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA"),
+    "dgVoodoo.conf": (21910, "EF8DF4EBA5AF028891678A641304D297F3D759A7EBF4FBE8FFB735B9808E5A97"),
 }
 
 LOCKED_CONFIG = {
     "Resampling": "lanczos-3",
     "ScalingMode": "stretched_ar",
+    "FullscreenAttributes": "fake",
     "FastVideoMemoryAccess": "true",
     "FPSLimit": "0",
 }
@@ -111,3 +112,20 @@ def test_no_development_only_runtime_payload() -> None:
     assert not [path for path in RUNTIME.rglob("*") if path.is_file() and path.suffix.lower() in forbidden_suffixes]
     assert not (RUNTIME / "Medieval.Cfg").exists()
     assert not (RUNTIME / "Medieval_TW.exe").exists()
+
+
+def test_loading_capture_disarms_from_semantic_game_state_before_copying() -> None:
+    source = (R185 / "source" / "frontend_fix.c").read_text(encoding="utf-8")
+    match = re.search(
+        r"__declspec\(noinline\) static void capture_loading_plane\(void\) "
+        r"\{(?P<body>.*?)\n\}\n\n__declspec\(noinline\) static void "
+        r"restore_loading_plane_after_lock",
+        source,
+        re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    synchronize = body.index("(void)synchronize_mapper_with_game_mode();")
+    begin_shadow = body.index("begin_loading_shadow_operation()")
+    capture = body.index("loading_shadow_capture(&loading_shadow, &surface)")
+    assert synchronize < begin_shadow < capture

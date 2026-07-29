@@ -1,7 +1,16 @@
 Unofficial Medieval: Total War Collection Patch runtime R185
 
 R185 D3D9 proxy SHA-256:
-3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8
+D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932
+
+Frontend mapper activation is gated by semantic menu, campaign-setup, prebattle, or Battle Results ownership.
+New Campaign setup is recognized from its complete immutable page-metadata graph, not from shared mode or 800x600 geometry.
+An active setup mapper is preserved across focus changes, but verified loading disarm cannot be rearmed by stale setup state.
+Quick Battle 3D rendering and its results page are separated by exact frontend page identity.
+Prebattle ownership begins before its resource graph is built and ends with the modal battle-resolution lifecycle.
+Shared 800x600 surface geometry never rearms stale frontend state.
+Loading capture synchronizes semantic gameplay ownership before preserving a plane.
+dgVoodoo fake fullscreen keeps the scaled swapchain in the application window across resolution, focus, and RDP transitions.
 
 dgVoodoo2 backend version: 2.87.2
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2

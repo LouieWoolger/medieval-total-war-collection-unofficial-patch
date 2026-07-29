@@ -39,6 +39,20 @@ $script:KnownD3D9Modes = @{
     'E421B9A1FF5927A8B93FD7B2A83E0C965EB1EA596D924561713C16F323924892' = 'r6f160'
     'A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA' = 'r185'
     '3EE7EE33946F9F73A61559C23505AFCC27D45E61067644AF611B09F627297AD8' = 'r185'
+    '060136A2BE50A0F209FF74F242FFC264C6709C48135C8EB362771DCBF25931F1' = 'r185'
+    'C0D597364734EAEA26ABA83F1FA6B8875B830E4D626D5CF41F42DAEB92106CB4' = 'r185'
+    '9D1C8B4E5C0CF0A224FFEB8C20F762C52B1D8C2B306162A639D81295B103D04E' = 'r185'
+    'E3D5D6D5E214D79592B7D6F7F26D52CDFF5A59EB028CCD9DE499900BCFF18D74' = 'r185'
+    'F5F7EEDB312D251ECE1CCC726A08E866020C89A3C00212216B6A70FC0F5D6BE0' = 'r185'
+    'CC3537E286863FA75200DFB80839F07E07D8AD91F2ABBB2A4C5629677CE965FD' = 'r185'
+    '8FD9B9CE5809C52E2C815754ECD391D6ACDA14D33518A70BA9B4BE1FFD5DC7DF' = 'r185'
+    'D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932' = 'r185'
+}
+$script:KnownPreviousPayloadHashes = @{
+    'dgVoodoo.conf' = @(
+        '23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA',
+        'BD21E07D4B9282A8CA0F53613CCB852D419E5D54967A96C8E34A60D2F96E476A'
+    )
 }
 
 $compilerWorkingDirectory = [System.IO.Path]::GetFullPath($PayloadDirectory)
@@ -241,6 +255,7 @@ function Assert-ConfigInvariants {
     $required = [ordered]@{
         'Resampling' = 'lanczos-3'
         'ScalingMode' = 'stretched_ar'
+        'FullscreenAttributes' = 'fake'
         'FastVideoMemoryAccess' = 'true'
         'FPSLimit' = '0'
     }
@@ -387,7 +402,9 @@ function Get-PreinstallMode {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             $expected = [string]$PayloadManifest.files.PSObject.Properties[$name].Value.sha256
             $actual = Get-Sha256 $path
-            if ($actual -ne $expected) {
+            $knownPrevious = $script:KnownPreviousPayloadHashes.ContainsKey($name) -and
+                $script:KnownPreviousPayloadHashes[$name] -contains $actual
+            if ($actual -ne $expected -and -not $knownPrevious) {
                 Throw-EngineError 'wrapper_conflict' "$name differs from the accepted R185 runtime (SHA-256 $actual). No files were changed."
             }
         }
@@ -524,6 +541,7 @@ function Install-Fresh {
             locked_settings = [ordered]@{
                 Resampling = 'lanczos-3'
                 ScalingMode = 'stretched_ar'
+                FullscreenAttributes = 'fake'
                 FastVideoMemoryAccess = 'true'
                 FPSLimit = '0'
             }
@@ -621,7 +639,15 @@ function Repair-Installed {
             }
             $installedHash = [string]$record.installed_sha256
             $originalHash = [string]$record.original_sha256
-            if ($exists -and $currentHash -ne $installedHash -and (-not [bool]$record.existed -or $currentHash -ne $originalHash)) {
+            $knownPrevious = $false
+            if ($exists) {
+                $knownPrevious = ($name -eq 'D3D9.dll' -and $script:KnownD3D9Modes.ContainsKey($currentHash)) -or
+                    ($script:KnownPreviousPayloadHashes.ContainsKey($name) -and
+                        $script:KnownPreviousPayloadHashes[$name] -contains $currentHash)
+            }
+            if ($exists -and $currentHash -ne $installedHash -and
+                (-not [bool]$record.existed -or $currentHash -ne $originalHash) -and
+                -not $knownPrevious) {
                 Throw-EngineError 'postinstall_modified' "$name was changed after installation. Repair made no changes."
             }
             $currentRecords[$name] = [ordered]@{ existed = $exists; sha256 = $currentHash }
@@ -653,6 +679,13 @@ function Repair-Installed {
         $Receipt.installer_version = $InstallerVersion
         if ($InstallerPath -and (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
             $Receipt.installer_sha256 = Get-Sha256 $InstallerPath
+        }
+        $Receipt.locked_settings = [ordered]@{
+            Resampling = 'lanczos-3'
+            ScalingMode = 'stretched_ar'
+            FullscreenAttributes = 'fake'
+            FastVideoMemoryAccess = 'true'
+            FPSLimit = '0'
         }
         $Receipt.repair_count = [int]$Receipt.repair_count + 1
         $Receipt | Add-Member -NotePropertyName 'last_repaired_utc' -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
