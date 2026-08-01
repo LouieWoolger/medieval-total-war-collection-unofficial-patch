@@ -1,16 +1,23 @@
 Unofficial Medieval: Total War Collection Patch runtime R185
 
 R185 D3D9 proxy SHA-256:
-D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932
+B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F
 
-Frontend mapper activation is gated by semantic menu, campaign-setup, prebattle, or Battle Results ownership.
+Frontend mapper activation is gated by registered immutable page metadata or semantic main-menu, campaign-setup, prebattle, or Battle Results ownership.
+All 50 known frontend page families are classified from their exact metadata-row spans, so shared mode values such as LAN mode 6 cannot disarm a live frontend.
+Registered frontend ownership is polled by live render-root identity across focus changes while stale roots remain unable to rearm gameplay.
 New Campaign setup is recognized from its complete immutable page-metadata graph, not from shared mode or 800x600 geometry.
 An active setup mapper is preserved across focus changes, but verified loading disarm cannot be rearmed by stale setup state.
 Quick Battle 3D rendering and its results page are separated by exact frontend page identity.
 Prebattle ownership begins before its resource graph is built and ends with the modal battle-resolution lifecycle.
 Shared 800x600 surface geometry never rearms stale frontend state.
 Loading capture synchronizes semantic gameplay ownership before preserving a plane.
+Successful primary-staging locks notify dgVoodoo through its guarded-page lifecycle before gameplay updates the surface.
+The notification is gated by exact live surface identity rather than 800x600 geometry and preserves the origin pixel byte exactly.
 dgVoodoo fake fullscreen keeps the scaled swapchain in the application window across resolution, focus, and RDP transitions.
+Frontend-to-loading transitions keep the game and dgVoodoo presentation window on the active monitor instead of exposing logical-mode window sizes.
+Strategy and battle selectors preserve their existing ordered mode records while excluding dimensions above the active presentation monitor's preferred physical mode.
+Saved selections that no longer fit fall back independently to the highest remaining existing strategy or battle mode.
 
 dgVoodoo2 backend version: 2.87.2
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2

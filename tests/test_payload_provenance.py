@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (137728, "D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932"),
+    "D3D9.dll": (151040, "B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F"),
     "dgVoodoo_D3D9.dll": (485888, "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6"),
     "ddraw.dll": (258560, "81325E9B5C71F544B9A28AE4C375AF38E12535E8AC57C8F33B5456A342AE1465"),
     "D3DImm.dll": (210432, "FBE72EF46AE87DC80F5AEB3D8FC12F97F9D9B2274C4887C70BA65651458D5BF2"),
@@ -66,6 +66,14 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "source/combined_proxy.c",
         "source/combined_proxy.def",
         "source/frontend_fix.c",
+        "source/mapper_activation_core.c",
+        "source/mapper_activation_core.h",
+        "source/primary_origin_guard_core.c",
+        "source/primary_origin_guard_core.h",
+        "source/resolution_filter_core.c",
+        "source/resolution_filter_core.h",
+        "source/window_transition_guard_core.c",
+        "source/window_transition_guard_core.h",
         "source/build_scaffold.ps1",
         "accepted-dust-source/d3d9_proxy.c",
         "accepted-dust-source/d3d9_proxy.def",
@@ -73,6 +81,10 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "accepted-dust-source/build_release.ps1",
         "tests/smoke_loader.c",
         "tests/focus_plane_shadow_tests.c",
+        "tests/primary_origin_guard_tests.c",
+        "tests/resolution_filter_tests.c",
+        "tests/window_transition_guard_tests.c",
+        "tests/mapper_activation_tests.c",
         "tests/mapper_shader_clone_tests.c",
         "tests/assets/mapper-lanczos3-ps-36116AC1.bin",
     }
@@ -129,3 +141,50 @@ def test_loading_capture_disarms_from_semantic_game_state_before_copying() -> No
     begin_shadow = body.index("begin_loading_shadow_operation()")
     capture = body.index("loading_shadow_capture(&loading_shadow, &surface)")
     assert synchronize < begin_shadow < capture
+
+
+def test_primary_origin_guard_notifies_owner_without_resolution_heuristics() -> None:
+    source = (R185 / "source" / "frontend_fix.c").read_text(encoding="utf-8")
+    core = (R185 / "source" / "primary_origin_guard_core.c").read_text(
+        encoding="utf-8"
+    )
+    header = (R185 / "source" / "primary_origin_guard_core.h").read_text(
+        encoding="utf-8"
+    )
+    build = (R185 / "source" / "build_scaffold.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    stub = re.search(
+        r"primary_origin_guard_hook_stub\(void\) "
+        r"\{(?P<body>.*?)\n\}",
+        source,
+        re.DOTALL,
+    )
+    assert stub is not None
+    body = stub.group("body")
+    assert "test eax, eax" in body
+    assert "push dword ptr [esi + 0x28]" in body
+    assert "push dword ptr [0x00F44098]" in body
+    assert "push dword ptr [esi + 0x04]" in body
+    assert "call mtw_primary_origin_guard_touch" in body
+    assert "MTW_FRONTEND_WIDTH" not in body
+    assert "MTW_FRONTEND_HEIGHT" not in body
+
+    assert "locked_surface == current_primary_staging_surface" in core
+    assert "VirtualQuery(bits" in core
+    assert "PAGE_GUARD" in core
+    assert "volatile unsigned char" in core
+    assert "*origin = value" in core
+    assert "__try" in core
+    assert "__except" in core
+    assert "VirtualProtect" not in core
+
+    assert "#define MTW_PRIMARY_ORIGIN_GUARD_HOOK_SIZE 7u" in header
+    assert "mtw_primary_origin_guard_hook_supported" in source
+    assert "primary_origin_guard_installed = write_rel_jump" in source
+    assert "restore_original(primary_origin_guard_target" in source
+    assert "primary_origin_guard_core.obj" in build
+    assert "primary_origin_guard_tests.exe" in build
+    assert "primary_origin_guard_tests_exit = 0" in build
+    assert build.count("'/EHa'") == 2

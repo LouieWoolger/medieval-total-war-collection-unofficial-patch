@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <intrin.h>
 
 #include "frontend_fix.h"
 #include "frontend_epoch_core.h"
@@ -14,7 +15,10 @@
 #include "loading_shadow_core.h"
 #include "mapper_activation_core.h"
 #include "mapper_shader_clone_core.h"
+#include "primary_origin_guard_core.h"
 #include "reentrant_lock_patch_core.h"
+#include "resolution_filter_core.h"
+#include "window_transition_guard_core.h"
 
 extern IMAGE_DOS_HEADER __ImageBase;
 
@@ -31,6 +35,25 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_BACKING_BITS_RVA 0x004D0248u
 #define MTW_PRIMARY_SURFACE_UNLOCK_RVA 0x000122D0u
 #define MTW_DISPATCH_MESSAGE_IAT_RVA 0x0038428Cu
+#define MTW_MOVE_WINDOW_IAT_RVA 0x003842E4u
+#define MTW_GAME_WINDOW_RVA 0x00B36040u
+#define MTW_TRANSITION_MOVE_RETURN_RVA 0x002D631Du
+#define MTW_RESOLUTION_INITIALIZE_CALL_RVA 0x002DDD2Fu
+#define MTW_RESOLUTION_INITIALIZE_TARGET_RVA 0x002DCE50u
+#define MTW_RESOLUTION_ADAPTERS_RVA 0x00A7A1E0u
+#define MTW_RESOLUTION_ADAPTER_SIZE 96u
+#define MTW_RESOLUTION_BATTLE_COUNT_OFFSET 0x20u
+#define MTW_RESOLUTION_STRATEGY_COUNT_OFFSET 0x24u
+#define MTW_RESOLUTION_COUNT_OFFSET 0x28u
+#define MTW_RESOLUTION_RECORDS_OFFSET 0x34u
+#define MTW_RESOLUTION_BATTLE_BEGIN_OFFSET 0x44u
+#define MTW_RESOLUTION_BATTLE_END_OFFSET 0x48u
+#define MTW_RESOLUTION_STRATEGY_BEGIN_OFFSET 0x54u
+#define MTW_RESOLUTION_STRATEGY_END_OFFSET 0x58u
+#define MTW_BATTLE_WIDTH_RVA 0x003A2780u
+#define MTW_BATTLE_HEIGHT_RVA 0x003A2784u
+#define MTW_STRATEGY_WIDTH_RVA 0x003A2788u
+#define MTW_STRATEGY_HEIGHT_RVA 0x003A278Cu
 #define MTW_FRONTEND_FRAMEBUFFER_BITS_RVA 0x00A4587Cu
 #define MTW_FRONTEND_FRAMEBUFFER_PITCH_RVA 0x00A45878u
 #define MTW_RENDER_INPUT_ROOT_RVA 0x00A6F5D0u
@@ -66,6 +89,7 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define DGVOODOO_GLOBAL_SLOT_RVA 0x000DFAA4u
 #define DGVOODOO_MAPPER_DRAW_CALLSITE_RVA 0x000B47DAu
 #define DGVOODOO_D3D11_CREATE_DEVICE_CALLSITE_RVA 0x000B666Bu
+#define DGVOODOO_SET_WINDOW_POS_SLOT_RVA 0x000D21FCu
 #define DGVOODOO_EXPECTED_TIMESTAMP 0x6A088020u
 #define DGVOODOO_EXPECTED_IMAGE_SIZE 0x001A3000u
 #define MTW_DEVICE_CREATE_PIXEL_SHADER_INDEX 15u
@@ -130,6 +154,9 @@ static const unsigned char mapper_draw_expected[MTW_MAPPER_CALLSITE_SIZE] = {
 static const unsigned char d3d11_create_device_call_expected[6] = {
     0xFF, 0xD2, 0x85, 0xC0, 0x78, 0x48
 };
+static const unsigned char resolution_initialize_call_expected[5] = {
+    0xE8, 0x1C, 0xF1, 0xFF, 0xFF
+};
 static INIT_ONCE frontend_once = INIT_ONCE_STATIC_INIT;
 static INIT_ONCE backend_tracking_once = INIT_ONCE_STATIC_INIT;
 static uintptr_t game_base;
@@ -168,6 +195,8 @@ static void *reverse_dispatcher_continue;
 static void *primary_surface_unlock_continue;
 static void *prebattle_entry_original_target;
 static void *prebattle_resolution_return_continue;
+static void *primary_origin_guard_failure_continue;
+static void *primary_origin_guard_success_continue;
 static void *constructor_global_target;
 static void *custom_acquire_target;
 static void *custom_release_target;
@@ -220,6 +249,34 @@ static mtw_create_pixel_shader_fn mapper_original_create_pixel_shader;
 typedef LRESULT (WINAPI *mtw_dispatch_message_fn)(const MSG *message);
 static mtw_dispatch_message_fn original_dispatch_message;
 static void *volatile *dispatch_message_iat_slot;
+typedef BOOL (WINAPI *mtw_move_window_fn)(HWND window, int x, int y,
+                                           int width, int height,
+                                           BOOL repaint);
+typedef BOOL (WINAPI *mtw_set_window_pos_fn)(
+    HWND window, HWND insert_after, int x, int y,
+    int width, int height, UINT flags);
+typedef int (__cdecl *mtw_resolution_initialize_fn)(
+    uintptr_t adapter_index, uintptr_t argument2,
+    uintptr_t argument3, uintptr_t argument4);
+static mtw_move_window_fn original_move_window;
+static void *volatile *move_window_iat_slot;
+static mtw_set_window_pos_fn original_backend_set_window_pos;
+static void *volatile *backend_set_window_pos_slot;
+static mtw_resolution_initialize_fn original_resolution_initialize;
+static mtw_resolution_filter_state resolution_filter_state;
+static mtw_resolution_record
+    resolution_filter_records[MTW_RESOLUTION_FILTER_CAPACITY];
+static uint32_t
+    resolution_strategy_indices[MTW_RESOLUTION_FILTER_CAPACITY];
+static uint32_t
+    resolution_battle_indices[MTW_RESOLUTION_FILTER_CAPACITY];
+static CRITICAL_SECTION resolution_filter_lock;
+static uintptr_t resolution_adapter_index;
+static int resolution_adapter_valid;
+static uint32_t resolution_enumeration_generation;
+static uint32_t resolution_monitor_cap_width;
+static uint32_t resolution_monitor_cap_height;
+static uintptr_t resolution_monitor_identity;
 static volatile LONG focus_span_substitutions;
 static volatile LONG startup_slow_lane_mutations;
 static volatile LONG reentrant_outer_owner_tid;
@@ -262,8 +319,10 @@ __declspec(naked) static void d3d11_create_device_hook_stub(void);
 __declspec(naked) static void prebattle_entry_hook_stub(void);
 __declspec(naked) static void prebattle_resolution_return_hook_stub(void);
 static int install_d3d11_create_device_hook(void);
+static int install_transition_resolution_hooks(void);
 static int diagnostic_trace_armed(void);
 static void diagnostic_begin_content_epoch(uint32_t generation);
+static int refresh_resolution_filter(const char *reason);
 
 static void diagnostic_write(const char *text) {
     DWORD written;
@@ -306,6 +365,538 @@ static int read_current_process_memory_exact(uintptr_t address,
                GetCurrentProcess(), (const void *)address,
                destination, size, &transferred) != 0 &&
            transferred == size;
+}
+
+static int write_current_process_memory_exact(uintptr_t address,
+                                              const void *source,
+                                              SIZE_T size) {
+    SIZE_T transferred = 0u;
+
+    if (address == 0u || source == NULL || size == 0u) return 0;
+    return WriteProcessMemory(
+               GetCurrentProcess(), (void *)address,
+               source, size, &transferred) != 0 &&
+           transferred == size;
+}
+
+static HWND query_game_window(void) {
+    HWND window = NULL;
+    DWORD process_id = 0u;
+
+    if (game_base != 0u) {
+        (void)read_current_process_memory_exact(
+            game_base + MTW_GAME_WINDOW_RVA,
+            &window, sizeof(window));
+    }
+    if (window != NULL && IsWindow(window)) return window;
+    window = GetForegroundWindow();
+    if (window == NULL) return NULL;
+    GetWindowThreadProcessId(window, &process_id);
+    return process_id == GetCurrentProcessId() ? window : NULL;
+}
+
+static uint32_t mix_output_identity(uint32_t value, uint32_t part) {
+    value ^= part + 0x9E3779B9u + (value << 6u) + (value >> 2u);
+    return value;
+}
+
+static int query_monitor_native_cap(HWND window,
+                                    uint32_t *cap_width,
+                                    uint32_t *cap_height,
+                                    uintptr_t *output_identity,
+                                    int *used_preferred_mode) {
+    MONITORINFOEXW monitor_info;
+    HMONITOR monitor;
+    UINT32 path_count = 0u;
+    UINT32 mode_count = 0u;
+    DISPLAYCONFIG_PATH_INFO *paths = NULL;
+    DISPLAYCONFIG_MODE_INFO *modes = NULL;
+    LONG status;
+    uint32_t preferred_width = 0u;
+    uint32_t preferred_height = 0u;
+    uint32_t identity = 0x811C9DC5u;
+    UINT32 index;
+    int matched = 0;
+    int attempt;
+
+    if (cap_width == NULL || cap_height == NULL ||
+        output_identity == NULL || used_preferred_mode == NULL ||
+        window == NULL) {
+        return 0;
+    }
+    *used_preferred_mode = 0;
+    monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if (monitor == NULL) return 0;
+    memset(&monitor_info, 0, sizeof(monitor_info));
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (!GetMonitorInfoW(monitor, (MONITORINFO *)&monitor_info)) return 0;
+
+    for (attempt = 0; attempt < 3; ++attempt) {
+        status = GetDisplayConfigBufferSizes(
+            QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
+        if (status != ERROR_SUCCESS || path_count == 0u ||
+            mode_count == 0u || path_count > 256u || mode_count > 512u) {
+            break;
+        }
+        paths = (DISPLAYCONFIG_PATH_INFO *)HeapAlloc(
+            GetProcessHeap(), HEAP_ZERO_MEMORY,
+            (SIZE_T)path_count * sizeof(*paths));
+        modes = (DISPLAYCONFIG_MODE_INFO *)HeapAlloc(
+            GetProcessHeap(), HEAP_ZERO_MEMORY,
+            (SIZE_T)mode_count * sizeof(*modes));
+        if (paths == NULL || modes == NULL) break;
+        status = QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS, &path_count, paths,
+            &mode_count, modes, NULL);
+        if (status != ERROR_INSUFFICIENT_BUFFER) break;
+        HeapFree(GetProcessHeap(), 0u, paths);
+        HeapFree(GetProcessHeap(), 0u, modes);
+        paths = NULL;
+        modes = NULL;
+    }
+
+    if (status == ERROR_SUCCESS && paths != NULL) {
+        for (index = 0u; index < path_count; ++index) {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME source_name;
+            DISPLAYCONFIG_TARGET_PREFERRED_MODE preferred;
+            uint32_t width;
+            uint32_t height;
+
+            memset(&source_name, 0, sizeof(source_name));
+            source_name.header.type =
+                DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            source_name.header.size = sizeof(source_name);
+            source_name.header.adapterId = paths[index].sourceInfo.adapterId;
+            source_name.header.id = paths[index].sourceInfo.id;
+            if (DisplayConfigGetDeviceInfo(&source_name.header) !=
+                    ERROR_SUCCESS ||
+                lstrcmpiW(source_name.viewGdiDeviceName,
+                          monitor_info.szDevice) != 0) {
+                continue;
+            }
+
+            memset(&preferred, 0, sizeof(preferred));
+            preferred.header.type =
+                DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_PREFERRED_MODE;
+            preferred.header.size = sizeof(preferred);
+            preferred.header.adapterId = paths[index].targetInfo.adapterId;
+            preferred.header.id = paths[index].targetInfo.id;
+            if (DisplayConfigGetDeviceInfo(&preferred.header) !=
+                ERROR_SUCCESS) {
+                continue;
+            }
+            width = preferred.width;
+            height = preferred.height;
+            if (paths[index].targetInfo.rotation ==
+                    DISPLAYCONFIG_ROTATION_ROTATE90 ||
+                paths[index].targetInfo.rotation ==
+                    DISPLAYCONFIG_ROTATION_ROTATE270) {
+                uint32_t swap = width;
+                width = height;
+                height = swap;
+            }
+            if (!mtw_resolution_cap_valid(width, height)) continue;
+            if (!matched || width < preferred_width) {
+                preferred_width = width;
+            }
+            if (!matched || height < preferred_height) {
+                preferred_height = height;
+            }
+            identity = mix_output_identity(
+                identity,
+                (uint32_t)paths[index].targetInfo.adapterId.LowPart);
+            identity = mix_output_identity(
+                identity,
+                (uint32_t)paths[index].targetInfo.adapterId.HighPart);
+            identity = mix_output_identity(
+                identity, paths[index].targetInfo.id);
+            matched = 1;
+        }
+    }
+    if (paths != NULL) HeapFree(GetProcessHeap(), 0u, paths);
+    if (modes != NULL) HeapFree(GetProcessHeap(), 0u, modes);
+
+    if (matched) {
+        *cap_width = preferred_width;
+        *cap_height = preferred_height;
+        *output_identity = identity == 0u ? 1u : (uintptr_t)identity;
+        *used_preferred_mode = 1;
+        return 1;
+    }
+
+    if (monitor_info.rcMonitor.right <= monitor_info.rcMonitor.left ||
+        monitor_info.rcMonitor.bottom <= monitor_info.rcMonitor.top) {
+        return 0;
+    }
+    *cap_width = (uint32_t)(monitor_info.rcMonitor.right -
+                            monitor_info.rcMonitor.left);
+    *cap_height = (uint32_t)(monitor_info.rcMonitor.bottom -
+                             monitor_info.rcMonitor.top);
+    if (!mtw_resolution_cap_valid(*cap_width, *cap_height)) return 0;
+    *output_identity = (uintptr_t)monitor;
+    if (*output_identity == 0u) *output_identity = 1u;
+    return 1;
+}
+
+static int normalize_selected_resolution(
+    const mtw_resolution_record *records,
+    uint32_t count,
+    mtw_resolution_selector selector,
+    uintptr_t width_address,
+    uintptr_t height_address,
+    int *changed) {
+    uint32_t selected_width;
+    uint32_t selected_height;
+    uint32_t fallback_width;
+    uint32_t fallback_height;
+
+    if (!read_current_process_memory_exact(
+            width_address, &selected_width, sizeof(selected_width)) ||
+        !read_current_process_memory_exact(
+            height_address, &selected_height, sizeof(selected_height)) ||
+        !mtw_resolution_select_fallback(
+            records, count, selector, selected_width, selected_height,
+            &fallback_width, &fallback_height)) {
+        return 0;
+    }
+    if (selected_width == fallback_width &&
+        selected_height == fallback_height) {
+        return 1;
+    }
+    if (!write_current_process_memory_exact(
+            width_address, &fallback_width, sizeof(fallback_width)) ||
+        !write_current_process_memory_exact(
+            height_address, &fallback_height, sizeof(fallback_height))) {
+        return 0;
+    }
+    if (changed != NULL) *changed = 1;
+    return 1;
+}
+
+static int refresh_resolution_filter(const char *reason) {
+    mtw_resolution_filter_result filter_result;
+    uintptr_t adapter_base;
+    uintptr_t records_address;
+    uintptr_t strategy_begin;
+    uintptr_t strategy_end;
+    uintptr_t battle_begin;
+    uintptr_t battle_end;
+    uintptr_t output_identity = 0u;
+    HWND window;
+    uint32_t count;
+    uint32_t strategy_count;
+    uint32_t strategy_capacity;
+    uint32_t battle_count;
+    uint32_t battle_capacity;
+    uint32_t cap_width = 0u;
+    uint32_t cap_height = 0u;
+    uint32_t conservative_width = 0u;
+    uint32_t conservative_height = 0u;
+    uint32_t index;
+    int used_preferred_mode = 0;
+    int normalized = 0;
+    int success = 0;
+    char line[512];
+
+    if (game_base == 0u || !resolution_adapter_valid ||
+        resolution_adapter_index > 63u) {
+        return 0;
+    }
+    adapter_base = game_base + MTW_RESOLUTION_ADAPTERS_RVA +
+                   resolution_adapter_index * MTW_RESOLUTION_ADAPTER_SIZE;
+    EnterCriticalSection(&resolution_filter_lock);
+    if (!read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_COUNT_OFFSET,
+            &count, sizeof(count)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_RECORDS_OFFSET,
+            &records_address, sizeof(records_address)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_BEGIN_OFFSET,
+            &strategy_begin, sizeof(strategy_begin)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_END_OFFSET,
+            &strategy_end, sizeof(strategy_end)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_BATTLE_BEGIN_OFFSET,
+            &battle_begin, sizeof(battle_begin)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_BATTLE_END_OFFSET,
+            &battle_end, sizeof(battle_end)) ||
+        count == 0u || count > MTW_RESOLUTION_FILTER_CAPACITY ||
+        records_address == 0u || strategy_begin == 0u ||
+        battle_begin == 0u || strategy_end < strategy_begin ||
+        battle_end < battle_begin ||
+        ((strategy_end - strategy_begin) % sizeof(uint32_t)) != 0u ||
+        ((battle_end - battle_begin) % sizeof(uint32_t)) != 0u ||
+        !read_current_process_memory_exact(
+            records_address, resolution_filter_records,
+            (SIZE_T)count * sizeof(resolution_filter_records[0]))) {
+        LeaveCriticalSection(&resolution_filter_lock);
+        return 0;
+    }
+    strategy_count = (uint32_t)((strategy_end - strategy_begin) /
+                                sizeof(uint32_t));
+    battle_count = (uint32_t)((battle_end - battle_begin) /
+                              sizeof(uint32_t));
+    strategy_capacity = strategy_count;
+    battle_capacity = battle_count;
+    if (resolution_filter_state.selectors_initialized &&
+        resolution_filter_state.selector_enumeration_generation ==
+            resolution_enumeration_generation) {
+        strategy_capacity =
+            resolution_filter_state.baseline_strategy_index_count;
+        battle_capacity =
+            resolution_filter_state.baseline_battle_index_count;
+    }
+    if (strategy_count == 0u || battle_count == 0u ||
+        strategy_count > strategy_capacity ||
+        battle_count > battle_capacity ||
+        strategy_capacity > MTW_RESOLUTION_FILTER_CAPACITY ||
+        battle_capacity > MTW_RESOLUTION_FILTER_CAPACITY ||
+        !read_current_process_memory_exact(
+            strategy_begin, resolution_strategy_indices,
+            (SIZE_T)strategy_count * sizeof(resolution_strategy_indices[0])) ||
+        !read_current_process_memory_exact(
+            battle_begin, resolution_battle_indices,
+            (SIZE_T)battle_count * sizeof(resolution_battle_indices[0]))) {
+        LeaveCriticalSection(&resolution_filter_lock);
+        return 0;
+    }
+
+    window = query_game_window();
+    (void)query_monitor_native_cap(
+        window, &cap_width, &cap_height,
+        &output_identity, &used_preferred_mode);
+    if (mtw_resolution_conservative_cap(
+            resolution_filter_records, count,
+            &conservative_width, &conservative_height)) {
+        if (cap_width < conservative_width) cap_width = conservative_width;
+        if (cap_height < conservative_height) cap_height = conservative_height;
+    }
+    if (!mtw_resolution_cap_valid(cap_width, cap_height)) {
+        LeaveCriticalSection(&resolution_filter_lock);
+        return 0;
+    }
+    if (output_identity == 0u) {
+        output_identity = (uintptr_t)window;
+        if (output_identity == 0u) output_identity = 1u;
+    }
+
+    if (!mtw_resolution_filter_apply_selectors(
+            &resolution_filter_state, resolution_filter_records, count,
+            records_address, output_identity,
+            resolution_enumeration_generation,
+            cap_width, cap_height,
+            resolution_strategy_indices, &strategy_count,
+            strategy_capacity,
+            resolution_battle_indices, &battle_count,
+            battle_capacity,
+            &filter_result)) {
+        LeaveCriticalSection(&resolution_filter_lock);
+        return 0;
+    }
+    for (index = 0u; index < count; ++index) {
+        if (!write_current_process_memory_exact(
+                records_address +
+                    (uintptr_t)index * sizeof(resolution_filter_records[0]) +
+                    1u,
+                &resolution_filter_records[index].flags[1], 3u)) {
+            LeaveCriticalSection(&resolution_filter_lock);
+            return 0;
+        }
+    }
+    strategy_end = strategy_begin +
+                   (uintptr_t)strategy_count * sizeof(uint32_t);
+    battle_end = battle_begin +
+                 (uintptr_t)battle_count * sizeof(uint32_t);
+    if (!write_current_process_memory_exact(
+            strategy_begin, resolution_strategy_indices,
+            (SIZE_T)strategy_count * sizeof(resolution_strategy_indices[0])) ||
+        !write_current_process_memory_exact(
+            battle_begin, resolution_battle_indices,
+            (SIZE_T)battle_count * sizeof(resolution_battle_indices[0])) ||
+        !write_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_END_OFFSET,
+            &strategy_end, sizeof(strategy_end)) ||
+        !write_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_BATTLE_END_OFFSET,
+            &battle_end, sizeof(battle_end)) ||
+        !write_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_COUNT_OFFSET,
+            &strategy_count, sizeof(strategy_count)) ||
+        !write_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_BATTLE_COUNT_OFFSET,
+            &battle_count, sizeof(battle_count))) {
+        LeaveCriticalSection(&resolution_filter_lock);
+        return 0;
+    }
+    success = normalize_selected_resolution(
+                  resolution_filter_records, count,
+                  MTW_RESOLUTION_SELECTOR_BATTLE,
+                  game_base + MTW_BATTLE_WIDTH_RVA,
+                  game_base + MTW_BATTLE_HEIGHT_RVA,
+                  &normalized) &&
+              normalize_selected_resolution(
+                  resolution_filter_records, count,
+                  MTW_RESOLUTION_SELECTOR_STRATEGY,
+                  game_base + MTW_STRATEGY_WIDTH_RVA,
+                  game_base + MTW_STRATEGY_HEIGHT_RVA,
+                  &normalized);
+    if (success) {
+        resolution_monitor_cap_width = cap_width;
+        resolution_monitor_cap_height = cap_height;
+        resolution_monitor_identity = output_identity;
+    }
+    LeaveCriticalSection(&resolution_filter_lock);
+
+    wsprintfA(
+        line,
+        "resolution filter r271 reason=%s cap=%lux%lu preferred=%d output=%08lX adapter=%lu records=%lu strategyRecords=%lu battleRecords=%lu strategyModes=%lu battleModes=%lu rejected=%lu recaptured=%d generation=%lu normalized=%d success=%d\r\n",
+        reason == NULL ? "unknown" : reason,
+        (DWORD)cap_width, (DWORD)cap_height, used_preferred_mode,
+        (DWORD)output_identity, (DWORD)resolution_adapter_index,
+        (DWORD)count, (DWORD)filter_result.strategy_records,
+        (DWORD)filter_result.battle_records,
+        (DWORD)strategy_count, (DWORD)battle_count,
+        (DWORD)filter_result.rejected_records,
+        filter_result.recaptured_baseline,
+        (DWORD)resolution_enumeration_generation,
+        normalized, success);
+    diagnostic_write(line);
+    return success;
+}
+
+static int __cdecl resolution_initialize_hook(
+    uintptr_t adapter_index, uintptr_t argument2,
+    uintptr_t argument3, uintptr_t argument4) {
+    int result = 0;
+
+    if (original_resolution_initialize != NULL) {
+        result = original_resolution_initialize(
+            adapter_index, argument2, argument3, argument4);
+    }
+    resolution_adapter_index = adapter_index;
+    resolution_adapter_valid = 1;
+    resolution_enumeration_generation++;
+    if (resolution_enumeration_generation == 0u) {
+        resolution_enumeration_generation = 1u;
+    }
+    (void)refresh_resolution_filter("adapter-init");
+    return result;
+}
+
+static BOOL WINAPI frontend_move_window(HWND window, int x, int y,
+                                        int width, int height,
+                                        BOOL repaint) {
+    mtw_window_transition_request request;
+    MONITORINFO monitor_info;
+    HMONITOR monitor;
+    HWND game_window;
+    RECT current_window;
+    char line[256];
+
+    memset(&request, 0, sizeof(request));
+    memset(&monitor_info, 0, sizeof(monitor_info));
+    game_window = query_game_window();
+    monitor = window == NULL ? NULL :
+        MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (game_window != NULL && monitor != NULL &&
+        GetWindowRect(window, &current_window) &&
+        GetMonitorInfoW(monitor, &monitor_info)) {
+        request.target_window = (uintptr_t)window;
+        request.game_window = (uintptr_t)game_window;
+        request.return_address = (uintptr_t)_ReturnAddress();
+        request.expected_return_address =
+            game_base + MTW_TRANSITION_MOVE_RETURN_RVA;
+        request.requested_x = x;
+        request.requested_y = y;
+        request.requested_width = width;
+        request.requested_height = height;
+        request.repaint = repaint != FALSE;
+        request.current_window.left = current_window.left;
+        request.current_window.top = current_window.top;
+        request.current_window.right = current_window.right;
+        request.current_window.bottom = current_window.bottom;
+        request.monitor.left = monitor_info.rcMonitor.left;
+        request.monitor.top = monitor_info.rcMonitor.top;
+        request.monitor.right = monitor_info.rcMonitor.right;
+        request.monitor.bottom = monitor_info.rcMonitor.bottom;
+        if (mtw_window_transition_should_suppress(&request)) {
+            wsprintfA(
+                line,
+                "transition window shrink suppressed r270 tid=%lu hwnd=%08lX caller=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
+                GetCurrentThreadId(), (DWORD)(uintptr_t)window,
+                (DWORD)request.return_address, (LONG)x, (LONG)y,
+                (LONG)width, (LONG)height,
+                (LONG)current_window.left, (LONG)current_window.top,
+                (LONG)current_window.right, (LONG)current_window.bottom,
+                (LONG)monitor_info.rcMonitor.left,
+                (LONG)monitor_info.rcMonitor.top,
+                (LONG)monitor_info.rcMonitor.right,
+                (LONG)monitor_info.rcMonitor.bottom);
+            diagnostic_write(line);
+            return TRUE;
+        }
+    }
+    return original_move_window == NULL ? FALSE :
+        original_move_window(window, x, y, width, height, repaint);
+}
+
+static BOOL WINAPI frontend_set_window_pos(
+    HWND window, HWND insert_after, int x, int y,
+    int width, int height, UINT flags) {
+    mtw_window_transition_request request;
+    MONITORINFO monitor_info;
+    HMONITOR monitor;
+    HWND game_window;
+    RECT current_window;
+    char line[256];
+
+    memset(&request, 0, sizeof(request));
+    memset(&monitor_info, 0, sizeof(monitor_info));
+    game_window = query_game_window();
+    monitor = window == NULL ? NULL :
+        MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (game_window != NULL && monitor != NULL &&
+        GetWindowRect(window, &current_window) &&
+        GetMonitorInfoW(monitor, &monitor_info)) {
+        request.target_window = (uintptr_t)window;
+        request.game_window = (uintptr_t)game_window;
+        request.requested_x = x;
+        request.requested_y = y;
+        request.requested_width = width;
+        request.requested_height = height;
+        request.current_window.left = current_window.left;
+        request.current_window.top = current_window.top;
+        request.current_window.right = current_window.right;
+        request.current_window.bottom = current_window.bottom;
+        request.monitor.left = monitor_info.rcMonitor.left;
+        request.monitor.top = monitor_info.rcMonitor.top;
+        request.monitor.right = monitor_info.rcMonitor.right;
+        request.monitor.bottom = monitor_info.rcMonitor.bottom;
+        if (mtw_wrapper_window_transition_should_suppress(&request, flags)) {
+            wsprintfA(
+                line,
+                "backend transition window shrink suppressed r272 tid=%lu hwnd=%08lX flags=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
+                GetCurrentThreadId(), (DWORD)(uintptr_t)window,
+                (DWORD)flags, (LONG)x, (LONG)y,
+                (LONG)width, (LONG)height,
+                (LONG)current_window.left, (LONG)current_window.top,
+                (LONG)current_window.right, (LONG)current_window.bottom,
+                (LONG)monitor_info.rcMonitor.left,
+                (LONG)monitor_info.rcMonitor.top,
+                (LONG)monitor_info.rcMonitor.right,
+                (LONG)monitor_info.rcMonitor.bottom);
+            diagnostic_write(line);
+            return TRUE;
+        }
+    }
+    return original_backend_set_window_pos == NULL ? FALSE :
+        original_backend_set_window_pos(
+            window, insert_after, x, y, width, height, flags);
 }
 
 static mtw_mapper_frontend_owner_kind query_frontend_owner(void) {
@@ -355,8 +946,7 @@ static mtw_mapper_frontend_owner_kind query_frontend_owner(void) {
             mtw_mapper_campaign_setup_metadata_anchor(
                 game_base, metadata);
     }
-    if (owner == MTW_MAPPER_FRONTEND_OWNER_UNKNOWN &&
-        mtw_mapper_campaign_setup_metadata_complete(
+    if (mtw_mapper_campaign_setup_metadata_complete(
             campaign_setup_anchor_mask)) {
         owner = MTW_MAPPER_FRONTEND_OWNER_CAMPAIGN_SETUP;
     }
@@ -466,30 +1056,29 @@ static LONG synchronize_mapper_with_game_mode(void) {
             }
         }
         mapper_frontend_owner_poll_tick = 0u;
-    } else if (game_mode != 0u && game_mode != UINT32_MAX) {
-        owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
-        mapper_frontend_owner_root = 0u;
-        mapper_frontend_owner_poll_tick = 0u;
-    } else if (owner ==
-               MTW_MAPPER_FRONTEND_OWNER_BATTLE_RESULTS) {
+    } else if (render_input_root != 0u) {
         /*
-         * Replace the cached result owner when the result page hands control
-         * back to the ordinary frontend.  Keeping the mapper enabled is
-         * correct, but carrying the old root identity into a later mode-12
-         * transition is not.
+         * Several complete common-frontend families run under top-level
+         * modes other than 0/idle (LAN uses mode 6).  The live registered
+         * page graph is the authoritative frontend identity; the shared
+         * top-level mode is not.  Poll the immutable descriptor graph at a
+         * bounded cadence so page changes with a reused root are observed.
          */
-        owner = query_frontend_owner();
-        mapper_frontend_owner_root = 0u;
-        mapper_frontend_owner_poll_tick = GetTickCount();
-    } else if (current.frontend_rearm_armed) {
-        mapper_frontend_owner_root = 0u;
         now = GetTickCount();
-        if (mapper_frontend_owner_poll_tick == 0u ||
+        if (mapper_frontend_owner_root != render_input_root ||
+            mapper_frontend_owner_poll_tick == 0u ||
             now - mapper_frontend_owner_poll_tick >=
                 MTW_FRONTEND_OWNER_POLL_INTERVAL_MS) {
             owner = query_frontend_owner();
+            mapper_frontend_owner_root =
+                owner != MTW_MAPPER_FRONTEND_OWNER_UNKNOWN ?
+                    render_input_root : 0u;
             mapper_frontend_owner_poll_tick = now;
         }
+    } else {
+        owner = MTW_MAPPER_FRONTEND_OWNER_UNKNOWN;
+        mapper_frontend_owner_root = 0u;
+        mapper_frontend_owner_poll_tick = 0u;
     }
     next = mtw_mapper_activation_after_game_mode(
         current, game_mode, owner);
@@ -655,6 +1244,16 @@ static LRESULT WINAPI frontend_dispatch_message(const MSG *message) {
     uint32_t live_count = 0u;
     LRESULT result;
     char line[256];
+
+    if (message != NULL &&
+        (message->message == WM_DISPLAYCHANGE ||
+         message->message == WM_WINDOWPOSCHANGED ||
+         message->message == WM_MOVE ||
+         message->message == WM_DEVICECHANGE) &&
+        (message->message == WM_DISPLAYCHANGE ||
+         message->hwnd == query_game_window())) {
+        (void)refresh_resolution_filter("display-message");
+    }
 
     if (synchronize_mapper_with_game_mode() == 0) {
         return original_dispatch_message == NULL ? 0 :
@@ -2409,6 +3008,37 @@ __declspec(naked) static void prebattle_resolution_return_hook_stub(void) {
     }
 }
 
+/*
+ * dgVoodoo rearms PAGE_GUARD on the CPU staging allocation returned by the
+ * game's full-primary LockRect path. At the first origin access during some
+ * End Turn transitions, that guard leaves the next GPU download/upload cycle
+ * with an origin-state ambiguity even though the CPU primary is coherent.
+ * Notify the surface owner's guard handler at the origin after a successful
+ * lock of the current primary staging surface. Surface identity, not
+ * dimensions, distinguishes this path. The byte value is preserved exactly;
+ * no frame is scaled, withheld, or restored here.
+ */
+__declspec(naked) static void primary_origin_guard_hook_stub(void) {
+    __asm {
+        test eax, eax
+        jnz lock_failed
+        pushfd
+        pushad
+        push dword ptr [esi + 0x28]
+        push dword ptr [0x00F44098]
+        push dword ptr [esi + 0x04]
+        push eax
+        call mtw_primary_origin_guard_touch
+        add esp, 0x10
+        popad
+        popfd
+        mov dword ptr [esi + 0x1C], eax
+        jmp dword ptr [primary_origin_guard_success_continue]
+    lock_failed:
+        jmp dword ptr [primary_origin_guard_failure_continue]
+    }
+}
+
 __declspec(naked) static void capture_hook_stub(void) {
     __asm {
         pushfd
@@ -2687,6 +3317,12 @@ static int verify_all_hook_signatures(void) {
     mtw_reentrant_callsite_bundle reentrant_calls;
     if (game_base != 0x00400000u) return 0;
     if (backend_base == 0u) return 0;
+    if (!mtw_primary_origin_guard_hook_supported(
+            (const unsigned char *)(
+                game_base + MTW_PRIMARY_ORIGIN_GUARD_HOOK_RVA),
+            MTW_PRIMARY_ORIGIN_GUARD_HOOK_SIZE)) {
+        return 0;
+    }
     build_constructor_expected(constructor_expected);
     reentrant_calls.outer_acquire = (const unsigned char *)(
         backend_base + DGVOODOO_OUTER_ACQUIRE_CALL_RVA);
@@ -2730,6 +3366,10 @@ static int verify_all_hook_signatures(void) {
                 (const unsigned char *)(
                     game_base + MTW_PREBATTLE_RESOLUTION_RETURN_RVA),
                 MTW_PREBATTLE_RESOLUTION_RETURN_SIZE) &&
+           bytes_match(
+               game_base + MTW_RESOLUTION_INITIALIZE_CALL_RVA,
+               resolution_initialize_call_expected,
+               sizeof(resolution_initialize_call_expected)) &&
            mtw_validate_reentrant_callsites(&reentrant_calls);
 }
 
@@ -2824,6 +3464,126 @@ static void restore_original(uintptr_t target,
     VirtualProtect((void *)target, size, old_protect, &ignored);
 }
 
+static int restore_pointer_hook(void *volatile *slot,
+                                void *expected_hook,
+                                void *original) {
+    DWORD old_protect;
+    DWORD ignored;
+
+    if (slot == NULL || expected_hook == NULL || original == NULL ||
+        *slot != expected_hook ||
+        !VirtualProtect((void *)slot, sizeof(void *), PAGE_READWRITE,
+                        &old_protect)) {
+        return 0;
+    }
+    InterlockedExchangePointer((PVOID volatile *)slot, original);
+    FlushInstructionCache(GetCurrentProcess(), (const void *)slot,
+                          sizeof(void *));
+    VirtualProtect((void *)slot, sizeof(void *), old_protect, &ignored);
+    return *slot == original;
+}
+
+static int install_move_window_hook(void) {
+    void *expected;
+    void *current;
+    DWORD old_protect;
+    DWORD ignored;
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+
+    if (game_base == 0u || user32 == NULL) return 0;
+    expected = (void *)GetProcAddress(user32, "MoveWindow");
+    move_window_iat_slot =
+        (void *volatile *)(game_base + MTW_MOVE_WINDOW_IAT_RVA);
+    current = *move_window_iat_slot;
+    if (expected == NULL || current != expected ||
+        !VirtualProtect((void *)move_window_iat_slot, sizeof(void *),
+                        PAGE_READWRITE, &old_protect)) {
+        move_window_iat_slot = NULL;
+        return 0;
+    }
+    original_move_window = (mtw_move_window_fn)current;
+    InterlockedExchangePointer(
+        (PVOID volatile *)move_window_iat_slot,
+        (PVOID)frontend_move_window);
+    FlushInstructionCache(
+        GetCurrentProcess(), (const void *)move_window_iat_slot,
+        sizeof(void *));
+    VirtualProtect((void *)move_window_iat_slot, sizeof(void *),
+                   old_protect, &ignored);
+    return 1;
+}
+
+static int install_backend_set_window_pos_hook(void) {
+    void *expected;
+    void *current;
+    DWORD old_protect;
+    DWORD ignored;
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+
+    if (backend_base == 0u || user32 == NULL) return 0;
+    expected = (void *)GetProcAddress(user32, "SetWindowPos");
+    backend_set_window_pos_slot =
+        (void *volatile *)(backend_base + DGVOODOO_SET_WINDOW_POS_SLOT_RVA);
+    current = *backend_set_window_pos_slot;
+    if (expected == NULL || current != expected ||
+        !VirtualProtect((void *)backend_set_window_pos_slot, sizeof(void *),
+                        PAGE_READWRITE, &old_protect)) {
+        backend_set_window_pos_slot = NULL;
+        return 0;
+    }
+    original_backend_set_window_pos = (mtw_set_window_pos_fn)current;
+    InterlockedExchangePointer(
+        (PVOID volatile *)backend_set_window_pos_slot,
+        (PVOID)frontend_set_window_pos);
+    FlushInstructionCache(
+        GetCurrentProcess(), (const void *)backend_set_window_pos_slot,
+        sizeof(void *));
+    VirtualProtect((void *)backend_set_window_pos_slot, sizeof(void *),
+                   old_protect, &ignored);
+    if (*backend_set_window_pos_slot != (void *)frontend_set_window_pos) {
+        (void)restore_pointer_hook(
+            backend_set_window_pos_slot, (void *)frontend_set_window_pos,
+            current);
+        original_backend_set_window_pos = NULL;
+        backend_set_window_pos_slot = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+static int install_transition_resolution_hooks(void) {
+    uintptr_t call_target =
+        game_base + MTW_RESOLUTION_INITIALIZE_CALL_RVA;
+
+    original_resolution_initialize =
+        (mtw_resolution_initialize_fn)(
+            game_base + MTW_RESOLUTION_INITIALIZE_TARGET_RVA);
+    if (!write_rel_call(
+            call_target, resolution_initialize_hook,
+            resolution_initialize_call_expected)) {
+        original_resolution_initialize = NULL;
+        return 0;
+    }
+    if (!install_move_window_hook()) {
+        restore_original(call_target, resolution_initialize_call_expected,
+                         sizeof(resolution_initialize_call_expected));
+        original_resolution_initialize = NULL;
+        return 0;
+    }
+    if (!install_backend_set_window_pos_hook()) {
+        (void)restore_pointer_hook(
+            move_window_iat_slot, (void *)frontend_move_window,
+            (void *)original_move_window);
+        original_move_window = NULL;
+        move_window_iat_slot = NULL;
+        restore_original(call_target, resolution_initialize_call_expected,
+                         sizeof(resolution_initialize_call_expected));
+        original_resolution_initialize = NULL;
+        return 0;
+    }
+    return 1;
+}
+
 static int install_outer_owned_guard_diversion(void) {
     uintptr_t outer_acquire =
         backend_base + DGVOODOO_OUTER_ACQUIRE_CALL_RVA;
@@ -2880,6 +3640,8 @@ static int install_all_hooks_transactionally(void) {
         game_base + MTW_PREBATTLE_ENTRY_CALL_RVA;
     uintptr_t prebattle_resolution_return_target =
         game_base + MTW_PREBATTLE_RESOLUTION_RETURN_RVA;
+    uintptr_t primary_origin_guard_target =
+        game_base + MTW_PRIMARY_ORIGIN_GUARD_HOOK_RVA;
     int capture_installed = 0;
     int restore_installed = 0;
     int commit_installed = 0;
@@ -2888,6 +3650,7 @@ static int install_all_hooks_transactionally(void) {
     int primary_surface_unlock_installed = 0;
     int prebattle_entry_installed = 0;
     int prebattle_resolution_return_installed = 0;
+    int primary_origin_guard_installed = 0;
 
     if (!verify_all_hook_signatures()) return 0;
     build_constructor_expected(constructor_expected);
@@ -2908,6 +3671,10 @@ static int install_all_hooks_transactionally(void) {
     prebattle_resolution_return_continue = (void *)(
         prebattle_resolution_return_target +
         sizeof(prebattle_resolution_return_expected));
+    primary_origin_guard_failure_continue = (void *)(
+        game_base + MTW_PRIMARY_ORIGIN_GUARD_FAILURE_RVA);
+    primary_origin_guard_success_continue = (void *)(
+        game_base + MTW_PRIMARY_ORIGIN_GUARD_SUCCESS_RVA);
     constructor_global_target =
         (void *)(backend_base + DGVOODOO_CONSTRUCTOR_GLOBAL_RVA);
     custom_acquire_target =
@@ -3050,7 +3817,40 @@ static int install_all_hooks_transactionally(void) {
                          sizeof(capture_expected));
         return 0;
     }
+    primary_origin_guard_installed = write_rel_jump(
+        primary_origin_guard_target,
+        primary_origin_guard_hook_stub,
+        mtw_primary_origin_guard_hook_expected(),
+        mtw_primary_origin_guard_hook_size());
+    if (!primary_origin_guard_installed) {
+        restore_original(prebattle_resolution_return_target,
+                         prebattle_resolution_return_expected,
+                         sizeof(prebattle_resolution_return_expected));
+        restore_original(prebattle_entry_call_target,
+                         prebattle_entry_call_expected,
+                         sizeof(prebattle_entry_call_expected));
+        restore_original(primary_surface_unlock_target,
+                         primary_surface_unlock_expected,
+                         sizeof(primary_surface_unlock_expected));
+        restore_original(reverse_dispatcher_target,
+                         reverse_dispatcher_expected,
+                         sizeof(reverse_dispatcher_expected));
+        restore_original(fallback_call_target, fallback_call_expected,
+                         sizeof(fallback_call_expected));
+        restore_original(constructor_target, constructor_expected,
+                         sizeof(constructor_expected));
+        restore_original(commit_target, commit_expected,
+                         sizeof(commit_expected));
+        restore_original(restore_target, restore_expected,
+                         sizeof(restore_expected));
+        restore_original(capture_target, capture_expected,
+                         sizeof(capture_expected));
+        return 0;
+    }
     if (!install_outer_owned_guard_diversion()) {
+        restore_original(primary_origin_guard_target,
+                         mtw_primary_origin_guard_hook_expected(),
+                         mtw_primary_origin_guard_hook_size());
         restore_original(prebattle_resolution_return_target,
                          prebattle_resolution_return_expected,
                          sizeof(prebattle_resolution_return_expected));
@@ -3080,6 +3880,8 @@ static int install_all_hooks_transactionally(void) {
     } else {
         diagnostic_write("frontend content-shadow hook active r98\r\n");
     }
+    diagnostic_write(
+        "primary staging origin-guard lifecycle hook active r268\r\n");
     return 1;
 }
 
@@ -3095,6 +3897,8 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     InitializeCriticalSection(&loading_shadow_lock);
     InitializeCriticalSection(&focus_span_lock);
     InitializeCriticalSection(&constructor_return_lock);
+    InitializeCriticalSection(&resolution_filter_lock);
+    mtw_resolution_filter_initialize(&resolution_filter_state);
     loading_shadow_initialize(
         &loading_shadow,
         allocate_loading_shadow,
@@ -3132,6 +3936,13 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         return TRUE;
     }
     if (install_all_hooks_transactionally()) {
+        if (install_transition_resolution_hooks()) {
+            diagnostic_write(
+                "transition resize guard and monitor resolution filter installed r272\r\n");
+        } else {
+            diagnostic_write(
+                "transition resize guard and monitor resolution filter unavailable r272\r\n");
+        }
         if (install_mapper_shader_clone_hook()) {
             diagnostic_write("mapper shader clone hook installed r154\r\n");
         } else {

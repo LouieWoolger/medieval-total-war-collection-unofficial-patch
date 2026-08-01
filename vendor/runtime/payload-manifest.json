@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 137728,
-      "sha256": "D61A5DB23EE091CAE0D97AB5E385D42BD301E97D7F9A4FB6F3A3CA1484E7B932",
-      "provenance": "accepted R185 reproducible PE32 proxy with semantic menu/campaign-setup/prebattle/Battle Results mapper ownership, exact prebattle resolution lifecycle, and pre-capture gameplay synchronization"
+      "length": 151040,
+      "sha256": "B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F",
+      "provenance": "accepted reproducible R185 PE32 proxy with exact registered metadata identity for all 50 known frontend page families, live render-root polling across focus transitions, semantic campaign-setup/prebattle/Battle Results ownership, exact prebattle resolution lifecycle, pre-capture gameplay synchronization, exact primary-staging surface identity notification through dgVoodoo's guarded-page dirty lifecycle, guarded full-monitor frontend-to-loading window transitions, and active-presentation-monitor preferred-mode filtering for both ordered resolution selectors"
     },
     "dgVoodoo_D3D9.dll": {
       "length": 485888,

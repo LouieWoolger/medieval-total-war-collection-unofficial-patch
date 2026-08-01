@@ -330,6 +330,180 @@ static void test_page_metadata_identifies_frontend_owner(void) {
     assert(owner == MTW_MAPPER_FRONTEND_OWNER_IN_GAME_MENU);
 }
 
+static void test_complete_registered_frontend_inventory(void) {
+    const uintptr_t game_base = (uintptr_t)0x00400000u;
+    static const struct {
+        uintptr_t start_rva;
+        uint32_t rows;
+    } expected_families[] = {
+        {(uintptr_t)0x003EF220u,   7u},
+        {(uintptr_t)0x003F1228u,  17u},
+        {(uintptr_t)0x003F2FC0u,  13u},
+        {(uintptr_t)0x003F51D8u,  16u},
+        {(uintptr_t)0x003FB2C0u,  29u},
+        {(uintptr_t)0x003FF720u,  22u},
+        {(uintptr_t)0x004025E0u,  17u},
+        {(uintptr_t)0x00403C10u,   9u},
+        {(uintptr_t)0x00404B30u,  11u},
+        {(uintptr_t)0x00406310u,  15u},
+        {(uintptr_t)0x00409680u,  20u},
+        {(uintptr_t)0x0040BA50u,  14u},
+        {(uintptr_t)0x0040DCB0u,  21u},
+        {(uintptr_t)0x0040FFF8u,  13u},
+        {(uintptr_t)0x00411430u,   8u},
+        {(uintptr_t)0x004141D0u,  19u},
+        {(uintptr_t)0x004162C0u,  14u},
+        {(uintptr_t)0x00418218u,  19u},
+        {(uintptr_t)0x00419CA0u,   6u},
+        {(uintptr_t)0x0041A3F0u,  16u},
+        {(uintptr_t)0x0041D330u,  17u},
+        {(uintptr_t)0x00420448u,  27u},
+        {(uintptr_t)0x00422560u,  66u},
+        {(uintptr_t)0x00427DC8u,  16u},
+        {(uintptr_t)0x0042A328u,  21u},
+        {(uintptr_t)0x0042CA30u,   9u},
+        {(uintptr_t)0x0042E640u,  31u},
+        {(uintptr_t)0x00430BB0u,  27u},
+        {(uintptr_t)0x00433548u, 150u},
+        {(uintptr_t)0x0043EB68u, 131u},
+        {(uintptr_t)0x00448920u, 127u},
+        {(uintptr_t)0x00452C38u,  32u},
+        {(uintptr_t)0x00455970u,  60u},
+        {(uintptr_t)0x0045A1C0u,  55u},
+        {(uintptr_t)0x0046B728u,  14u},
+        {(uintptr_t)0x0046C800u,  11u},
+        {(uintptr_t)0x0046D540u,   5u},
+        {(uintptr_t)0x0046DB48u,   5u},
+        {(uintptr_t)0x0046E150u,  20u},
+        {(uintptr_t)0x0047A2B0u, 104u},
+        {(uintptr_t)0x00491128u,  17u},
+        {(uintptr_t)0x004925A0u,  14u},
+        {(uintptr_t)0x0049C420u,  56u},
+        {(uintptr_t)0x004A3410u,  20u},
+        {(uintptr_t)0x004A4C20u,  43u},
+        {(uintptr_t)0x004B3268u,  59u},
+        {(uintptr_t)0x004B7968u,  15u},
+        {(uintptr_t)0x004C40F8u,   8u},
+        {(uintptr_t)0x004C8C18u,   8u},
+        {(uintptr_t)0x004C9608u,  26u}
+    };
+    mtw_mapper_frontend_metadata_identity identity;
+    uint32_t row_total = 0u;
+    unsigned int index;
+
+    assert(mtw_mapper_frontend_family_count() == 50u);
+    assert(mtw_mapper_frontend_registered_row_count() == 1500u);
+    assert(sizeof(expected_families) / sizeof(expected_families[0]) ==
+           mtw_mapper_frontend_family_count());
+
+    for (index = 0u;
+         index < sizeof(expected_families) /
+                     sizeof(expected_families[0]);
+         ++index) {
+        const uintptr_t first = expected_families[index].start_rva;
+        const uintptr_t last =
+            first + (expected_families[index].rows - 1u) *
+                        (uintptr_t)0x134u;
+
+        assert(mtw_mapper_frontend_identify_metadata(
+                   game_base, game_base + first, &identity) == 1);
+        assert(identity.family ==
+               (mtw_mapper_frontend_family_kind)(index + 1u));
+        assert(identity.row_index == 0u);
+        assert(mtw_mapper_frontend_identify_metadata(
+                   game_base, game_base + last, &identity) == 1);
+        assert(identity.family ==
+               (mtw_mapper_frontend_family_kind)(index + 1u));
+        assert(identity.row_index ==
+               expected_families[index].rows - 1u);
+        assert(mtw_mapper_frontend_identify_metadata(
+                   game_base, game_base + first + 1u,
+                   &identity) == 0);
+        row_total += expected_families[index].rows;
+    }
+    assert(row_total == 1500u);
+
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x003EF220u,
+               &identity) == 1);
+    assert(identity.family ==
+           MTW_MAPPER_FRONTEND_FAMILY_MAIN_MENU_ASSIGN_KEYS);
+    assert(identity.row_index == 0u);
+
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x004CB41Cu,
+               &identity) == 1);
+    assert(identity.family ==
+           MTW_MAPPER_FRONTEND_FAMILY_WAITING_TO_GO);
+    assert(identity.row_index == 25u);
+
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x003EF221u,
+               &identity) == 0);
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x003EFA8Cu,
+               &identity) == 0);
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x004CB550u,
+               &identity) == 0);
+    assert(mtw_mapper_frontend_identify_metadata(
+               0u, game_base + (uintptr_t)0x003EF220u,
+               &identity) == 0);
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, 0u, &identity) == 0);
+    assert(mtw_mapper_frontend_identify_metadata(
+               game_base, game_base + (uintptr_t)0x003EF220u,
+               NULL) == 0);
+}
+
+static void test_reported_frontend_families_rearm_mapper(void) {
+    const uintptr_t game_base = (uintptr_t)0x00400000u;
+    static const uintptr_t reported_metadata_rvas[] = {
+        (uintptr_t)0x00409680u, /* Map Editor */
+        (uintptr_t)0x004162C0u, /* View Replay */
+        (uintptr_t)0x003F51D8u, /* Select Era */
+        (uintptr_t)0x0049C420u, /* Historical Battle */
+        (uintptr_t)0x004A4C20u, /* Historical Campaigns */
+        (uintptr_t)0x0040DCB0u, /* Multiplayer Menu */
+        (uintptr_t)0x004B7968u, /* LAN Game */
+        (uintptr_t)0x004B3268u, /* Multiplayer Lobby */
+        (uintptr_t)0x0045A1C0u  /* Host Game Options */
+    };
+    unsigned int index;
+
+    for (index = 0u;
+         index < sizeof(reported_metadata_rvas) /
+                     sizeof(reported_metadata_rvas[0]);
+         ++index) {
+        mtw_mapper_frontend_owner_kind owner =
+            mtw_mapper_frontend_owner_observe_metadata(
+                MTW_MAPPER_FRONTEND_OWNER_UNKNOWN,
+                game_base, game_base + reported_metadata_rvas[index]);
+        mtw_mapper_activation_state state = {0, 1};
+
+        assert(owner == MTW_MAPPER_FRONTEND_OWNER_COMMON_PAGE);
+        state = mtw_mapper_activation_after_game_mode(
+            state, 6u, owner);
+        assert(state.mapper_mode == 1);
+        assert(state.frontend_rearm_armed == 0);
+    }
+}
+
+static void test_registered_frontend_owner_beats_nonfrontend_mode_value(void) {
+    mtw_mapper_activation_state state = {1, 0};
+
+    state = mtw_mapper_activation_after_game_mode(
+        state, 6u, MTW_MAPPER_FRONTEND_OWNER_COMMON_PAGE);
+    assert(state.mapper_mode == 1);
+    assert(state.frontend_rearm_armed == 0);
+
+    state = (mtw_mapper_activation_state){0, 1};
+    state = mtw_mapper_activation_after_game_mode(
+        state, 6u, MTW_MAPPER_FRONTEND_OWNER_COMMON_PAGE);
+    assert(state.mapper_mode == 1);
+    assert(state.frontend_rearm_armed == 0);
+}
+
 static void test_repeated_frontend_gameplay_transitions(void) {
     mtw_mapper_activation_state state = mtw_mapper_activation_initial();
     unsigned int iteration;
@@ -376,6 +550,9 @@ int main(void) {
     test_quick_battle_results_owner_rearms_immediately();
     test_unknown_frontend_owner_fails_closed_until_main_menu();
     test_page_metadata_identifies_frontend_owner();
+    test_complete_registered_frontend_inventory();
+    test_reported_frontend_families_rearm_mapper();
+    test_registered_frontend_owner_beats_nonfrontend_mode_value();
     test_repeated_frontend_gameplay_transitions();
     puts("mapper activation tests passed");
     return 0;
