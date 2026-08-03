@@ -50,6 +50,13 @@ $script:KnownD3D9Modes = @{
     'E2B6F73CCA21467E14505AFF8DA31B8454D4D7546C499285670ED6A2FF4E0DF5' = 'r185'
     '3A11DF858C9B1339297B5E78684C07722DB6A2A3C378173FEE8E640B19F53F67' = 'r185'
     'B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F' = 'r185'
+    'E5703EA5E8B5F33F8CD6F41B50125D2187F73C50DA3DC8F621F4E160D28B4BC9' = 'r185'
+    'FD1271790E739C86D29E4EE776A4621A03236192AB436AE24B0836B26B423E4C' = 'r185'
+    'EDF4B6CB4F2DEF7563E15AF46AFE3A8708F240B6FE1EC174D14DC2FAA61D49A3' = 'r185'
+    'B07D861994FBDEC15956BFF5FB79882A9D2E630CF72ECDA07BC3EBE7E5248875' = 'r185'
+    '516D61823F0629856199C0E6F888F4CF803B711CC569058D0D88D0D72F0C18FA' = 'r185'
+    '48ED6EF8DB1197A0E1240CB73B2217F66CA863F7A4E4568DB00ADD4E4288F6CF' = 'r185'
+    'CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A' = 'r185'
 }
 $script:KnownPreviousPayloadHashes = @{
     'dgVoodoo.conf' = @(
@@ -402,6 +409,12 @@ function Get-PreinstallMode {
         }
         $path = Join-Path $Directory $name
         Assert-OrdinaryFileOrMissing $Directory $path
+        if ($name -eq 'dgVoodoo.conf') {
+            # Configuration is intentionally replaced by the accepted payload.
+            # Keep the ordinary-file safety check above, but do not classify a
+            # user or older-patch profile as an unknown binary wrapper.
+            continue
+        }
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             $expected = [string]$PayloadManifest.files.PSObject.Properties[$name].Value.sha256
             $actual = Get-Sha256 $path
@@ -648,9 +661,10 @@ function Repair-Installed {
                     ($script:KnownPreviousPayloadHashes.ContainsKey($name) -and
                         $script:KnownPreviousPayloadHashes[$name] -contains $currentHash)
             }
+            $replaceableConfiguration = $name -eq 'dgVoodoo.conf'
             if ($exists -and $currentHash -ne $installedHash -and
                 (-not [bool]$record.existed -or $currentHash -ne $originalHash) -and
-                -not $knownPrevious) {
+                -not $knownPrevious -and -not $replaceableConfiguration) {
                 Throw-EngineError 'postinstall_modified' "$name was changed after installation. Repair made no changes."
             }
             $currentRecords[$name] = [ordered]@{ existed = $exists; sha256 = $currentHash }

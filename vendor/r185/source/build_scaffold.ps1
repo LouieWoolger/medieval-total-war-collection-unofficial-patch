@@ -33,7 +33,7 @@ $expected = [ordered]@{
 }
 $expectedAcceptedProxy = '34F855A17C10B6BBCEFD844B99A5B5A7F442DECDDFFDB0D898645FA2FF0B0F0C'
 $expectedBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
-$expectedR185Proxy = 'B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F'
+$expectedR185Proxy = 'CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -96,6 +96,7 @@ $acceptedObj = Join-Path $combined 'accepted_dust.obj'
 $publicObj = Join-Path $combined 'combined_proxy.obj'
 $frontendObj = Join-Path $combined 'frontend_fix.obj'
 $frontendEpochObj = Join-Path $combined 'frontend_epoch_core.obj'
+$presentationInputObj = Join-Path $combined 'presentation_input_core.obj'
 $primaryOriginGuardObj = Join-Path $combined 'primary_origin_guard_core.obj'
 $resolutionFilterObj = Join-Path $combined 'resolution_filter_core.obj'
 $windowTransitionGuardObj = Join-Path $combined 'window_transition_guard_core.obj'
@@ -133,6 +134,12 @@ if ($LASTEXITCODE -ne 0) { throw "Inert frontend build failed: $LASTEXITCODE" }
     ('/Fo' + $frontendEpochObj),(Join-Path $PSScriptRoot 'frontend_epoch_core.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Frontend epoch core build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    ('/Fo' + $presentationInputObj),(Join-Path $PSScriptRoot 'presentation_input_core.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Presentation input core build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/EHa','/c',
@@ -197,7 +204,7 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation core build failed: $LASTEXIT
 
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $combinedDll),$acceptedObj,$publicObj,$frontendObj,$frontendEpochObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $combinedDll),$acceptedObj,$publicObj,$frontendObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
 )
@@ -319,6 +326,18 @@ if ($LASTEXITCODE -ne 0) { throw "Window transition guard tests build failed: $L
 & $windowTransitionGuardTests
 if ($LASTEXITCODE -ne 0) { throw "Window transition guard tests failed: $LASTEXITCODE" }
 
+$presentationInputTests = Join-Path $combined 'presentation_input_core_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/Fe' + $presentationInputTests),
+    (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests\presentation_input_core_tests.c'),
+    (Join-Path $PSScriptRoot 'presentation_input_core.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Presentation input core tests build failed: $LASTEXITCODE" }
+& $presentationInputTests
+if ($LASTEXITCODE -ne 0) { throw "Presentation input core tests failed: $LASTEXITCODE" }
+
 $lockPatchTests = Join-Path $combined 'reentrant_lock_patch_tests.exe'
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
@@ -380,6 +399,8 @@ $manifest = [ordered]@{
     resolution_filter_tests_exit = 0
     window_transition_guard_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $windowTransitionGuardTests).Hash
     window_transition_guard_tests_exit = 0
+    presentation_input_core_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $presentationInputTests).Hash
+    presentation_input_core_tests_exit = 0
     reentrant_lock_patch_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $lockPatchTests).Hash
     reentrant_lock_patch_tests_exit = 0
     mapper_shader_clone_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $mapperCloneTests).Hash
@@ -388,6 +409,7 @@ $manifest = [ordered]@{
     mapper_activation_tests_exit = 0
     frontend_fix_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_fix.c')).Hash
     frontend_epoch_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_epoch_core.c')).Hash
+    presentation_input_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'presentation_input_core.c')).Hash
     primary_origin_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'primary_origin_guard_core.c')).Hash
     resolution_filter_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'resolution_filter_core.c')).Hash
     window_transition_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'window_transition_guard_core.c')).Hash

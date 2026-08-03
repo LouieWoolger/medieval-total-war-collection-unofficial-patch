@@ -67,9 +67,9 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
     assert manifest["runtime"]["identity"] == "R185"
-    assert manifest["validation"]["project_contract_tests"] == 34
-    assert manifest["validation"]["compiled_installer_scenarios"] == 8
-    assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F"
+    assert manifest["validation"]["project_contract_tests"] == 36
+    assert manifest["validation"]["compiled_installer_scenarios"] == 10
+    assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
     parsed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums if "  " in line}

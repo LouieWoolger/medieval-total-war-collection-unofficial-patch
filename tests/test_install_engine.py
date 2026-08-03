@@ -160,6 +160,40 @@ def test_clean_install_and_exact_restore(tmp_path: Path) -> None:
     assert not (game / ".unofficial-medieval-total-war-patch").exists()
 
 
+def test_existing_custom_dgvoodoo_config_is_replaced_and_restored(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Custom dgVoodoo Config")
+    config = game / "dgVoodoo.conf"
+    config.write_text(
+        "; user-maintained dgVoodoo profile\n"
+        "[GeneralExt]\n"
+        "DesktopResolution = 1920x1080\n",
+        encoding="utf-8",
+    )
+    original_hash = sha256(config)
+    before = relevant_snapshot(game)
+
+    inspected, report = invoke("Inspect", game)
+    assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
+    assert report["mode"] == "clean"
+
+    installed, report = invoke("Install", game)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    assert report["action"] == "install"
+    assert_final_runtime(game)
+
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    record = receipt["files"]["dgVoodoo.conf"]
+    assert record["existed"] is True
+    assert record["original_sha256"] == original_hash
+    assert sha256(game / "dgVoodoo.conf.unofficial-patch.bak") == original_hash
+
+    restored, report = invoke("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert report["action"] == "restore"
+    assert relevant_snapshot(game) == before
+
+
 def test_r185_repair_is_idempotent_and_preserves_receipt(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Repair R185")
     first, _ = invoke("Install", game)
@@ -175,6 +209,44 @@ def test_r185_repair_is_idempotent_and_preserves_receipt(tmp_path: Path) -> None
     assert second_manifest["installation_id"] == first_manifest["installation_id"]
     assert second_manifest["repair_count"] == first_manifest["repair_count"] + 1
     assert relevant_snapshot(game) == first_state
+
+
+def test_managed_repair_replaces_modified_dgvoodoo_config(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Managed Custom Config")
+    before_install = relevant_snapshot(game)
+    first, _ = invoke("Install", game)
+    assert first.returncode == 0, (first.stdout, first.stderr)
+
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    first_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    (game / "dgVoodoo.conf").write_text(
+        "; changed after the previous patch installation\n"
+        "[GeneralExt]\n"
+        "DesktopResolution = 2560x1440\n",
+        encoding="utf-8",
+    )
+
+    verified, report = invoke("Verify", game)
+    assert verified.returncode != 0
+    assert report["code"] == "verification_failed"
+
+    inspected, report = invoke("Inspect", game)
+    assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
+    assert report["managed_installation"] is True
+
+    repaired, report = invoke("Install", game)
+    assert repaired.returncode == 0, (repaired.stdout, repaired.stderr)
+    assert report["action"] == "repair"
+    assert_final_runtime(game)
+
+    repaired_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert repaired_receipt["installation_id"] == first_receipt["installation_id"]
+    assert repaired_receipt["repair_count"] == first_receipt["repair_count"] + 1
+
+    restored, report = invoke("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert report["action"] == "restore"
+    assert relevant_snapshot(game) == before_install
 
 
 def test_managed_payload_upgrade_refreshes_receipt_and_remains_restorable(tmp_path: Path) -> None:

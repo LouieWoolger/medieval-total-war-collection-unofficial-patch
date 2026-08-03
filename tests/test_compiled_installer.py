@@ -116,6 +116,46 @@ def test_compiled_clean_install_and_uninstall(tmp_path: Path) -> None:
     assert_round_trip(game, snapshot(game))
 
 
+def test_compiled_custom_config_is_replaced_and_restored(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Existing custom config")
+    config = game / "dgVoodoo.conf"
+    config.write_text(
+        "; user-maintained dgVoodoo profile\n"
+        "[GeneralExt]\n"
+        "DesktopResolution = 1920x1080\n",
+        encoding="utf-8",
+    )
+    before = snapshot(game)
+    original_hash = sha256(config)
+
+    install = run_installer(game)
+    assert install.returncode == 0, (install.stdout, install.stderr)
+    assert_runtime(game)
+    assert sha256(game / "dgVoodoo.conf.unofficial-patch.bak") == original_hash
+
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_managed_repair_replaces_modified_config(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Managed custom config")
+    before_install = snapshot(game)
+    assert run_installer(game).returncode == 0
+
+    (game / "dgVoodoo.conf").write_text(
+        "; changed after the previous patch installation\n"
+        "[GeneralExt]\n"
+        "DesktopResolution = 2560x1440\n",
+        encoding="utf-8",
+    )
+    repaired = run_installer(game)
+    assert repaired.returncode == 0, (repaired.stdout, repaired.stderr)
+    assert_runtime(game)
+
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before_install
+
+
 def test_compiled_unmanaged_r185_adoption_and_managed_repair(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Existing R185")
     for name in RUNTIME_NAMES:

@@ -94,8 +94,8 @@ def main() -> int:
         "validation": {
             "r185_reproducible_builds": 1,
             "r185_native_component_tests_per_build": 11,
-            "project_contract_tests": 34,
-            "compiled_installer_scenarios": 8,
+            "project_contract_tests": 36,
+            "compiled_installer_scenarios": 10,
             "compiled_installer_matrix": args.compiled_matrix,
         },
         "source": {

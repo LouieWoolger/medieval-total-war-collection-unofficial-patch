@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 151040,
-      "sha256": "B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F",
-      "provenance": "accepted reproducible R185 PE32 proxy with exact registered metadata identity for all 50 known frontend page families, live render-root polling across focus transitions, semantic campaign-setup/prebattle/Battle Results ownership, exact prebattle resolution lifecycle, pre-capture gameplay synchronization, exact primary-staging surface identity notification through dgVoodoo's guarded-page dirty lifecycle, guarded full-monitor frontend-to-loading window transitions, and active-presentation-monitor preferred-mode filtering for both ordered resolution selectors"
+      "length": 158720,
+      "sha256": "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A",
+      "provenance": "accepted reproducible R185 PE32 proxy with exact registered metadata identity for all 50 known frontend page families, live render-root polling across focus transitions, semantic campaign-setup/prebattle/Battle Results ownership, exact prebattle resolution lifecycle, pre-capture gameplay synchronization, exact primary-staging surface identity notification through dgVoodoo's guarded-page dirty lifecycle, borderless full-monitor transition protection plus live wrapper-established non-fullscreen presentation ownership that blocks transient game logical-mode moves and smaller backend frame adjustments while stale, resized, fullscreen, or unknown geometry fails open, active-presentation-monitor preferred-mode filtering for both ordered resolution selectors, verified decorated-HWND-only aspect-fit input mapping derived from live client and backing dimensions, fake-fullscreen dgVoodoo logical-coordinate pass-through that prevents double transformation, and decorated-window last-valid logical cursor restoration immediately before Alt+Enter when the OS cursor is outside the current game client"
     },
     "dgVoodoo_D3D9.dll": {
       "length": 485888,

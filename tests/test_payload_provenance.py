@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (151040, "B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F"),
+    "D3D9.dll": (158720, "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A"),
     "dgVoodoo_D3D9.dll": (485888, "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6"),
     "ddraw.dll": (258560, "81325E9B5C71F544B9A28AE4C375AF38E12535E8AC57C8F33B5456A342AE1465"),
     "D3DImm.dll": (210432, "FBE72EF46AE87DC80F5AEB3D8FC12F97F9D9B2274C4887C70BA65651458D5BF2"),
@@ -70,6 +70,8 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "source/mapper_activation_core.h",
         "source/primary_origin_guard_core.c",
         "source/primary_origin_guard_core.h",
+        "source/presentation_input_core.c",
+        "source/presentation_input_core.h",
         "source/resolution_filter_core.c",
         "source/resolution_filter_core.h",
         "source/window_transition_guard_core.c",
@@ -82,6 +84,7 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "tests/smoke_loader.c",
         "tests/focus_plane_shadow_tests.c",
         "tests/primary_origin_guard_tests.c",
+        "tests/presentation_input_core_tests.c",
         "tests/resolution_filter_tests.c",
         "tests/window_transition_guard_tests.c",
         "tests/mapper_activation_tests.c",

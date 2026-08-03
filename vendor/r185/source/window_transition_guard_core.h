@@ -20,8 +20,12 @@ typedef struct mtw_window_transition_request {
     int32_t requested_width;
     int32_t requested_height;
     int repaint;
+    uintptr_t window_style;
+    int window_style_valid;
     mtw_window_rect current_window;
     mtw_window_rect monitor;
+    int stable_presentation_valid;
+    mtw_window_rect stable_presentation;
 } mtw_window_transition_request;
 
 int mtw_window_transition_should_suppress(

@@ -1,7 +1,7 @@
 Unofficial Medieval: Total War Collection Patch runtime R185
 
 R185 D3D9 proxy SHA-256:
-B7F1FEA6588BDED9270E6A51E1CA80FE20F1F32A87112101212A8D476287384F
+CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A
 
 Frontend mapper activation is gated by registered immutable page metadata or semantic main-menu, campaign-setup, prebattle, or Battle Results ownership.
 All 50 known frontend page families are classified from their exact metadata-row spans, so shared mode values such as LAN mode 6 cannot disarm a live frontend.
@@ -18,6 +18,11 @@ dgVoodoo fake fullscreen keeps the scaled swapchain in the application window ac
 Frontend-to-loading transitions keep the game and dgVoodoo presentation window on the active monitor instead of exposing logical-mode window sizes.
 Strategy and battle selectors preserve their existing ordered mode records while excluding dimensions above the active presentation monitor's preferred physical mode.
 Saved selections that no longer fit fall back independently to the highest remaining existing strategy or battle mode.
+Presentation input mapping is restricted to a verified live decorated non-fullscreen HWND; fake fullscreen passes dgVoodoo's logical coordinates through unchanged so they are transformed exactly once.
+Decorated-window cursor reads, warps, and mouse messages use the same checked aspect-fit mapping, including letterboxing and DPI-scaled desktop coordinates, while fullscreen, stale, replaced-HWND, minimized, or invalid state fails open without changing the game's input.
+Immediately before a decorated-window Alt+Enter transition, an out-of-client OS cursor is restored to its last valid logical game position (or the live content center when no history exists), preventing origin-driven camera corruption without changing ordinary mouse or keyboard input.
+Frontend-to-loading shrink suppression is restricted to a verified borderless popup, while exact monitor-sized decorated expansion remains rejected.
+For an explicit non-fullscreen dgVoodoo presentation, successful wrapper sizing establishes live window ownership; subsequent game logical-mode moves and smaller backend frame adjustments cannot expose transient internal dimensions while fullscreen, user-resized, stale, or unknown geometry remains fail-open.
 
 dgVoodoo2 backend version: 2.87.2
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2

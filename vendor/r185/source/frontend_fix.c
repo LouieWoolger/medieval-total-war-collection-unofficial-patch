@@ -15,6 +15,7 @@
 #include "loading_shadow_core.h"
 #include "mapper_activation_core.h"
 #include "mapper_shader_clone_core.h"
+#include "presentation_input_core.h"
 #include "primary_origin_guard_core.h"
 #include "reentrant_lock_patch_core.h"
 #include "resolution_filter_core.h"
@@ -35,6 +36,8 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_BACKING_BITS_RVA 0x004D0248u
 #define MTW_PRIMARY_SURFACE_UNLOCK_RVA 0x000122D0u
 #define MTW_DISPATCH_MESSAGE_IAT_RVA 0x0038428Cu
+#define MTW_SET_CURSOR_POS_IAT_RVA 0x003842D4u
+#define MTW_GET_CURSOR_POS_IAT_RVA 0x003842D8u
 #define MTW_MOVE_WINDOW_IAT_RVA 0x003842E4u
 #define MTW_GAME_WINDOW_RVA 0x00B36040u
 #define MTW_TRANSITION_MOVE_RETURN_RVA 0x002D631Du
@@ -249,6 +252,12 @@ static mtw_create_pixel_shader_fn mapper_original_create_pixel_shader;
 typedef LRESULT (WINAPI *mtw_dispatch_message_fn)(const MSG *message);
 static mtw_dispatch_message_fn original_dispatch_message;
 static void *volatile *dispatch_message_iat_slot;
+typedef BOOL (WINAPI *mtw_get_cursor_pos_fn)(LPPOINT point);
+typedef BOOL (WINAPI *mtw_set_cursor_pos_fn)(int x, int y);
+static mtw_get_cursor_pos_fn original_get_cursor_pos;
+static mtw_set_cursor_pos_fn original_set_cursor_pos;
+static void *volatile *get_cursor_pos_iat_slot;
+static void *volatile *set_cursor_pos_iat_slot;
 typedef BOOL (WINAPI *mtw_move_window_fn)(HWND window, int x, int y,
                                            int width, int height,
                                            BOOL repaint);
@@ -313,6 +322,14 @@ static volatile LONG diagnostic_reverse_capture_busy;
 static volatile LONG content_generation_events;
 static volatile LONG preunlock_seed_events;
 static volatile LONG reverse_handoff_events;
+static volatile LONG presentation_input_events;
+static volatile LONG presentation_alt_enter_cursor_restores;
+static mtw_presentation_input_cursor_state presentation_cursor_state;
+static SRWLOCK window_transition_state_lock = SRWLOCK_INIT;
+static uintptr_t window_transition_state_window;
+static mtw_window_rect window_transition_stable_presentation;
+static int window_transition_stable_presentation_valid;
+static volatile LONG window_transition_state_events;
 
 __declspec(naked) static void constructor_return_hook_stub(void);
 __declspec(naked) static void d3d11_create_device_hook_stub(void);
@@ -323,6 +340,9 @@ static int install_transition_resolution_hooks(void);
 static int diagnostic_trace_armed(void);
 static void diagnostic_begin_content_epoch(uint32_t generation);
 static int refresh_resolution_filter(const char *reason);
+static int restore_pointer_hook(void *volatile *slot,
+                                void *expected_hook,
+                                void *original);
 
 static void diagnostic_write(const char *text) {
     DWORD written;
@@ -393,6 +413,61 @@ static HWND query_game_window(void) {
     if (window == NULL) return NULL;
     GetWindowThreadProcessId(window, &process_id);
     return process_id == GetCurrentProcessId() ? window : NULL;
+}
+
+static int query_presentation_input_transform(
+    HWND window,
+    mtw_presentation_input_transform *transform) {
+    RECT client;
+    POINT origin;
+    unsigned long first_width;
+    unsigned long first_height;
+    unsigned long second_width;
+    unsigned long second_height;
+
+    if (game_base == 0u || window == NULL || transform == NULL ||
+        !IsWindow(window) || IsIconic(window) ||
+        !GetClientRect(window, &client)) {
+        return 0;
+    }
+    origin.x = client.left;
+    origin.y = client.top;
+    if (!ClientToScreen(window, &origin)) return 0;
+    first_width = *(volatile unsigned long *)(
+        game_base + MTW_BACKING_WIDTH_RVA);
+    first_height = *(volatile unsigned long *)(
+        game_base + MTW_BACKING_HEIGHT_RVA);
+    MemoryBarrier();
+    second_width = *(volatile unsigned long *)(
+        game_base + MTW_BACKING_WIDTH_RVA);
+    second_height = *(volatile unsigned long *)(
+        game_base + MTW_BACKING_HEIGHT_RVA);
+    if (first_width != second_width || first_height != second_height ||
+        first_width == 0u || first_height == 0u ||
+        first_width > INT32_MAX || first_height > INT32_MAX ||
+        client.right <= client.left || client.bottom <= client.top) {
+        return 0;
+    }
+    transform->client_origin_x = origin.x;
+    transform->client_origin_y = origin.y;
+    transform->client_width = client.right - client.left;
+    transform->client_height = client.bottom - client.top;
+    transform->logical_width = (int32_t)first_width;
+    transform->logical_height = (int32_t)first_height;
+    return transform->client_width > 0 && transform->client_height > 0;
+}
+
+static int presentation_input_should_remap(HWND window) {
+    uintptr_t stable_window;
+    int stable_valid;
+
+    if (window == NULL) return 0;
+    AcquireSRWLockShared(&window_transition_state_lock);
+    stable_window = window_transition_state_window;
+    stable_valid = window_transition_stable_presentation_valid;
+    ReleaseSRWLockShared(&window_transition_state_lock);
+    return mtw_presentation_input_should_remap(
+        (uintptr_t)window, stable_window, stable_valid);
 }
 
 static uint32_t mix_output_identity(uint32_t value, uint32_t part) {
@@ -786,6 +861,109 @@ static int __cdecl resolution_initialize_hook(
     return result;
 }
 
+static int read_window_style(HWND window, uintptr_t *style_out) {
+    LONG_PTR style;
+    DWORD error;
+
+    if (window == NULL || style_out == NULL) {
+        return 0;
+    }
+    SetLastError(ERROR_SUCCESS);
+    style = GetWindowLongPtrW(window, GWL_STYLE);
+    error = GetLastError();
+    if (style == 0 && error != ERROR_SUCCESS) {
+        return 0;
+    }
+    *style_out = (uintptr_t)style;
+    return 1;
+}
+
+static void snapshot_window_transition_state(
+    HWND window, mtw_window_transition_request *request) {
+    if (window == NULL || request == NULL) {
+        return;
+    }
+    AcquireSRWLockShared(&window_transition_state_lock);
+    if (window_transition_stable_presentation_valid != 0 &&
+        window_transition_state_window == (uintptr_t)window) {
+        request->stable_presentation_valid = 1;
+        request->stable_presentation =
+            window_transition_stable_presentation;
+    }
+    ReleaseSRWLockShared(&window_transition_state_lock);
+}
+
+static void observe_window_transition_state(HWND window, UINT flags) {
+    const UINT swp_nosize = 0x0001u;
+    RECT current;
+    MONITORINFO monitor_info;
+    HMONITOR monitor;
+    int covers_monitor;
+    int changed = 0;
+    LONG event;
+    char line[256];
+
+    if (window == NULL || (flags & swp_nosize) != 0u ||
+        IsIconic(window) || !GetWindowRect(window, &current) ||
+        current.right <= current.left || current.bottom <= current.top) {
+        return;
+    }
+    monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    memset(&monitor_info, 0, sizeof(monitor_info));
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (monitor == NULL || !GetMonitorInfoW(monitor, &monitor_info) ||
+        monitor_info.rcMonitor.right <= monitor_info.rcMonitor.left ||
+        monitor_info.rcMonitor.bottom <= monitor_info.rcMonitor.top) {
+        return;
+    }
+    covers_monitor =
+        current.left <= monitor_info.rcMonitor.left &&
+        current.top <= monitor_info.rcMonitor.top &&
+        current.right >= monitor_info.rcMonitor.right &&
+        current.bottom >= monitor_info.rcMonitor.bottom;
+
+    AcquireSRWLockExclusive(&window_transition_state_lock);
+    if (covers_monitor) {
+        if (window_transition_stable_presentation_valid != 0 &&
+            window_transition_state_window == (uintptr_t)window) {
+            window_transition_stable_presentation_valid = 0;
+            changed = 1;
+        }
+    } else if (window_transition_stable_presentation_valid == 0 ||
+               window_transition_state_window != (uintptr_t)window ||
+               window_transition_stable_presentation.left != current.left ||
+               window_transition_stable_presentation.top != current.top ||
+               window_transition_stable_presentation.right != current.right ||
+               window_transition_stable_presentation.bottom != current.bottom) {
+        window_transition_state_window = (uintptr_t)window;
+        window_transition_stable_presentation.left = current.left;
+        window_transition_stable_presentation.top = current.top;
+        window_transition_stable_presentation.right = current.right;
+        window_transition_stable_presentation.bottom = current.bottom;
+        window_transition_stable_presentation_valid = 1;
+        changed = 1;
+    }
+    ReleaseSRWLockExclusive(&window_transition_state_lock);
+
+    if (!changed) {
+        return;
+    }
+    event = InterlockedIncrement(&window_transition_state_events);
+    if (event <= 64) {
+        wsprintfA(
+            line,
+            "transition presentation state r278 event=%ld hwnd=%08lX valid=%d rect=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
+            event, (DWORD)(uintptr_t)window, !covers_monitor,
+            (LONG)current.left, (LONG)current.top,
+            (LONG)current.right, (LONG)current.bottom,
+            (LONG)monitor_info.rcMonitor.left,
+            (LONG)monitor_info.rcMonitor.top,
+            (LONG)monitor_info.rcMonitor.right,
+            (LONG)monitor_info.rcMonitor.bottom);
+        diagnostic_write(line);
+    }
+}
+
 static BOOL WINAPI frontend_move_window(HWND window, int x, int y,
                                         int width, int height,
                                         BOOL repaint) {
@@ -815,6 +993,8 @@ static BOOL WINAPI frontend_move_window(HWND window, int x, int y,
         request.requested_width = width;
         request.requested_height = height;
         request.repaint = repaint != FALSE;
+        request.window_style_valid =
+            read_window_style(window, &request.window_style);
         request.current_window.left = current_window.left;
         request.current_window.top = current_window.top;
         request.current_window.right = current_window.right;
@@ -823,12 +1003,14 @@ static BOOL WINAPI frontend_move_window(HWND window, int x, int y,
         request.monitor.top = monitor_info.rcMonitor.top;
         request.monitor.right = monitor_info.rcMonitor.right;
         request.monitor.bottom = monitor_info.rcMonitor.bottom;
+        snapshot_window_transition_state(window, &request);
         if (mtw_window_transition_should_suppress(&request)) {
             wsprintfA(
                 line,
-                "transition window shrink suppressed r270 tid=%lu hwnd=%08lX caller=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
+                "transition window geometry suppressed r278 tid=%lu hwnd=%08lX caller=%08lX style=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
                 GetCurrentThreadId(), (DWORD)(uintptr_t)window,
-                (DWORD)request.return_address, (LONG)x, (LONG)y,
+                (DWORD)request.return_address, (DWORD)request.window_style,
+                (LONG)x, (LONG)y,
                 (LONG)width, (LONG)height,
                 (LONG)current_window.left, (LONG)current_window.top,
                 (LONG)current_window.right, (LONG)current_window.bottom,
@@ -869,6 +1051,8 @@ static BOOL WINAPI frontend_set_window_pos(
         request.requested_y = y;
         request.requested_width = width;
         request.requested_height = height;
+        request.window_style_valid =
+            read_window_style(window, &request.window_style);
         request.current_window.left = current_window.left;
         request.current_window.top = current_window.top;
         request.current_window.right = current_window.right;
@@ -877,12 +1061,14 @@ static BOOL WINAPI frontend_set_window_pos(
         request.monitor.top = monitor_info.rcMonitor.top;
         request.monitor.right = monitor_info.rcMonitor.right;
         request.monitor.bottom = monitor_info.rcMonitor.bottom;
+        snapshot_window_transition_state(window, &request);
         if (mtw_wrapper_window_transition_should_suppress(&request, flags)) {
             wsprintfA(
                 line,
-                "backend transition window shrink suppressed r272 tid=%lu hwnd=%08lX flags=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
+                "backend transition window shrink suppressed r278 tid=%lu hwnd=%08lX flags=%08lX style=%08lX request=%ld,%ld %ldx%ld current=%ld,%ld-%ld,%ld monitor=%ld,%ld-%ld,%ld\r\n",
                 GetCurrentThreadId(), (DWORD)(uintptr_t)window,
-                (DWORD)flags, (LONG)x, (LONG)y,
+                (DWORD)flags, (DWORD)request.window_style,
+                (LONG)x, (LONG)y,
                 (LONG)width, (LONG)height,
                 (LONG)current_window.left, (LONG)current_window.top,
                 (LONG)current_window.right, (LONG)current_window.bottom,
@@ -894,9 +1080,16 @@ static BOOL WINAPI frontend_set_window_pos(
             return TRUE;
         }
     }
-    return original_backend_set_window_pos == NULL ? FALSE :
-        original_backend_set_window_pos(
+    if (original_backend_set_window_pos != NULL) {
+        BOOL result = original_backend_set_window_pos(
             window, insert_after, x, y, width, height, flags);
+
+        if (result != FALSE && window == game_window) {
+            observe_window_transition_state(window, flags);
+        }
+        return result;
+    }
+    return FALSE;
 }
 
 static mtw_mapper_frontend_owner_kind query_frontend_owner(void) {
@@ -1237,13 +1430,253 @@ static void diagnostic_dump_page_snapshot(uint32_t generation,
     CloseHandle(file);
 }
 
+static int mouse_message_has_client_coordinates(UINT message) {
+    return message >= WM_MOUSEMOVE && message <= WM_XBUTTONDBLCLK;
+}
+
+static int mouse_message_has_screen_coordinates(UINT message) {
+    return message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL;
+}
+
+static int unpack_mouse_lparam(LPARAM packed, int32_t *x, int32_t *y) {
+    if (x == NULL || y == NULL) return 0;
+    *x = (int16_t)(uint16_t)((uintptr_t)packed & 0xFFFFu);
+    *y = (int16_t)(uint16_t)(((uintptr_t)packed >> 16u) & 0xFFFFu);
+    return 1;
+}
+
+static int pack_mouse_lparam(int32_t x, int32_t y, LPARAM *packed) {
+    if (packed == NULL || x < INT16_MIN || x > INT16_MAX ||
+        y < INT16_MIN || y > INT16_MAX) {
+        return 0;
+    }
+    *packed = (LPARAM)(uint32_t)(
+        (uint16_t)(int16_t)x |
+        ((uint32_t)(uint16_t)(int16_t)y << 16u));
+    return 1;
+}
+
+static int screen_point_inside_client(
+    const mtw_presentation_input_transform *transform,
+    int32_t x,
+    int32_t y) {
+    int64_t relative_x;
+    int64_t relative_y;
+
+    if (transform == NULL) return 0;
+    relative_x = (int64_t)x - transform->client_origin_x;
+    relative_y = (int64_t)y - transform->client_origin_y;
+    return relative_x >= 0 && relative_y >= 0 &&
+           relative_x < transform->client_width &&
+           relative_y < transform->client_height;
+}
+
+static int logical_screen_point_inside_client(
+    const mtw_presentation_input_transform *transform,
+    int32_t x,
+    int32_t y) {
+    int64_t relative_x;
+    int64_t relative_y;
+
+    if (transform == NULL) return 0;
+    relative_x = (int64_t)x - transform->client_origin_x;
+    relative_y = (int64_t)y - transform->client_origin_y;
+    return relative_x >= 0 && relative_y >= 0 &&
+           relative_x < transform->logical_width &&
+           relative_y < transform->logical_height;
+}
+
+static int map_game_mouse_message(const MSG *message, MSG *mapped_message) {
+    mtw_presentation_input_transform transform;
+    HWND game_window;
+    int32_t source_x;
+    int32_t source_y;
+    int32_t mapped_x;
+    int32_t mapped_y;
+    LPARAM mapped_lparam;
+    LONG event_number;
+    char line[256];
+
+    if (message == NULL || mapped_message == NULL ||
+        (!mouse_message_has_client_coordinates(message->message) &&
+         !mouse_message_has_screen_coordinates(message->message))) {
+        return 0;
+    }
+    game_window = query_game_window();
+    if (game_window == NULL || message->hwnd != game_window ||
+        !presentation_input_should_remap(game_window) ||
+        !query_presentation_input_transform(game_window, &transform) ||
+        !unpack_mouse_lparam(message->lParam, &source_x, &source_y)) {
+        return 0;
+    }
+    if (mouse_message_has_screen_coordinates(message->message)) {
+        if (!screen_point_inside_client(&transform, source_x, source_y) ||
+            !mtw_presentation_input_screen_to_logical_screen(
+                &transform, source_x, source_y, &mapped_x, &mapped_y)) {
+            return 0;
+        }
+    } else if (!mtw_presentation_input_client_to_logical(
+                   &transform, source_x, source_y, &mapped_x, &mapped_y)) {
+        return 0;
+    }
+    if (!pack_mouse_lparam(mapped_x, mapped_y, &mapped_lparam)) return 0;
+    *mapped_message = *message;
+    mapped_message->lParam = mapped_lparam;
+    if ((source_x != mapped_x || source_y != mapped_y) &&
+        (event_number = InterlockedIncrement(
+             &presentation_input_events)) <= 128) {
+        wsprintfA(
+            line,
+            "presentation input r273 msg=%04lX client=%ldx%ld logical=%ldx%ld source=%ld,%ld mapped=%ld,%ld\r\n",
+            (DWORD)message->message,
+            (LONG)transform.client_width, (LONG)transform.client_height,
+            (LONG)transform.logical_width, (LONG)transform.logical_height,
+            (LONG)source_x, (LONG)source_y,
+            (LONG)mapped_x, (LONG)mapped_y);
+        diagnostic_write(line);
+    }
+    return 1;
+}
+
+static void observe_game_cursor_message(const MSG *message) {
+    mtw_presentation_input_transform transform;
+    HWND game_window;
+
+    if (message == NULL ||
+        (!mouse_message_has_client_coordinates(message->message) &&
+         !mouse_message_has_screen_coordinates(message->message))) {
+        return;
+    }
+    game_window = query_game_window();
+    if (game_window == NULL || message->hwnd != game_window ||
+        !presentation_input_should_remap(game_window) ||
+        !query_presentation_input_transform(game_window, &transform)) {
+        return;
+    }
+    (void)mtw_presentation_input_cursor_state_observe_screen(
+        &presentation_cursor_state, &transform,
+        (int32_t)message->pt.x, (int32_t)message->pt.y);
+}
+
+static int presentation_mouse_buttons_active(void) {
+    return (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) != 0 ||
+           (GetAsyncKeyState(VK_XBUTTON2) & 0x8000) != 0;
+}
+
+static void preserve_cursor_for_alt_enter(const MSG *message) {
+    mtw_presentation_input_transform transform;
+    POINT actual;
+    int32_t target_x;
+    int32_t target_y;
+    HWND game_window;
+    LONG event_number;
+    char line[256];
+
+    if (message == NULL || original_get_cursor_pos == NULL ||
+        original_set_cursor_pos == NULL ||
+        !mtw_presentation_input_is_alt_enter_keydown(
+            (uint32_t)message->message,
+            (uintptr_t)message->wParam,
+            (uintptr_t)message->lParam)) {
+        return;
+    }
+    game_window = query_game_window();
+    if (game_window == NULL || message->hwnd != game_window ||
+        !presentation_input_should_remap(game_window) ||
+        !query_presentation_input_transform(game_window, &transform) ||
+        !original_get_cursor_pos(&actual) ||
+        !mtw_presentation_input_alt_enter_restore_target(
+            &presentation_cursor_state, &transform,
+            (int32_t)actual.x, (int32_t)actual.y,
+            presentation_mouse_buttons_active(),
+            &target_x, &target_y) ||
+        !original_set_cursor_pos(target_x, target_y)) {
+        return;
+    }
+    (void)mtw_presentation_input_cursor_state_observe_screen(
+        &presentation_cursor_state, &transform, target_x, target_y);
+    if ((event_number = InterlockedIncrement(
+             &presentation_alt_enter_cursor_restores)) <= 64) {
+        wsprintfA(
+            line,
+            "presentation Alt+Enter cursor restored r275 current=%ld,%ld target=%ld,%ld client=%ld,%ld %ldx%ld logical=%ldx%ld\r\n",
+            (LONG)actual.x, (LONG)actual.y,
+            (LONG)target_x, (LONG)target_y,
+            (LONG)transform.client_origin_x,
+            (LONG)transform.client_origin_y,
+            (LONG)transform.client_width,
+            (LONG)transform.client_height,
+            (LONG)transform.logical_width,
+            (LONG)transform.logical_height);
+        diagnostic_write(line);
+    }
+}
+
+static BOOL WINAPI frontend_get_cursor_pos(LPPOINT point) {
+    mtw_presentation_input_transform transform;
+    POINT actual;
+    int32_t mapped_x;
+    int32_t mapped_y;
+    HWND game_window;
+
+    if (original_get_cursor_pos == NULL) return FALSE;
+    if (point == NULL) return original_get_cursor_pos(point);
+    if (!original_get_cursor_pos(&actual)) return FALSE;
+    game_window = query_game_window();
+    if (game_window != NULL &&
+        presentation_input_should_remap(game_window) &&
+        query_presentation_input_transform(game_window, &transform) &&
+        screen_point_inside_client(&transform, actual.x, actual.y) &&
+        mtw_presentation_input_screen_to_logical_screen(
+            &transform, actual.x, actual.y, &mapped_x, &mapped_y)) {
+        point->x = mapped_x;
+        point->y = mapped_y;
+    } else {
+        *point = actual;
+    }
+    return TRUE;
+}
+
+static BOOL WINAPI frontend_set_cursor_pos(int x, int y) {
+    mtw_presentation_input_transform transform;
+    int32_t mapped_x;
+    int32_t mapped_y;
+    HWND game_window;
+
+    if (original_set_cursor_pos == NULL) return FALSE;
+    game_window = query_game_window();
+    if (game_window != NULL &&
+        presentation_input_should_remap(game_window) &&
+        query_presentation_input_transform(game_window, &transform) &&
+        logical_screen_point_inside_client(&transform, x, y) &&
+        mtw_presentation_input_logical_screen_to_screen(
+            &transform, x, y, &mapped_x, &mapped_y)) {
+        if (!original_set_cursor_pos(mapped_x, mapped_y)) return FALSE;
+        (void)mtw_presentation_input_cursor_state_observe_screen(
+            &presentation_cursor_state, &transform, mapped_x, mapped_y);
+        return TRUE;
+    }
+    return original_set_cursor_pos(x, y);
+}
+
 static LRESULT WINAPI frontend_dispatch_message(const MSG *message) {
+    MSG mapped_message;
+    const MSG *dispatch_message = message;
     int begin_epoch = 0;
     int transferred = 0;
     uint32_t generation = 0u;
     uint32_t live_count = 0u;
     LRESULT result;
     char line[256];
+
+    observe_game_cursor_message(message);
+    preserve_cursor_for_alt_enter(message);
+    if (map_game_mouse_message(message, &mapped_message)) {
+        dispatch_message = &mapped_message;
+    }
 
     if (message != NULL &&
         (message->message == WM_DISPLAYCHANGE ||
@@ -1257,7 +1690,7 @@ static LRESULT WINAPI frontend_dispatch_message(const MSG *message) {
 
     if (synchronize_mapper_with_game_mode() == 0) {
         return original_dispatch_message == NULL ? 0 :
-               original_dispatch_message(message);
+               original_dispatch_message(dispatch_message);
     }
 
     if (message != NULL) {
@@ -1287,38 +1720,104 @@ static LRESULT WINAPI frontend_dispatch_message(const MSG *message) {
         }
     }
     result = original_dispatch_message == NULL ? 0 :
-             original_dispatch_message(message);
+             original_dispatch_message(dispatch_message);
     return result;
 }
 
-static int install_dispatch_message_hook(void) {
-    void *expected;
-    void *current;
+static int install_pointer_hook(void *volatile *slot,
+                                void *expected,
+                                void *hook,
+                                void **original) {
     DWORD old_protect;
     DWORD ignored;
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
 
-    if (game_base == 0u || user32 == NULL) return 0;
-    expected = (void *)GetProcAddress(user32, "DispatchMessageA");
-    dispatch_message_iat_slot =
-        (void *volatile *)(game_base + MTW_DISPATCH_MESSAGE_IAT_RVA);
-    current = *dispatch_message_iat_slot;
-    if (expected == NULL || current != expected ||
-        !VirtualProtect((void *)dispatch_message_iat_slot, sizeof(void *),
+    if (slot == NULL || expected == NULL || hook == NULL ||
+        original == NULL || *slot != expected ||
+        !VirtualProtect((void *)slot, sizeof(void *),
                         PAGE_READWRITE, &old_protect)) {
-        dispatch_message_iat_slot = NULL;
         return 0;
     }
-    original_dispatch_message = (mtw_dispatch_message_fn)current;
-    InterlockedExchangePointer(
-        (PVOID volatile *)dispatch_message_iat_slot,
-        (PVOID)frontend_dispatch_message);
+    *original = expected;
+    InterlockedExchangePointer((PVOID volatile *)slot, (PVOID)hook);
     FlushInstructionCache(
-        GetCurrentProcess(), (const void *)dispatch_message_iat_slot,
+        GetCurrentProcess(), (const void *)slot,
         sizeof(void *));
-    VirtualProtect((void *)dispatch_message_iat_slot, sizeof(void *),
-                   old_protect, &ignored);
+    VirtualProtect((void *)slot, sizeof(void *), old_protect, &ignored);
+    return *slot == hook;
+}
+
+static int install_frontend_input_hooks(void) {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    void *expected_dispatch;
+    void *expected_get_cursor;
+    void *expected_set_cursor;
+    void *dispatch_original = NULL;
+    void *get_cursor_original = NULL;
+    void *set_cursor_original = NULL;
+    int get_cursor_installed = 0;
+    int set_cursor_installed = 0;
+    int dispatch_installed = 0;
+
+    if (game_base == 0u || user32 == NULL) return 0;
+    expected_dispatch = (void *)GetProcAddress(user32, "DispatchMessageA");
+    expected_get_cursor = (void *)GetProcAddress(user32, "GetCursorPos");
+    expected_set_cursor = (void *)GetProcAddress(user32, "SetCursorPos");
+    dispatch_message_iat_slot =
+        (void *volatile *)(game_base + MTW_DISPATCH_MESSAGE_IAT_RVA);
+    get_cursor_pos_iat_slot =
+        (void *volatile *)(game_base + MTW_GET_CURSOR_POS_IAT_RVA);
+    set_cursor_pos_iat_slot =
+        (void *volatile *)(game_base + MTW_SET_CURSOR_POS_IAT_RVA);
+    if (expected_dispatch == NULL || expected_get_cursor == NULL ||
+        expected_set_cursor == NULL ||
+        *dispatch_message_iat_slot != expected_dispatch ||
+        *get_cursor_pos_iat_slot != expected_get_cursor ||
+        *set_cursor_pos_iat_slot != expected_set_cursor) {
+        goto fail;
+    }
+    get_cursor_installed = install_pointer_hook(
+        get_cursor_pos_iat_slot, expected_get_cursor,
+        (void *)frontend_get_cursor_pos, &get_cursor_original);
+    if (!get_cursor_installed) goto fail;
+    original_get_cursor_pos =
+        (mtw_get_cursor_pos_fn)get_cursor_original;
+    set_cursor_installed = install_pointer_hook(
+        set_cursor_pos_iat_slot, expected_set_cursor,
+        (void *)frontend_set_cursor_pos, &set_cursor_original);
+    if (!set_cursor_installed) goto fail;
+    original_set_cursor_pos =
+        (mtw_set_cursor_pos_fn)set_cursor_original;
+    dispatch_installed = install_pointer_hook(
+        dispatch_message_iat_slot, expected_dispatch,
+        (void *)frontend_dispatch_message, &dispatch_original);
+    if (!dispatch_installed) goto fail;
+    original_dispatch_message =
+        (mtw_dispatch_message_fn)dispatch_original;
     return 1;
+
+fail:
+    if (dispatch_installed) {
+        (void)restore_pointer_hook(
+            dispatch_message_iat_slot, (void *)frontend_dispatch_message,
+            dispatch_original);
+    }
+    if (set_cursor_installed) {
+        (void)restore_pointer_hook(
+            set_cursor_pos_iat_slot, (void *)frontend_set_cursor_pos,
+            set_cursor_original);
+    }
+    if (get_cursor_installed) {
+        (void)restore_pointer_hook(
+            get_cursor_pos_iat_slot, (void *)frontend_get_cursor_pos,
+            get_cursor_original);
+    }
+    original_dispatch_message = NULL;
+    original_get_cursor_pos = NULL;
+    original_set_cursor_pos = NULL;
+    dispatch_message_iat_slot = NULL;
+    get_cursor_pos_iat_slot = NULL;
+    set_cursor_pos_iat_slot = NULL;
+    return 0;
 }
 
 static uintptr_t choose_preunlock_plane_base(uintptr_t framebuffer_bits,
@@ -3875,10 +4374,11 @@ static int install_all_hooks_transactionally(void) {
                          sizeof(capture_expected));
         return 0;
     }
-    if (!install_dispatch_message_hook()) {
-        diagnostic_write("frontend input generation hook unavailable r96\r\n");
+    if (!install_frontend_input_hooks()) {
+        diagnostic_write("frontend input mapping hooks unavailable r273\r\n");
     } else {
-        diagnostic_write("frontend content-shadow hook active r98\r\n");
+        diagnostic_write(
+            "frontend content-shadow and presentation input hooks active r273\r\n");
     }
     diagnostic_write(
         "primary staging origin-guard lifecycle hook active r268\r\n");
@@ -3899,6 +4399,7 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     InitializeCriticalSection(&constructor_return_lock);
     InitializeCriticalSection(&resolution_filter_lock);
     mtw_resolution_filter_initialize(&resolution_filter_state);
+    mtw_presentation_input_cursor_state_init(&presentation_cursor_state);
     loading_shadow_initialize(
         &loading_shadow,
         allocate_loading_shadow,
@@ -3938,10 +4439,10 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     if (install_all_hooks_transactionally()) {
         if (install_transition_resolution_hooks()) {
             diagnostic_write(
-                "transition resize guard and monitor resolution filter installed r272\r\n");
+                "transition resize guard and monitor resolution filter installed r278\r\n");
         } else {
             diagnostic_write(
-                "transition resize guard and monitor resolution filter unavailable r272\r\n");
+                "transition resize guard and monitor resolution filter unavailable r278\r\n");
         }
         if (install_mapper_shader_clone_hook()) {
             diagnostic_write("mapper shader clone hook installed r154\r\n");
