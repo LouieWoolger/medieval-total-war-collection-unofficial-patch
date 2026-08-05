@@ -385,6 +385,22 @@ def test_unknown_wrapper_refuses_with_zero_changes(tmp_path: Path) -> None:
     assert relevant_snapshot(game) == before
 
 
+def test_incomplete_state_directory_is_preserved_on_failed_install(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Incomplete State")
+    state = game / ".unofficial-medieval-total-war-patch"
+    state.mkdir()
+    marker = state / "orphan.tmp"
+    marker.write_bytes(b"pre-existing interruption marker\x00\xff")
+    before = relevant_snapshot(game)
+
+    result, report = invoke("Install", game)
+
+    assert result.returncode != 0
+    assert report["code"] in {"receipt_invalid", "transaction_failed"}
+    assert marker.read_bytes() == b"pre-existing interruption marker\x00\xff"
+    assert relevant_snapshot(game) == before
+
+
 def test_existing_sidecar_is_preserved_and_immediate_state_restored(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Existing Backup")
     sidecar = game / "D3D9.dll.unofficial-patch.bak"

@@ -67,7 +67,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
     assert manifest["runtime"]["identity"] == "R185"
-    assert manifest["validation"]["project_contract_tests"] == 36
+    assert manifest["validation"]["project_contract_tests"] == 37
     assert manifest["validation"]["compiled_installer_scenarios"] == 10
     assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"

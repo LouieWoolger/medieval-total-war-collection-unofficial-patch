@@ -497,10 +497,10 @@ function Install-Fresh {
     $stage = $null
     $transactionStarted = $false
     $receipt = $null
+    if (Test-Path -LiteralPath $stateDirectory) {
+        Throw-EngineError 'receipt_invalid' "The patch state directory already exists without usable installation metadata: $stateDirectory"
+    }
     try {
-        if (Test-Path -LiteralPath $stateDirectory) {
-            Throw-EngineError 'receipt_invalid' "The patch state directory already exists without usable installation metadata: $stateDirectory"
-        }
         New-Item -ItemType Directory -Path $originalsDirectory -Force | Out-Null
         $stage = New-StagedPayload $stateDirectory $Payload
 
