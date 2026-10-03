@@ -338,7 +338,8 @@ if ($LASTEXITCODE -ne 0) { throw "Presentation input core tests build failed: $L
 & $presentationInputTests
 if ($LASTEXITCODE -ne 0) { throw "Presentation input core tests failed: $LASTEXITCODE" }
 
-$lockPatchTests = Join-Path $combined 'reentrant_lock_patch_tests.exe'
+# Avoid the installer-detection filename heuristic for this console test.
+$lockPatchTests = Join-Path $combined 'reentrant_lock_tests.exe'
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
     ('/Fe' + $lockPatchTests),

@@ -1,0 +1,104 @@
+{
+  "provenance": "Frozen C++ native identity adapter, Medieval source 1d24a75b plus original native candidate, Windows 10 x64 19045. String vectors, not opened directories or XP proof.",
+  "executable_sha256": "059C29784ADEF2E710067688A3964940E5931138C54346216A70D31B20027522",
+  "vectors": [
+    {
+      "input": "F:\\Identity fixtures\\GOG Game",
+      "normalized": "F:\\Identity fixtures\\GOG Game",
+      "invariant_lower": "f:\\identity fixtures\\gog game",
+      "registration_key": "UnofficialMedievalPatch-07fb489b2d0526ba9a1382d90acde605",
+      "mutex": "Global\\UnofficialMedievalPatch-07fb489b2d0526ba9a1382d90acde605"
+    },
+    {
+      "input": "F:\\Identity fixtures\\gog game",
+      "normalized": "F:\\Identity fixtures\\gog game",
+      "invariant_lower": "f:\\identity fixtures\\gog game",
+      "registration_key": "UnofficialMedievalPatch-07fb489b2d0526ba9a1382d90acde605",
+      "mutex": "Global\\UnofficialMedievalPatch-07fb489b2d0526ba9a1382d90acde605"
+    },
+    {
+      "input": "F:\\Identity fixtures\\École",
+      "normalized": "F:\\Identity fixtures\\École",
+      "invariant_lower": "f:\\identity fixtures\\école",
+      "registration_key": "UnofficialMedievalPatch-16ea6c9c94f3523a014b5cfbdffeb91b",
+      "mutex": "Global\\UnofficialMedievalPatch-16ea6c9c94f3523a014b5cfbdffeb91b"
+    },
+    {
+      "input": "F:\\Identity fixtures\\école",
+      "normalized": "F:\\Identity fixtures\\école",
+      "invariant_lower": "f:\\identity fixtures\\école",
+      "registration_key": "UnofficialMedievalPatch-16ea6c9c94f3523a014b5cfbdffeb91b",
+      "mutex": "Global\\UnofficialMedievalPatch-16ea6c9c94f3523a014b5cfbdffeb91b"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Straße",
+      "normalized": "F:\\Identity fixtures\\Straße",
+      "invariant_lower": "f:\\identity fixtures\\straße",
+      "registration_key": "UnofficialMedievalPatch-042cbd244621ac519db7bed3afd4d1ed",
+      "mutex": "Global\\UnofficialMedievalPatch-042cbd244621ac519db7bed3afd4d1ed"
+    },
+    {
+      "input": "F:\\Identity fixtures\\STRAẞE",
+      "normalized": "F:\\Identity fixtures\\STRAẞE",
+      "invariant_lower": "f:\\identity fixtures\\straẞe",
+      "registration_key": "UnofficialMedievalPatch-a6ed3aa19633578e677d381901acd7d1",
+      "mutex": "Global\\UnofficialMedievalPatch-a6ed3aa19633578e677d381901acd7d1"
+    },
+    {
+      "input": "F:\\Identity fixtures\\İıI",
+      "normalized": "F:\\Identity fixtures\\İıI",
+      "invariant_lower": "f:\\identity fixtures\\İıi",
+      "registration_key": "UnofficialMedievalPatch-918fa06ba0627b5a21392f0b871b98d7",
+      "mutex": "Global\\UnofficialMedievalPatch-918fa06ba0627b5a21392f0b871b98d7"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Σίσυφος",
+      "normalized": "F:\\Identity fixtures\\Σίσυφος",
+      "invariant_lower": "f:\\identity fixtures\\σίσυφος",
+      "registration_key": "UnofficialMedievalPatch-a2de0faaf714e246ae7c5e2e26e40d4c",
+      "mutex": "Global\\UnofficialMedievalPatch-a2de0faaf714e246ae7c5e2e26e40d4c"
+    },
+    {
+      "input": "F:\\Identity fixtures\\中世紀",
+      "normalized": "F:\\Identity fixtures\\中世紀",
+      "invariant_lower": "f:\\identity fixtures\\中世紀",
+      "registration_key": "UnofficialMedievalPatch-92f7fa84b51f4b1a30c63797bb35fdb5",
+      "mutex": "Global\\UnofficialMedievalPatch-92f7fa84b51f4b1a30c63797bb35fdb5"
+    },
+    {
+      "input": "F:\\Identity fixtures\\𐐀𐐨",
+      "normalized": "F:\\Identity fixtures\\𐐀𐐨",
+      "invariant_lower": "f:\\identity fixtures\\𐐨𐐨",
+      "registration_key": "UnofficialMedievalPatch-43f55d59950b381901cf32734585336b",
+      "mutex": "Global\\UnofficialMedievalPatch-43f55d59950b381901cf32734585336b"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Café",
+      "normalized": "F:\\Identity fixtures\\Café",
+      "invariant_lower": "f:\\identity fixtures\\café",
+      "registration_key": "UnofficialMedievalPatch-f248ab90093a3bdb13a2e6d62b1641a2",
+      "mutex": "Global\\UnofficialMedievalPatch-f248ab90093a3bdb13a2e6d62b1641a2"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Café",
+      "normalized": "F:\\Identity fixtures\\Café",
+      "invariant_lower": "f:\\identity fixtures\\café",
+      "registration_key": "UnofficialMedievalPatch-fe158e09d0d95c36e946c2d23f6521f8",
+      "mutex": "Global\\UnofficialMedievalPatch-fe158e09d0d95c36e946c2d23f6521f8"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Kelvin",
+      "normalized": "F:\\Identity fixtures\\Kelvin",
+      "invariant_lower": "f:\\identity fixtures\\Kelvin",
+      "registration_key": "UnofficialMedievalPatch-fc23b0466e7e742265eea088b031d344",
+      "mutex": "Global\\UnofficialMedievalPatch-fc23b0466e7e742265eea088b031d344"
+    },
+    {
+      "input": "F:\\Identity fixtures\\Kelvin",
+      "normalized": "F:\\Identity fixtures\\Kelvin",
+      "invariant_lower": "f:\\identity fixtures\\kelvin",
+      "registration_key": "UnofficialMedievalPatch-94b6f22cbf831f607509363c35431d51",
+      "mutex": "Global\\UnofficialMedievalPatch-94b6f22cbf831f607509363c35431d51"
+    }
+  ]
+}

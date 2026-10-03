@@ -1,18 +1,43 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
+from native_helper import helper_path
+from registry_isolation import LEGACY_NAMES, read_registration, registration_name, remove_test_registration
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ENGINE = ROOT / "src" / "install-engine.ps1"
+ENGINE = helper_path()
 PAYLOAD = ROOT / "vendor" / "runtime"
 PRODUCT = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
 SUPPORTED_EXE_HASH = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+
+
+@pytest.fixture(autouse=True)
+def isolated_registration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    legacy = {name: read_registration(name) for name in LEGACY_NAMES}
+    games = []
+    create = new_game
+
+    def tracked(root: Path, name: str = "Game Folder") -> Path:
+        game = create(root, name)
+        assert read_registration(registration_name(game)) is None
+        games.append(game)
+        return game
+
+    monkeypatch.setattr(sys.modules[__name__], "new_game", tracked)
+    try:
+        yield
+    finally:
+        for game in games:
+            remove_test_registration(game, tmp_path)
+        assert {name: read_registration(name) for name in LEGACY_NAMES} == legacy
 
 
 def sha256(path: Path) -> str:
@@ -42,11 +67,6 @@ def invoke(
     cwd: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     command = [
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
         str(ENGINE),
         "-Operation",
         operation,
@@ -59,6 +79,11 @@ def invoke(
         "-InstallerPath",
         str(ROOT / "tests" / "placeholder installer.exe"),
     ]
+    if operation == "Install":
+        fixture = game.parent / "synthetic-engine-test-uninstaller.bin"
+        if not fixture.exists():
+            fixture.write_bytes(b"Synthetic engine transaction fixture; not an executable")
+        command += ["-UninstallerSource", str(fixture)]
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -109,8 +134,9 @@ def make_payload_variant(root: Path) -> Path:
 
 
 def test_engine_uses_standard_user_and_terrain_fix_wording() -> None:
-    text = ENGINE.read_text(encoding="utf-8")
-    assert "Installed and verified the Terrain Movement Fix." in text
+    text = (ROOT / "src/medieval_fix_patcher.c").read_text(encoding="utf-8") + (ROOT / "src/lifecycle.h").read_text(encoding="utf-8")
+    text = re.sub(r'"\s*"', '', text)  # C adjacent literal concatenation.
+    assert "Installed and verified the Terrain Movement Fix, recovery state and uninstaller." in text
     assert "Run the installer as administrator." not in text
     assert "Grant your account write access or choose a writable game installation." in text
 
@@ -126,7 +152,7 @@ def test_inspect_clean_supported_folder(tmp_path: Path) -> None:
 
 
 def test_engine_ignores_native_system_dll_in_host_working_directory(tmp_path: Path) -> None:
-    """NSIS extracts a native System.dll beside its plugins before invoking PowerShell."""
+    """The native helper works from NSIS's plugin directory without CLR loading."""
     game = new_game(tmp_path, "NSIS Hostile CWD")
     hostile_cwd = tmp_path / "NSIS Plugin Directory"
     hostile_cwd.mkdir()
@@ -328,7 +354,25 @@ def test_known_batched_config_upgrades_to_default_presentation(
 
 def test_managed_known_r185_and_previous_fullscreen_config_upgrade_safely(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Managed Previous Runtime")
-    installed, _ = invoke("Install", game)
+    # Generate the historical v1 receipt with the pinned released engine itself.
+    # The engine never writes Windows registration; the old NSIS package did.
+    old_engine = tmp_path / "released-v1-engine.ps1"
+    proof_path = os.environ.get("MTW_LEGACY_PACKAGE_PROOF")
+    if proof_path:
+        proof = json.loads(Path(proof_path).read_text())
+        assert proof["historical_commit"] == "1d24a75"
+        historical = Path(proof["installer"]).parents[1] / "src/install-engine.ps1"
+        old_engine.write_bytes(historical.read_bytes())
+    else:
+        released = subprocess.run(["git", "show", "1d24a75:src/install-engine.ps1"],
+                                  cwd=ROOT, capture_output=True, check=True)
+        old_engine.write_bytes(released.stdout)
+    assert sha256(old_engine) == "47273A6C8C4902D14B9983391966AC1470FF0DDBAEA61830F92A09165221CD72"
+    installed = subprocess.run([
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(old_engine),
+        "-Operation", "Install", "-Target", str(game), "-PayloadDirectory", str(PAYLOAD),
+        "-InstallerVersion", PRODUCT["version"],
+    ], capture_output=True, text=True)
     assert installed.returncode == 0, (installed.stdout, installed.stderr)
 
     receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
@@ -417,21 +461,21 @@ def test_existing_sidecar_is_preserved_and_immediate_state_restored(tmp_path: Pa
     assert sha256(sidecar) == old_sidecar_hash
 
 
-def test_restore_refuses_post_install_user_modification(tmp_path: Path) -> None:
+def test_restore_archives_post_install_user_modification(tmp_path: Path) -> None:
     game = new_game(tmp_path, "User Modified")
+    before_install = relevant_snapshot(game)
     result, _ = invoke("Install", game)
     assert result.returncode == 0
     (game / "D3D9.dll").write_bytes(b"user replacement")
-    before_restore = relevant_snapshot(game)
     result, report = invoke("Restore", game)
-    assert result.returncode != 0
-    assert report["code"] == "postinstall_modified"
-    assert relevant_snapshot(game) == before_restore
-    assert (game / ".unofficial-medieval-total-war-patch").exists()
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert relevant_snapshot(game) == before_install
+    assert (Path(report["recovery_archive"]) / "D3D9.dll").read_bytes() == b"user replacement"
+    assert not (game / ".unofficial-medieval-total-war-patch").exists()
 
 
 def test_unicode_path_round_trip(tmp_path: Path) -> None:
-    game = new_game(tmp_path, "Mediæval Ünicode 騎士")
+    game = new_game(tmp_path, "Medi\u00e6val \u00dcnicode \u9a0e\u58eb")
     before = relevant_snapshot(game)
     result, _ = invoke("Install", game)
     assert result.returncode == 0, (result.stdout, result.stderr)

@@ -20,7 +20,7 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 - Medieval: Total War Collection from GOG or Steam
 - A game folder containing `Medieval_TW.exe`
 
-The Terrain Movement Fix is for modern Windows systems. Windows XP is not supported.
+The Terrain Movement Fix requires Windows 7 or later.
 
 ## Usage
 
@@ -34,11 +34,11 @@ Unofficial Medieval Total War Collection Patch.exe
 
 The installer will try to find your Steam or GOG install automatically. If it picks the wrong folder, browse to the folder that contains `Medieval_TW.exe`.
 
-## Backups
+## Uninstalling
 
-When the installer changes a file, it creates a `.unofficial-patch.bak` backup beside that file. Existing backups are preserved.
+Run `Uninstall Unofficial Medieval Patch.exe` in your game folder.
 
-To restore manually, close the game, delete or rename the patched file, then rename the matching `.unofficial-patch.bak` file back to its original filename.
+Uninstalling the patch will not delete your game or saved games.
 
 ## Building from Source
 
@@ -47,12 +47,13 @@ Build requirements:
 - Python 3.9 or newer with `pytest`, `Pillow`, and `pefile`
 - NSIS 3.11 or newer
 - 7-Zip
+- w64devkit, or another MinGW-w64 toolchain that provides `i686-w64-mingw32` GCC and `windres.exe`
 - Visual Studio 2026 Build Tools with x86 C++ tools, plus LLVM `clang-cl`
 
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1 -SupportedGameExecutable "C:\Games\Medieval - Total War\Medieval_TW.exe"
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 The installer is written to `dist\Unofficial Medieval Total War Collection Patch.exe`.

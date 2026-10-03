@@ -10,7 +10,8 @@ SCRIPT = ROOT / "installer.nsi"
 
 
 def script_text() -> str:
-    return SCRIPT.read_text(encoding="utf-8")
+    return "\n".join(path.read_text(encoding="utf-8") for path in (
+        SCRIPT, ROOT / "installer-support.nsh", ROOT / "installer-uninstall.nsh"))
 
 
 def test_identity_is_centralized_and_unicode_mui2_metadata_is_complete() -> None:
@@ -46,6 +47,7 @@ def test_wizard_matches_reference_structure_and_atomic_component_model() -> None
     assert product["setup_caption"] == "Unofficial Medieval: Total War Collection Patch Setup"
     assert product["output_filename"] == "Unofficial Medieval Total War Collection Patch.exe"
     assert product["version"] == "1.0.0"
+    assert product["uninstaller_filename"] == "Uninstall Unofficial Medieval Patch.exe"
     assert product["component_name"] == "Terrain Movement Fix"
     assert '${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"' in text
     assert 'Section "${PRODUCT_COMPONENT_NAME}" MainSection' in text
@@ -66,7 +68,7 @@ def test_detection_uses_evidenced_gog_and_steam_paths_plus_manual_browse() -> No
     assert 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 345260' in text
     assert "libraryfolders.vdf" in text
     assert "Total War Medieval 1 Gold" in text
-    assert "SHOGUN" not in text.upper()
+    assert "SHOGUN" not in "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";")).upper()
 
 
 def test_steam_detection_precedes_gog_across_registry_views() -> None:
@@ -96,7 +98,14 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
     for name in ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf"):
         assert f'vendor\\runtime\\{name}' in text
     assert 'vendor\\runtime\\payload-manifest.json' in text
-    assert 'src\\install-engine.ps1' in text
+    assert 'File /oname=medieval_fix_patcher.exe "${NATIVE_HELPER}"' in text
+    assert 'File /oname=MinGW-w64-runtime.txt "${SOURCE_DIR}\\licenses\\MinGW-w64-runtime.txt"' in text
+    for dependency in ("install-engine.ps1", "lifecycle.ps1", "lifecycle-transaction.ps1", "lifecycle-registry.ps1", "lifecycle-native.cs"):
+        assert dependency not in text
+        assert not (ROOT / "src" / dependency).exists(), "Superseded production runtime must remain retired"
+    assert "powershell.exe" not in text.lower()
+    assert "-ExecutionPolicy" not in text
+    assert text.count("!insertmacro MEDIEVAL_ENGINE_FILES") >= 2
     for forbidden in ("Medieval.Cfg", "~tmp.vrp", "D3D8.dll", ".pdb"):
         assert f'File "{forbidden}"' not in text
     assert "Medieval_TW.exe" not in "\n".join(
@@ -106,20 +115,25 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
 
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:
     text = script_text()
-    assert '-Operation "$R0"' in text
+    assert '--request "$NativeDirectory\\request.ini"' in text
+    assert 'operation=$EngineOperation' in text
     assert 'StrCpy $R0 "Inspect"' in text
     assert 'StrCpy $R0 "Install"' in text
-    assert 'StrCpy $R0 "Restore"' in text
-    assert '-OutputMode Human' in text
-    assert 'WriteUninstaller "$PLUGINSDIR\\Uninstall.exe"' in text
-    assert 'CopyFiles /SILENT "$PLUGINSDIR\\Uninstall.exe" "$INSTDIR\\.unofficial-medieval-total-war-patch"' in text
-    assert "Section Uninstall" in text
-    assert 'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Unofficial Medieval Total War Collection Patch"' in text
-    assert 'ReadRegStr $INSTDIR HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Unofficial Medieval Total War Collection Patch"' in text
-    assert 'DeleteRegKey HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Unofficial Medieval Total War Collection Patch"' in text
-    assert 'WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Unofficial Medieval Total War Patch"' not in text
-    assert text.count('SetOutPath "$PLUGINSDIR\\payload"') >= 4
-    assert text.count('SetOutPath "$PLUGINSDIR"') >= 4
+    assert 'StrCpy $EngineOperation "Restore"' in text
+    assert '--output Human' in text
+    assert 'WriteUninstaller "$PLUGINSDIR\\${PRODUCT_UNINSTALLER_FILENAME}"' in text
+    assert 'StrCpy $EngineUninstaller "$NativeDirectory\\${PRODUCT_UNINSTALLER_FILENAME}"' in text
+    assert 'Section "Uninstall"' in text
+    assert not re.search(r'^\s*(WriteRegStr|WriteRegDWORD|DeleteRegKey)\b', text, re.MULTILINE)
+    assert 'ReadRegStr $INSTDIR' not in text
+    assert 'uninstaller=$EngineUninstaller' in text
+    assert 'result=success operation=uninstall' in text
+    assert 'child_pid=' in text and 'child_exit=' in text
+    assert 'CreateProcessW' in text and 'WaitForSingleObject' in text
+    assert 'FileWriteUTF16LE /BOM $RequestHandle' in text
+    assert '$ChildStatus == "4"' in text
+    assert 'result=completed_with_warning child_exit=$ChildStatus' in text
+    assert 'The patch does not need to be removed again.' in text
 
 
 def test_finish_badges_have_hover_images_and_current_links() -> None:
@@ -159,13 +173,15 @@ def test_collection_patch_wizard_uses_exact_shogun_sibling_wording() -> None:
     assert "An installer for Medieval: Total War Collection on GOG and Steam." in readme
     assert "The installer looks for `Medieval_TW.exe`" in readme
     assert "- Terrain Movement Fix - installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems." in readme
-    assert "The Terrain Movement Fix is for modern Windows systems. Windows XP is not supported." in readme
+    assert "Windows XP through Windows 11" in readme
+    assert "The Terrain Movement Fix requires Windows 7 or later." in readme
+    assert "Run `Uninstall Unofficial Medieval Patch.exe` in your game folder." in readme
     assert "Unofficial Medieval Total War Collection Patch.exe" in readme
     assert [line for line in readme.splitlines() if line.startswith("## ")] == [
         "## Included Fixes",
         "## Requirements",
         "## Usage",
-        "## Backups",
+        "## Uninstalling",
         "## Building from Source",
     ]
     for bloated_section in (
@@ -182,7 +198,7 @@ def test_collection_patch_wizard_uses_exact_shogun_sibling_wording() -> None:
 def test_installer_has_no_network_fetch_telemetry_or_developer_paths() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
-        for path in (SCRIPT, ROOT / "src" / "install-engine.ps1")
+        for path in (SCRIPT, ROOT / "installer-support.nsh", ROOT / "installer-uninstall.nsh", *sorted((ROOT / "src").glob("*.ps1")), *sorted((ROOT / "src").glob("*.c")), *sorted((ROOT / "src").glob("*.cpp")), *sorted((ROOT / "src").glob("*.h")))
     )
     lowered = combined.lower()
     for forbidden in (
@@ -196,3 +212,25 @@ def test_installer_has_no_network_fetch_telemetry_or_developer_paths() -> None:
     ):
         assert forbidden not in lowered
     assert not re.search(r"(?i)\b[a-z]:[\\/]", combined)
+
+
+def test_native_helper_resources_and_source_build_are_explicit() -> None:
+    build = "\n".join((ROOT / name).read_text(encoding="utf-8") for name in
+                      ("build.ps1", "test.ps1", "tools/build-support.ps1"))
+    for required in ("GccPath", "WindresPath", "-dumpmachine", "i686-w64-mingw32",
+                     "-std=c99", "-municode", "-static", "-static-libgcc",
+                     "-D_WIN32_WINNT=0x0501", "-ladvapi32", "-lrpcrt4", "-lversion",
+                     "medieval_fix_patcher.c", "medieval_fix_patcher.rc", "NATIVE_HELPER",
+                     "MTW_TEST_NATIVE_HELPER", "MTW_CC", "native-build.json",
+                     "tests/test_c_backend_platform.py", "tests/test_c_backend_state.py",
+                     "tests/test_c_backend_lifecycle.py"):
+        assert required in build
+    for obsolete in ("CxxPath", "MTW_CXX", "cc1plus", "libstdc++", "-std=c++17", "medieval_fix_patcher.cpp"):
+        assert obsolete not in build
+    manifest = (ROOT / "src/medieval_fix_patcher.manifest").read_text(encoding="utf-8")
+    assert 'level="asInvoker"' in manifest
+    assert 'version="1.0.0.0"' in manifest
+    resource = (ROOT / "src/medieval_fix_patcher.rc").read_text(encoding="utf-8")
+    assert 'FILEVERSION 1,0,0,0' in resource
+    assert 'Unofficial Medieval: Total War Collection Patch' in resource
+    assert 'medieval_fix_patcher.manifest' in resource

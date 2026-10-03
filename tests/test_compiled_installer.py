@@ -1,23 +1,27 @@
 from __future__ import annotations
 
 import hashlib
+import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import time
-import winreg
+import re
+import uuid
+import sys
 
 import pytest
+from registry_isolation import (LEGACY_NAMES, read_registration, registration_name,
+                                remove_test_registration, assert_empty_registration)
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DIST_INSTALLER = ROOT / "dist" / "Unofficial Medieval Total War Collection Patch.exe"
+DIST_INSTALLER = Path(os.environ.get("MTW_TEST_INSTALLER", str(ROOT / "dist" / "Unofficial Medieval Total War Collection Patch.exe")))
 PAYLOAD = ROOT / "vendor" / "runtime"
 SUPPORTED_EXE_HASH = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
-UNINSTALL_PARENT = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
-UNINSTALL_NAME = "Unofficial Medieval Total War Collection Patch"
 RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf")
 
 
@@ -40,20 +44,25 @@ def supported_exe_source() -> Path:
     return path
 
 
-def remove_uninstall_key() -> None:
-    access = winreg.KEY_WRITE | winreg.KEY_WOW64_32KEY
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_PARENT, 0, access) as parent:
-            winreg.DeleteKey(parent, UNINSTALL_NAME)
-    except FileNotFoundError:
-        pass
-
-
 @pytest.fixture(autouse=True)
-def isolated_uninstall_registration() -> None:
-    remove_uninstall_key()
-    yield
-    remove_uninstall_key()
+def isolated_uninstall_registration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    legacy_before = {name: read_registration(name) for name in LEGACY_NAMES}
+    games = []
+    create_game = new_game
+
+    def tracked_game(root: Path, name: str) -> Path:
+        game = create_game(root, name)
+        assert read_registration(registration_name(game)) is None
+        games.append(game)
+        return game
+
+    monkeypatch.setattr(sys.modules[__name__], "new_game", tracked_game)
+    try:
+        yield
+    finally:
+        for game in games:
+            remove_test_registration(game, tmp_path)
+        assert {name: read_registration(name) for name in LEGACY_NAMES} == legacy_before
 
 
 def new_game(root: Path, name: str) -> Path:
@@ -80,23 +89,94 @@ def assert_runtime(game: Path) -> None:
         assert sha256(game / name) == expected
 
 
+def assert_registration(game: Path) -> None:
+    values = read_registration(registration_name(game))
+    assert values is not None
+    assert Path(values["InstallLocation"][0]).resolve() == game.resolve()
+    assert values["UninstallString"][0] == f'"{game / "Uninstall Unofficial Medieval Patch.exe"}"'
+
+
 def run_installer(game: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(game / DIST_INSTALLER.name), "/S"],
+    logs = game.parent / "diagnostics" / uuid.uuid4().hex
+    logs.mkdir(parents=True)
+    result = subprocess.run(
+        [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"],
         cwd=game,
         text=True,
         capture_output=True,
         timeout=180,
     )
+    for log in logs.rglob("*.log"):
+        encoding = "utf-16" if log.name == "installer.log" else "utf-8-sig"
+        result.stdout += f"\n{log}\n" + log.read_text(encoding=encoding, errors="replace")
+    return result
 
 
-def run_uninstaller(game: Path, *, expect_removal: bool = True) -> subprocess.CompletedProcess[str]:
-    path = game / ".unofficial-medieval-total-war-patch" / "Uninstall.exe"
-    result = subprocess.run([str(path), "/S"], cwd=game, text=True, capture_output=True, timeout=180)
+def process_has_exited(pid: int) -> bool:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        error = ctypes.get_last_error()
+        assert error == 87, f"Cannot inspect diagnostic PID {pid}: Win32 {error}"
+        return True
+    try:
+        return kernel.WaitForSingleObject(handle, 0) == 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def run_uninstaller(game: Path, *, expect_removal: bool = True, cwd: Path | None = None,
+                    registered: bool = False) -> subprocess.CompletedProcess[str]:
+    path = game / "Uninstall Unofficial Medieval Patch.exe"
+    logs = game.parent / "diagnostics" / uuid.uuid4().hex
+    logs.mkdir(parents=True)
+    command = [str(path), "/S", f"/LOGDIR={logs}"]
+    if registered:
+        values = read_registration(registration_name(game))
+        assert values is not None, "The scoped fixture has no uninstall registration"
+        assert Path(values["InstallLocation"][0]).resolve() == game.resolve()
+        quiet = values["QuietUninstallString"][0]
+        assert quiet == f'"{path}" /S', "Refusing an unexpected registered command"
+        # Execute the actual registered string after validating this fixture's
+        # target, with only the test-owned diagnostic directory appended.
+        command = quiet + " " + subprocess.list2cmdline([f"/LOGDIR={logs}"])
+    result = subprocess.run(command, cwd=cwd or game, text=True, capture_output=True, timeout=180)
+    # Normal NSIS uninstall self-copies. The outer launcher's return is not the
+    # result of the actual uninstaller: await its durable terminal record and PID.
+    deadline = time.monotonic() + 180
+    diagnostic = ""
+    while time.monotonic() < deadline:
+        candidates = list(logs.rglob("installer.log"))
+        for candidate in candidates:
+            try:
+                diagnostic = candidate.read_text(encoding="utf-16")
+            except (OSError, UnicodeError):
+                continue
+            pids = re.findall(r"installer_pid=(\d+)", diagnostic)
+            children = re.findall(r"child_pid=(\d+)", diagnostic)
+            terminal = any(value in diagnostic for value in (
+                "result=success operation=uninstall", "result=failure", "result=completed_with_warning"))
+            if terminal and pids and all(process_has_exited(int(pid)) for pid in pids + children):
+                break
+        else:
+            time.sleep(0.1)
+            continue
+        break
+    else:
+        pytest.fail(f"No completed uninstaller child within 180s. Diagnostics: {logs}\n{diagnostic}")
     if expect_removal:
+        assert "result=success operation=uninstall" in diagnostic, diagnostic
+        assert "child_exit=0" in diagnostic, diagnostic
         deadline = time.monotonic() + 10
         while path.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
+    result.stdout += diagnostic
     return result
 
 
@@ -104,16 +184,51 @@ def assert_round_trip(game: Path, before: dict[str, str | None]) -> None:
     install = run_installer(game)
     assert install.returncode == 0, (install.stdout, install.stderr)
     assert_runtime(game)
+    assert_registration(game)
     assert (game / ".unofficial-medieval-total-war-patch" / "install-manifest.json").is_file()
     restore = run_uninstaller(game)
     assert restore.returncode == 0, (restore.stdout, restore.stderr)
     assert snapshot(game) == before
     assert not (game / ".unofficial-medieval-total-war-patch").exists()
+    assert_empty_registration(registration_name(game))
 
 
 def test_compiled_clean_install_and_uninstall(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Clean game with spaces")
     assert_round_trip(game, snapshot(game))
+
+
+def test_compiled_registered_quiet_uninstall_from_another_directory(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Registered game")
+    before = snapshot(game)
+    assert run_installer(game).returncode == 0
+    caller = tmp_path / "Other working directory"
+    caller.mkdir()
+    sentinel = caller / "personal.txt"
+    sentinel.write_bytes(b"unrelated working directory")
+    result = run_uninstaller(game, registered=True, cwd=caller)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert snapshot(game) == before
+    assert_empty_registration(registration_name(game))
+    assert not (game / "Uninstall Unofficial Medieval Patch.exe").exists()
+    assert sentinel.read_bytes() == b"unrelated working directory"
+
+
+def test_compiled_pre_win7_component_refusal_precedes_helper_launch(tmp_path: Path, monkeypatch) -> None:
+    """Exercise the real NSIS refusal branch; this is not execution on Windows XP."""
+    game = new_game(tmp_path, "Unsupported component OS")
+    (game / ".umtwp-test-fixture").write_text("disposable package capability fixture")
+    before = {str(p.relative_to(game)): sha256(p) for p in game.rglob("*") if p.is_file()}
+    monkeypatch.setenv("MTW_ENABLE_LIFECYCLE_FAULTS", "1")
+    monkeypatch.setenv("MTW_TEST_COMPONENT_OS", "pre-win7")
+    result = run_installer(game)
+    assert result.returncode == 2, result.stdout
+    assert "error=unsupported_component_os" in result.stdout
+    assert "no_selection=1" in result.stdout
+    assert "child_pid=" not in result.stdout
+    assert "phase=prepare-uninstaller" not in result.stdout
+    assert {str(p.relative_to(game)): sha256(p) for p in game.rglob("*") if p.is_file()} == before
+    assert read_registration(registration_name(game)) is None
 
 
 def test_compiled_custom_config_is_replaced_and_restored(tmp_path: Path) -> None:
@@ -158,6 +273,7 @@ def test_compiled_managed_repair_replaces_modified_config(tmp_path: Path) -> Non
 
 def test_compiled_unmanaged_r185_adoption_and_managed_repair(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Existing R185")
+    clean = snapshot(game)
     for name in RUNTIME_NAMES:
         shutil.copy2(PAYLOAD / name, game / name)
     before = snapshot(game)
@@ -176,7 +292,27 @@ def test_compiled_unmanaged_r185_adoption_and_managed_repair(tmp_path: Path) -> 
     assert second_receipt["installer_sha256"] == sha256(game / DIST_INSTALLER.name)
     assert_runtime(game)
     assert run_uninstaller(game).returncode == 0
-    assert snapshot(game) == before
+    assert snapshot(game) == clean
+    archives = list(game.glob(".medieval-recovery-*"))
+    assert len(archives) == 1
+    for name in RUNTIME_NAMES:
+        assert sha256(archives[0] / name) == before[name]
+
+
+def test_compiled_two_folders_have_independent_registrations(tmp_path: Path) -> None:
+    first = new_game(tmp_path, "First game")
+    second = new_game(tmp_path, "Second game")
+    for game in (first, second):
+        assert run_installer(game).returncode == 0
+        assert_registration(game)
+    second_registration = read_registration(registration_name(second))
+    assert registration_name(first) != registration_name(second)
+    assert run_uninstaller(first, cwd=second).returncode == 0
+    assert_empty_registration(registration_name(first))
+    assert read_registration(registration_name(second)) == second_registration
+    assert_runtime(second)
+    assert run_uninstaller(second).returncode == 0
+    assert_empty_registration(registration_name(second))
 
 
 def test_compiled_unsupported_executable_is_zero_change(tmp_path: Path) -> None:
@@ -187,6 +323,10 @@ def test_compiled_unsupported_executable_is_zero_change(tmp_path: Path) -> None:
     before = snapshot(game)
     result = run_installer(game)
     assert result.returncode != 0
+    # Guarded initialization refuses this identity before opening helper.log.
+    # The captured Human console must still explain the real refusal.
+    assert 'This Medieval_TW.exe build is unsupported (SHA-256 ' in result.stdout
+    assert 'No files were changed.' in result.stdout
     assert snapshot(game) == before
     assert not (game / ".unofficial-medieval-total-war-patch").exists()
 
@@ -197,6 +337,7 @@ def test_compiled_unknown_wrapper_is_zero_change(tmp_path: Path) -> None:
     before = snapshot(game)
     result = run_installer(game)
     assert result.returncode != 0
+    assert '"code":"wrapper_conflict"' in result.stdout
     assert snapshot(game) == before
 
 
@@ -210,6 +351,26 @@ def test_compiled_existing_backup_is_never_overwritten(tmp_path: Path) -> None:
 
 def test_compiled_game_running_refuses_without_changes(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Running game")
+    before = snapshot(game)
+    # Hold the actual supported target image without executing game code.
+    process = subprocess.Popen(
+        [str(game / "Medieval_TW.exe")],
+        cwd=game, creationflags=0x00000004,  # CREATE_SUSPENDED
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert process.poll() is None
+        result = run_installer(game)
+        assert result.returncode != 0
+        assert '"code":"game_running"' in result.stdout
+        assert snapshot(game) == before
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+
+def test_compiled_unrelated_same_basename_process_does_not_block_target(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Independent game")
     helper_dir = tmp_path / "process helper"
     helper_dir.mkdir()
     helper = helper_dir / "Medieval_TW.exe"
@@ -222,12 +383,27 @@ def test_compiled_game_running_refuses_without_changes(tmp_path: Path) -> None:
     )
     try:
         time.sleep(0.3)
-        result = run_installer(game)
-        assert result.returncode != 0
-        assert snapshot(game) == before
+        assert_round_trip(game, before)
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+def test_compiled_short_temp_alias_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    temp = Path(os.environ["LOCALAPPDATA"]) / "Temp"
+    assert temp.is_dir()
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    kernel.GetShortPathNameW.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel.GetShortPathNameW(str(temp), buffer, len(buffer))
+    assert 0 < length < len(buffer), ctypes.get_last_error()
+    if "~" not in buffer.value:
+        pytest.skip("This user's temporary directory has no 8.3 alias")
+    monkeypatch.setenv("TEMP", buffer.value)
+    monkeypatch.setenv("TMP", buffer.value)
+    game = new_game(tmp_path, "Short temporary path")
+    assert_round_trip(game, snapshot(game))
 
 
 def test_compiled_unicode_path_round_trip(tmp_path: Path) -> None:
@@ -235,18 +411,16 @@ def test_compiled_unicode_path_round_trip(tmp_path: Path) -> None:
     assert_round_trip(game, snapshot(game))
 
 
-def test_compiled_restore_refuses_user_modified_file(tmp_path: Path) -> None:
+def test_compiled_restore_archives_user_modified_file(tmp_path: Path) -> None:
     game = new_game(tmp_path, "User modified")
+    before_install = snapshot(game)
     assert run_installer(game).returncode == 0
-    (game / "D3D9.dll").write_bytes(b"user replacement after installation")
-    before_restore = snapshot(game)
-    refused = run_uninstaller(game, expect_removal=False)
-    # A normal NSIS uninstaller self-copies to a temporary child process. Its
-    # outer launcher can return zero even when the child deliberately aborts;
-    # the authoritative refusal oracle is the untouched file/receipt state.
-    assert refused.returncode in (0, 2)
-    assert snapshot(game) == before_restore
-    assert (game / ".unofficial-medieval-total-war-patch").exists()
-
-    shutil.copy2(PAYLOAD / "D3D9.dll", game / "D3D9.dll")
+    changed = b"user replacement after installation"
+    (game / "D3D9.dll").write_bytes(changed)
     assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before_install
+    assert not (game / ".unofficial-medieval-total-war-patch").exists()
+    archives = list(game.glob(".medieval-recovery-*/D3D9.dll"))
+    assert len(archives) == 1
+    assert archives[0].read_bytes() == changed
+    assert_empty_registration(registration_name(game))

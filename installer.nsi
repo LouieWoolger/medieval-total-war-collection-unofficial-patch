@@ -3,15 +3,24 @@ XPStyle on
 
 !define SOURCE_DIR "${__FILEDIR__}"
 !include "include\product.nsh"
+!ifndef OUTPUT_FILE
+!define OUTPUT_FILE "${SOURCE_DIR}\dist\${PRODUCT_OUTPUT_FILENAME}"
+!endif
+
+!ifndef NATIVE_HELPER
+!define NATIVE_HELPER "${SOURCE_DIR}\build\medieval_fix_patcher.exe"
+!endif
 
 Name "${PRODUCT_NAME}"
 Caption "${PRODUCT_SETUP_CAPTION}"
-OutFile "${SOURCE_DIR}\dist\${PRODUCT_OUTPUT_FILENAME}"
+OutFile "${OUTPUT_FILE}"
 RequestExecutionLevel user
+ManifestSupportedOS all
 InstallDir "$EXEDIR"
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
+UninstallCaption "Remove Unofficial Medieval Patch"
 BrandingText " "
 
 VIProductVersion "${PRODUCT_VERSION_QUAD}"
@@ -29,12 +38,14 @@ VIAddVersionKey "LegalCopyright" "${PRODUCT_COPYRIGHT}"
 !include FileFunc.nsh
 !include StrFunc.nsh
 !include x64.nsh
+!include WinVer.nsh
 !include "include\ui.nsh"
 ${Using:StrFunc} StrStr
 ${Using:StrFunc} StrRep
 ${Using:StrFunc} StrLoc
 
 !define MUI_ABORTWARNING
+!define MUI_CUSTOMFUNCTION_ABORT LogUserAbort
 !define MUI_ICON "${SOURCE_DIR}\assets\medieval.ico"
 !define MUI_UNICON "${SOURCE_DIR}\assets\medieval.ico"
 !define MUI_WELCOMEFINISHPAGE_BITMAP "${SOURCE_DIR}\assets\welcome-finish.bmp"
@@ -67,8 +78,14 @@ Page custom CompatibilityPageCreate CompatibilityPageLeave
 !undef MUI_PAGE_CUSTOMFUNCTION_DESTROYED
 !endif
 
+!define MUI_UNABORTWARNING
+!define MUI_CUSTOMFUNCTION_UNABORT un.LogUserAbort
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "Remove the unofficial patch only. Your game, saves and unrelated files are kept. Close the game before continuing."
+!define MUI_UNCONFIRMPAGE_TEXT_LOCATION "Game folder:"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
+!define MUI_FINISHPAGE_TITLE "Unofficial patch removed"
+!define MUI_FINISHPAGE_TEXT "The patch was removed from:$\r$\n$INSTDIR$\r$\n$\r$\nYour game and personal files have been kept."
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
@@ -87,16 +104,24 @@ Var PatchPageBodyFont
 Var PageVisited
 Var SavedTargetDir
 Var SelectedComponent
+Var ComponentPlatformSupported
 Var EngineExitCode
 Var EngineOutput
-Var WasManaged
 Var KofiButton
 Var DiscordButton
 Var KofiBadgeImage
 Var DiscordBadgeImage
 Var FinishBadgeHoverState
 
+!include "installer-support.nsh"
+
 Function .onInit
+    StrCpy $OperationName "installation"
+    Call InitializeDiagnostics
+    Call RequireDiagnostics
+    StrCpy $InstallPhase "extraction-ui"
+    Call LogPhase
+    ClearErrors
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File /oname=compatibility.bmp "${SOURCE_DIR}\assets\compatibility.bmp"
@@ -104,21 +129,56 @@ Function .onInit
     File /oname=discord-badge-hover.bmp "${SOURCE_DIR}\assets\discord-badge-hover.bmp"
     File /oname=kofi-badge.bmp "${SOURCE_DIR}\assets\kofi-badge.bmp"
     File /oname=kofi-badge-hover.bmp "${SOURCE_DIR}\assets\kofi-badge-hover.bmp"
-    File /oname=install-engine.ps1 "${SOURCE_DIR}\src\install-engine.ps1"
-    CreateDirectory "$PLUGINSDIR\payload"
-    SetOutPath "$PLUGINSDIR\payload"
-    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest.json"
-    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9.dll"
-    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
-    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
-    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
-    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
-    SetOutPath "$PLUGINSDIR"
+    ${If} ${Errors}
+        StrCpy $InstallError "error=ui_extraction_failed"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $InstallPhase "extraction-engine"
+    Call LogPhase
+    ClearErrors
+    !insertmacro MEDIEVAL_ENGINE_FILES
+    ${If} ${Errors}
+        StrCpy $InstallError "error=engine_extraction_failed"
+        Call FailInstallation
+    ${EndIf}
 
     StrCpy $PageVisited "0"
     StrCpy $SavedTargetDir ""
     StrCpy $SelectedComponent "1"
-    Call DetectGamePath
+    ; NSIS consumes /D= before .onInit and removes it from $CMDLINE. Inspect
+    ; the native command line only to detect the override; never reparse its path.
+    System::Call 'kernel32::GetCommandLineW() p.r0'
+    System::Call 'shlwapi::StrStrW(p r0,w " /D=") p.r1'
+    ${If} $1 == 0
+        Call DetectGamePath
+    ${EndIf}
+    Call RequireComponentPlatform
+FunctionEnd
+
+Function RequireComponentPlatform
+    StrCpy $ComponentPlatformSupported "0"
+    ${If} ${AtLeastWin7}
+        StrCpy $ComponentPlatformSupported "1"
+    ${EndIf}
+    ; Restrictive capability probe on a marked disposable target. It can only
+    ; refuse installation, never enable the component on an unsupported OS.
+    ReadEnvStr $0 "MTW_ENABLE_LIFECYCLE_FAULTS"
+    ${If} $0 == "1"
+    ${AndIf} ${FileExists} "$INSTDIR\.umtwp-test-fixture"
+        ReadEnvStr $0 "MTW_TEST_COMPONENT_OS"
+        ${If} $0 == "pre-win7"
+            StrCpy $ComponentPlatformSupported "0"
+        ${EndIf}
+    ${EndIf}
+    ${If} $ComponentPlatformSupported != "1"
+        StrCpy $SelectedComponent "0"
+        StrCpy $InstallError "error=unsupported_component_os component=terrain-movement-fix minimum=Windows7 no_selection=1"
+        StrCpy $LogLine "$InstallError"
+        Call WriteDiagnostic
+        MessageBox MB_ICONSTOP|MB_OK "Terrain Movement Fix requires Windows 7 or later. No compatible component is available on this version of Windows.$\r$\n$\r$\nThe game was not changed.$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory" /SD IDOK
+        SetErrorLevel 2
+        Quit
+    ${EndIf}
 FunctionEnd
 
 Function DetectGamePath
@@ -292,11 +352,8 @@ FunctionEnd
 
 Function ExtractEngineResult
     Exch $R0
-    SetOutPath "$PLUGINSDIR\payload"
-    nsExec::ExecToStack /TIMEOUT=180000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-engine.ps1" -Operation "$R0" -Target "$INSTDIR" -PayloadDirectory "$PLUGINSDIR\payload" -InstallerVersion "${PRODUCT_VERSION}" -InstallerPath "$EXEPATH" -OutputMode Human'
-    SetOutPath "$PLUGINSDIR"
-    Pop $EngineExitCode
-    Pop $EngineOutput
+    StrCpy $EngineOperation $R0
+    Call InvokeEngine
     Pop $R0
 FunctionEnd
 
@@ -453,10 +510,11 @@ Function CompatibilityPageLeave
         Abort
     ${EndIf}
     StrCpy $R0 "Inspect"
+    StrCpy $EngineUninstaller ""
     Push $R0
     Call ExtractEngineResult
     ${If} $EngineExitCode != "0"
-        MessageBox MB_OK|MB_ICONSTOP "The selected folder is not supported.$\r$\n$\r$\n$EngineOutput"
+        MessageBox MB_OK|MB_ICONSTOP "The selected folder could not be used.$\r$\n$\r$\n$EngineOutput$\r$\n$InstallError$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory"
         Abort
     ${EndIf}
     Call RestoreDefaultWizard
@@ -539,125 +597,34 @@ FunctionEnd
 
 Section "${PRODUCT_COMPONENT_NAME}" MainSection
     SectionIn RO
-    SetOutPath "$PLUGINSDIR"
-    StrCpy $WasManaged "0"
-    ${If} ${FileExists} "$INSTDIR\.unofficial-medieval-total-war-patch\install-manifest.json"
-        StrCpy $WasManaged "1"
-    ${EndIf}
-
+    Call RequireComponentPlatform
+    StrCpy $InstallPhase "prepare-uninstaller"
+    Call LogPhase
     ClearErrors
-    WriteUninstaller "$PLUGINSDIR\Uninstall.exe"
+    ; The engine commits this root-level executable in the same transaction as
+    ; payload files, private originals, receipt and Windows registration.
+    WriteUninstaller "$PLUGINSDIR\${PRODUCT_UNINSTALLER_FILENAME}"
     ${If} ${Errors}
-        DetailPrint "Could not prepare the restore/uninstall program."
-        IfSilent 0 +3
-        SetErrorLevel 2
-        Quit
-        MessageBox MB_OK|MB_ICONSTOP "Could not prepare the restore/uninstall program. No game files were changed."
-        SetErrorLevel 2
-        Quit
+        StrCpy $InstallError "error=uninstaller_generation_failed"
+        Call FailInstallation
     ${EndIf}
-
+    StrCpy $EngineUninstaller "$NativeDirectory\${PRODUCT_UNINSTALLER_FILENAME}"
     DetailPrint "Validating and applying the Terrain Movement Fix..."
+    DetailPrint "Diagnostics: $LogDirectory"
     StrCpy $R0 "Install"
     Push $R0
     Call ExtractEngineResult
-    DetailPrint "$EngineOutput"
     ${If} $EngineExitCode != "0"
-        IfSilent 0 +3
-        SetErrorLevel 2
-        Quit
-        MessageBox MB_OK|MB_ICONSTOP "Installation stopped safely.$\r$\n$\r$\n$EngineOutput"
-        SetErrorLevel 2
-        Quit
+    ${OrIf} $InstallError != ""
+        Call FailInstallation
     ${EndIf}
-
-    CreateDirectory "$INSTDIR\.unofficial-medieval-total-war-patch"
-    ClearErrors
-    CopyFiles /SILENT "$PLUGINSDIR\Uninstall.exe" "$INSTDIR\.unofficial-medieval-total-war-patch"
-    ${If} ${Errors}
-        Goto installerMetadataFailure
-    ${EndIf}
-
-    SetRegView 32
-    ClearErrors
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "DisplayName" "${PRODUCT_NAME}"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "DisplayVersion" "${PRODUCT_VERSION}"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "Publisher" "${PRODUCT_COMPANY}"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "InstallLocation" "$INSTDIR"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "DisplayIcon" "$INSTDIR\.unofficial-medieval-total-war-patch\Uninstall.exe"
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "UninstallString" '"$INSTDIR\.unofficial-medieval-total-war-patch\Uninstall.exe"'
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "QuietUninstallString" '"$INSTDIR\.unofficial-medieval-total-war-patch\Uninstall.exe" /S'
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "NoModify" 1
-    WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "NoRepair" 0
-    ${If} ${Errors}
-        Goto installerMetadataFailure
-    ${EndIf}
-    Goto installerComplete
-
-installerMetadataFailure:
-    DetailPrint "Windows uninstall registration could not be completed."
-    ${If} $WasManaged == "0"
-        DetailPrint "Rolling back the fresh runtime installation..."
-        StrCpy $R0 "Restore"
-        Push $R0
-        Call ExtractEngineResult
-        DetailPrint "$EngineOutput"
-    ${EndIf}
-    IfSilent 0 +3
-    SetErrorLevel 2
-    Quit
-        MessageBox MB_OK|MB_ICONSTOP "The selected patch files are safe, but Windows uninstall registration failed.$\r$\n$\r$\n$EngineOutput"
-    SetErrorLevel 2
-    Quit
-
-installerComplete:
-    DetailPrint "Terrain Movement Fix runtime, backups, receipt, and uninstaller verified."
+    StrCpy $InstallPhase "complete"
+    Call LogPhase
+    StrCpy $LogLine "result=success operation=install"
+    Call WriteDiagnostic
+    Call RequireDiagnostics
+    DetailPrint "Terrain Movement Fix, recovery state and uninstaller verified."
+    SetErrorLevel 0
 SectionEnd
 
-Function un.onInit
-    SetRegView 32
-    ReadRegStr $INSTDIR HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch" "InstallLocation"
-    ${If} $INSTDIR == ""
-        ${GetParent} "$EXEDIR" $INSTDIR
-    ${EndIf}
-FunctionEnd
-
-Function un.RunRestoreEngine
-    SetOutPath "$PLUGINSDIR\payload"
-    nsExec::ExecToStack /TIMEOUT=180000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-engine.ps1" -Operation "Restore" -Target "$INSTDIR" -PayloadDirectory "$PLUGINSDIR\payload" -InstallerVersion "${PRODUCT_VERSION}" -InstallerPath "$EXEPATH" -OutputMode Human'
-    SetOutPath "$PLUGINSDIR"
-    Pop $EngineExitCode
-    Pop $EngineOutput
-FunctionEnd
-
-Section Uninstall
-    InitPluginsDir
-    SetOutPath "$PLUGINSDIR"
-    File /oname=install-engine.ps1 "${SOURCE_DIR}\src\install-engine.ps1"
-    CreateDirectory "$PLUGINSDIR\payload"
-    SetOutPath "$PLUGINSDIR\payload"
-    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest.json"
-    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9.dll"
-    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
-    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
-    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
-    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
-    SetOutPath "$PLUGINSDIR"
-
-    DetailPrint "Restoring the complete pre-install state..."
-    StrCpy $R0 "Restore"
-    Call un.RunRestoreEngine
-    DetailPrint "$EngineOutput"
-    ${If} $EngineExitCode != "0"
-        IfSilent 0 +3
-        SetErrorLevel 2
-        Quit
-        MessageBox MB_OK|MB_ICONSTOP "Restore stopped safely because the installed state changed.$\r$\n$\r$\n$EngineOutput"
-        SetErrorLevel 2
-        Abort
-    ${EndIf}
-
-    SetRegView 32
-    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Unofficial Medieval Total War Collection Patch"
-    RMDir "$INSTDIR\.unofficial-medieval-total-war-patch"
-SectionEnd
+!include "installer-uninstall.nsh"

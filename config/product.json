@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "version_quad": "1.0.0.0",
   "output_filename": "Unofficial Medieval Total War Collection Patch.exe",
+  "uninstaller_filename": "Uninstall Unofficial Medieval Patch.exe",
   "company_name": "Louie Woolger",
   "copyright": "Copyright 2026 Louie Woolger",
   "component_name": "Terrain Movement Fix",

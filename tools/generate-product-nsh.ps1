@@ -24,6 +24,7 @@ $defines = [ordered]@{
     PRODUCT_VERSION = [string]$product.version
     PRODUCT_VERSION_QUAD = [string]$product.version_quad
     PRODUCT_OUTPUT_FILENAME = [string]$product.output_filename
+    PRODUCT_UNINSTALLER_FILENAME = [string]$product.uninstaller_filename
     PRODUCT_COMPANY = [string]$product.company_name
     PRODUCT_COPYRIGHT = [string]$product.copyright
     PRODUCT_COMPONENT_NAME = [string]$product.component_name
