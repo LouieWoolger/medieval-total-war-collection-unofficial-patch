@@ -16,7 +16,7 @@
    printable detail until medieval_outcome_close. Status is 1/0; exit_code is the
    compatible 0/2/3/4 process result. Never copy a live outcome/document. */
 typedef struct {
-    const char *operation, *version, *output, *fault;
+    const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
 } MedievalOptions;
 typedef struct {

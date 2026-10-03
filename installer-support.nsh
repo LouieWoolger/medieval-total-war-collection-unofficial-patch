@@ -36,6 +36,10 @@ Var EngineUninstaller
 Var RequestHandle
 Var RequestWriteFailed
 Var RemovalRestored
+Var RequiredOwnerSid
+Var ElevationArguments
+Var ElevatedProcess
+Var ElevatedExit
 
 !macro MEDIEVAL_ENGINE_FILES
     InitPluginsDir
@@ -339,7 +343,7 @@ Function ${PREFIX}WriteEngineRequest
         StrCpy $InstallError "error=engine_request_open_failed"
         Return
     ${EndIf}
-    ; One UTF-16LE field per line. The engine accepts only these seven keys;
+    ; One UTF-16LE field per line. The engine accepts only these recognized keys;
     ; values never enter a shell or the command-line argument parser.
     FileWriteUTF16LE /BOM $RequestHandle "operation=$EngineOperation$\r$\n"
     FileWriteUTF16LE $RequestHandle "target=$INSTDIR$\r$\n"
@@ -348,6 +352,7 @@ Function ${PREFIX}WriteEngineRequest
     FileWriteUTF16LE $RequestHandle "installer=$EngineInstaller$\r$\n"
     FileWriteUTF16LE $RequestHandle "uninstaller=$EngineUninstaller$\r$\n"
     FileWriteUTF16LE $RequestHandle "log=$HelperLog$\r$\n"
+    FileWriteUTF16LE $RequestHandle "require_owner=$RequiredOwnerSid$\r$\n"
     ${If} ${Errors}
         StrCpy $RequestWriteFailed "1"
     ${EndIf}
@@ -419,7 +424,9 @@ Function FailInstallation
     DetailPrint "$InstallError"
     DetailPrint "Diagnostics: $LogDirectory"
     MessageBox MB_ICONSTOP|MB_OK "Installation could not complete during $InstallPhase.$\r$\n$EngineOutput$\r$\n$InstallError$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory$\r$\n$\r$\nKeep any recovery files and include these logs when requesting help." /SD IDOK
-    ${If} $ChildStatus == "3"
+    ${If} $EngineExitCode == "740"
+        SetErrorLevel 740
+    ${ElseIf} $ChildStatus == "3"
     ${OrIf} $EngineExitCode == "3"
         SetErrorLevel 3
     ${Else}
@@ -428,6 +435,100 @@ Function FailInstallation
     IfSilent 0 +2
     Quit
     Abort
+FunctionEnd
+
+; Only a validated, owned machine-wide legacy entry can request elevation.
+; Relaunch the complete setup so it extracts and validates its own helper and
+; payload. Bind it to this Windows account and the already selected game path.
+Function InstallWithAdministratorPermission
+    IfSilent elevationDone
+    StrCpy $InstallError ""
+    StrCpy $ElevatedProcess ""
+    System::Call 'kernel32::GetCurrentProcess() p.r0'
+    System::Call 'advapi32::OpenProcessToken(p r0,i 8,*p.r1) i.r2'
+    ${If} $2 == 0
+        Goto elevationIdentityFailed
+    ${EndIf}
+    System::Call 'advapi32::GetTokenInformation(p r1,i 1,p 0,i 0,*i.r2)'
+    System::Alloc $2
+    Pop $3
+    ${If} $3 == 0
+        System::Call 'kernel32::CloseHandle(p r1)'
+        Goto elevationIdentityFailed
+    ${EndIf}
+    System::Call 'advapi32::GetTokenInformation(p r1,i 1,p r3,i r2,*i.r2) i.r4'
+    System::Call 'kernel32::CloseHandle(p r1)'
+    ${If} $4 != 0
+        System::Call '*$3(p.r0)'
+        System::Call 'advapi32::ConvertSidToStringSidW(p r0,*p.r1) i.r4'
+        ${If} $4 != 0
+            System::Call 'kernel32::lstrcpynW(w.r0,p r1,i ${NSIS_MAX_STRLEN})'
+            StrCpy $RequiredOwnerSid "$0"
+            System::Call 'kernel32::LocalFree(p r1)'
+        ${EndIf}
+    ${EndIf}
+    System::Free $3
+    ${If} $4 == 0
+    ${OrIf} $RequiredOwnerSid == ""
+        Goto elevationIdentityFailed
+    ${EndIf}
+    DetailPrint "Windows permission is needed to update an older patch entry."
+    ; NSIS /D= must be last and unquoted, including paths with spaces.
+    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /D=$INSTDIR'
+    StrLen $0 $ElevationArguments
+    ${If} $0 >= 1023
+        StrCpy $InstallError "The administrator command is too long. Close setup and use Run as administrator."
+        Return
+    ${EndIf}
+    StrCpy $LogLine "elevation_requested=1 target=$INSTDIR owner=$RequiredOwnerSid"
+    Call WriteDiagnostic
+    Call RequireDiagnostics
+    ; x86 SHELLEXECUTEINFOW is 60 bytes. NOCLOSEPROCESS|NOASYNC retains a
+    ; waitable process handle; success is the child's exit plus Verify below.
+    ; Register operands keep quotes in command arguments out of System.dll's
+    ; own signature parser (interpolating them corrupts the struct fields).
+    StrCpy $R0 "$EXEPATH"
+    StrCpy $R1 "$ElevationArguments"
+    StrCpy $R2 "$EXEDIR"
+    System::Call '*(i 60,i 0x140,p $HWNDPARENT,w "runas",w r10,w r11,w r12,i 0,p 0,p 0,p 0,p 0,i 0,p 0,p 0) p.r0'
+    System::Call 'shell32::ShellExecuteExW(p r0) i.r1 ?e'
+    Pop $2
+    ${If} $1 != 0
+        IntOp $1 $0 + 56
+        System::Call '*$1(p .s)'
+        Pop $ElevatedProcess
+    ${EndIf}
+    System::Free $0
+    ${If} $ElevatedProcess == ""
+    ${OrIf} $ElevatedProcess == 0
+        StrCpy $InstallError "Administrator permission was not granted (Windows error $2). The previous installation has been kept."
+        Return
+    ${EndIf}
+    ${Do}
+        System::Call 'kernel32::WaitForSingleObject(p $ElevatedProcess,i 250) i.r0'
+    ${LoopWhile} $0 == 258
+    StrCpy $ElevatedExit "2"
+    ${If} $0 == 0
+        System::Call 'kernel32::GetExitCodeProcess(p $ElevatedProcess,*i .s) i.r1'
+        Pop $ElevatedExit
+        ${If} $1 == 0
+            StrCpy $ElevatedExit "2"
+        ${EndIf}
+    ${EndIf}
+    System::Call 'kernel32::CloseHandle(p $ElevatedProcess)'
+    StrCpy $LogLine "elevated_child_exit=$ElevatedExit diagnostics=$LogDirectory\elevated"
+    Call WriteDiagnostic
+    StrCpy $EngineExitCode "$ElevatedExit"
+    ${If} $ElevatedExit != 0
+        StrCpy $InstallError "The administrator operation did not complete. Diagnostics: $LogDirectory\elevated"
+        Return
+    ${EndIf}
+    StrCpy $EngineOperation "Verify"
+    Call InvokeEngine
+    Return
+elevationIdentityFailed:
+    StrCpy $InstallError "Could not identify the Windows account for administrator permission. Close setup and use Run as administrator with the same account."
+elevationDone:
 FunctionEnd
 
 Function RequireDiagnostics

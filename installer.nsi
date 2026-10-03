@@ -118,6 +118,7 @@ Var FinishBadgeHoverState
 Function .onInit
     StrCpy $OperationName "installation"
     Call InitializeDiagnostics
+    ${GetOptions} $CommandOptions "/REQUIREOWNER=" $RequiredOwnerSid
     Call RequireDiagnostics
     StrCpy $InstallPhase "extraction-ui"
     Call LogPhase
@@ -614,6 +615,9 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $R0 "Install"
     Push $R0
     Call ExtractEngineResult
+    ${If} $EngineExitCode == "740"
+        Call InstallWithAdministratorPermission
+    ${EndIf}
     ${If} $EngineExitCode != "0"
     ${OrIf} $InstallError != ""
         Call FailInstallation

@@ -424,3 +424,20 @@ def test_compiled_restore_archives_user_modified_file(tmp_path: Path) -> None:
     assert len(archives) == 1
     assert archives[0].read_bytes() == changed
     assert_empty_registration(registration_name(game))
+
+
+def test_compiled_elevation_handoff_rejects_another_account(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Account-bound handoff ü")
+    before = snapshot(game)
+    logs = tmp_path / "handoff diagnostics"
+    # NSIS /D= consumes the remaining, unquoted command line. Mirror the
+    # elevation launcher rather than Python's generic argv quoting rules.
+    command = f'"{game / DIST_INSTALLER.name}" /S /REQUIREOWNER=S-1-5-18 /LOGDIR="{logs}" /D={game}'
+    result = subprocess.run(command, cwd=tmp_path,
+                            capture_output=True, timeout=60)
+    assert result.returncode == 2
+    assert snapshot(game) == before
+    assert not (game / ".unofficial-medieval-total-war-patch").exists()
+    assert read_registration(registration_name(game)) is None
+    console = "\n".join(p.read_text(encoding="utf-8") for p in logs.rglob("helper-console.log"))
+    assert "same Windows account" in console

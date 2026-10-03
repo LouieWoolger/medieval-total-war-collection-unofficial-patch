@@ -21,13 +21,13 @@ static int medieval_version_valid(const char *s) {
 }
 static int medieval_field(const wchar_t *s, int request) {
     static const wchar_t *const command[] = {L"--operation", L"--target", L"--payload", L"--version",
-        L"--installer", L"--uninstaller", L"--log", L"--request", L"--test-fault", L"--output"};
+        L"--installer", L"--uninstaller", L"--log", L"--request", L"--test-fault", L"--output", L"--require-owner"};
     static const wchar_t *const aliases[] = {L"-Operation", L"-Target", L"-PayloadDirectory", L"-InstallerVersion",
-        L"-InstallerPath", L"-UninstallerSource", L"-LogPath", L"-RequestPath", L"-TestFault", L"-OutputMode"};
-    static const wchar_t *const fields[] = {L"operation", L"target", L"payload", L"version", L"installer", L"uninstaller", L"log"};
+        L"-InstallerPath", L"-UninstallerSource", L"-LogPath", L"-RequestPath", L"-TestFault", L"-OutputMode", L"-RequireOwner"};
+    static const wchar_t *const fields[] = {L"operation", L"target", L"payload", L"version", L"installer", L"uninstaller", L"log", L"require_owner"};
     size_t i;
-    for (i = 0; i < (request ? 7U : 10U); ++i)
-        if (request ? !wcscmp(s, fields[i]) : (!wcscmp(s, command[i]) || !wcscmp(s, aliases[i]))) return (int)i;
+    for (i = 0; i < (request ? 8U : 11U); ++i)
+        if (request ? !wcscmp(s, fields[i]) : (!wcscmp(s, command[i]) || !wcscmp(s, aliases[i]))) return request && i == 7 ? 10 : (int)i;
     return -1;
 }
 static int medieval_option_set(PatchContext *c, MedievalOptions *o, int field, const wchar_t *value, PatchError *e) {
@@ -46,6 +46,7 @@ static int medieval_option_set(PatchContext *c, MedievalOptions *o, int field, c
     case 7: o->request = value; break;
     case 8: o->fault = text; break;
     case 9: o->output = text; break;
+    case 10: o->require_owner = text; break;
     default: return 0;
     }
     return 1;

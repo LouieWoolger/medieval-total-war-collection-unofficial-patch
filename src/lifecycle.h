@@ -283,12 +283,20 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
                                  json_get(m->payload, "locked_settings"), installer.exists ? installer.sha256 : NULL, &receipt, e));
     MTW_TRY(mtw_registry_snapshot(m, "CurrentUser", "Registry32", m->identity.registration_key, &registry, e) &&
             medieval_registry_ownership(&m->identity, &registry, mtw_s(receipt, "installation_id"), e));
+    /* Check every registration this upgrade owns before archives, receipts,
+       uninstaller retirement or runtime publication can change the target. */
+    MTW_TRY(patch_registry_writable(&m->identity.registry, "CurrentUser", "Registry32", m->identity.registration_key, e));
+    if (repair && previous->legacy) {
+        MTW_TRY(medieval_legacy_registrations(d, &m->identity, &legacy, e));
+        for (raw = legacy->child; raw; raw = raw->next)
+            MTW_TRY(patch_registry_writable(&m->identity.registry, mtw_s(raw, "hive"), mtw_s(raw, "view"), mtw_s(raw, "name"), e));
+    }
     old_executable = mtw_live(m, MEDIEVAL_STATE_NAME "/Uninstall.exe", e);
     MTW_TRY(old_executable);
     if (repair && previous->legacy) {
         PatchFileRecord old;
         MTW_TRY(mtw_archive_source(m, sources, &count, "legacy-install-manifest.json", MTW_RECEIPT_RELATIVE, e) &&
-                medieval_legacy_registrations(d, &m->identity, &legacy, e) && mtw_record(m, old_executable, &old, e));
+                mtw_record(m, old_executable, &old, e));
         if (old.exists) {
             char *product, *company;
             MTW_TRY(mtw_version_string(m, old_executable, L"ProductName", &product, e) &&
@@ -812,6 +820,7 @@ static inline int medieval_failure_result(MedievalOutcome *o, const MedievalOpti
     JsonValue *r;
     /* The result classification must survive even if allocating its JSON fails. */
     o->exit_code = o->removal_completed ? 4 : mtw_is(o->restoration, "verified") ? 3 : 2;
+    if (error && mtw_is(error->code, "elevation_required")) o->exit_code = ERROR_ELEVATION_REQUIRED;
     r = json_new(d, JSON_OBJECT, e);
     const char *message = o->detail[0] ? o->detail : error && error->message ? error->message : "The operation could not complete.";
     MTW_TRY(r && mtw_text(d, r, "status", "error", e) && mtw_text(d, r, "code", error && error->code ? error->code : "unexpected_error", e) &&
@@ -843,6 +852,9 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
     }
     m.warnings = json_new(&m.document, JSON_ARRAY, e);
     if (!m.warnings || !mtw_initialize(&m, e)) goto done;
+    if (options->require_owner && *options->require_owner && strcmp(options->require_owner, m.identity.owner_sid)) {
+        mtw_fail(&m, e, "wrong_account", "Continue with the same Windows account that started setup. Administrator credentials for another account cannot be used to transfer this patch installation."); goto done;
+    }
     if ((mtw_is(options->operation, "Install") || mtw_is(options->operation, "Restore")) && !mtw_game_closed(&m, e)) goto done;
     if (!mtw_transaction_recover(&m, &recovered, &pending, e)) goto done;
     if (!mtw_is(options->operation, "Restore")) {

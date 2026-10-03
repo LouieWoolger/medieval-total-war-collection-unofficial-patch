@@ -764,6 +764,38 @@ static inline int patch_registry_encode(PatchContext *context, const JsonValue *
     *size = (DWORD)total;
     return 1;
 }
+/* Probe access without creating keys or changing values. Missing keys require
+   create-subkey access on the nearest existing ancestor, not on an invented
+   temporary key. Existing entries only need value-write access. */
+static inline int patch_registry_writable(const PatchRegistry *r, const char *hive, const char *view,
+                                          const char *name, PatchError *e) {
+    PatchContext local = {0};
+    HKEY root, key = NULL;
+    wchar_t *path = NULL, *end;
+    REGSAM access;
+    LSTATUS status = ERROR_INVALID_PARAMETER;
+    int ok = 0;
+    patch_registry_context(r, &local);
+    if (!patch_registry_path(&local, hive, name, &root, &path, e) ||
+        !patch_registry_view(r, view, &access, e)) goto done;
+    status = r->open(root, path, 0, KEY_READ | KEY_SET_VALUE | access, &key);
+    while (status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND) {
+        end = wcsrchr(path, L'\\');
+        if (!*path) break;
+        if (end) *end = 0;
+        else *path = 0;
+        status = r->open(root, path, 0, KEY_CREATE_SUB_KEY | access, &key);
+    }
+    if (status == ERROR_ACCESS_DENIED && !strcmp(hive, "LocalMachine"))
+        patch_error_set(e, "elevation_required",
+                        "Updating an older patch entry for all Windows users needs administrator permission. Run setup as administrator using the same Windows account. No new patch changes were applied.", status);
+    else ok = patch_registry_error(e, status, "registry_access_denied",
+                                    "Windows denied access to the patch registration. Check this account's registry permissions before retrying.");
+done:
+    if (key) RegCloseKey(key);
+    patch_context_close(&local);
+    return ok;
+}
 /* Preflight all unknown values before touching owned values. Unknown values are
    never rewritten: equal explicit-length data is retained byte-for-byte; a
    changed/missing unknown value or changed subkey count is a conflict. */
@@ -813,14 +845,17 @@ static inline int patch_registry_set(const PatchRegistry *r, const char *hive, c
                 goto conflict;
         }
     }
-    if (!target.exists && !before.exists) {
+    if (!patch_registry_expected_equal(r, &target, &before, &equal, e)) goto done;
+    /* In particular, rollback must not request write access to an action that
+       failed before modifying its registry entry. */
+    if (equal) {
         ok = 1;
         goto done;
     }
-    if (target.exists)
-        status = r->create(root, path, 0, NULL, 0, KEY_READ | KEY_WRITE | access, NULL, &key, NULL);
+    if (target.exists && !before.exists)
+        status = r->create(root, path, 0, NULL, 0, KEY_READ | KEY_SET_VALUE | access, NULL, &key, NULL);
     else
-        status = r->open(root, path, 0, KEY_READ | KEY_WRITE | access, &key);
+        status = r->open(root, path, 0, KEY_READ | KEY_SET_VALUE | access, &key);
     if (!patch_registry_error(e, status, "registry_write_failed",
                               "Cannot open patch registration for writing."))
         goto done;

@@ -154,7 +154,7 @@ $reports = [ordered]@{}
 $buildResult = [ordered]@{schema='unofficial-medieval-total-war-patch-build-v2';result='incomplete';started_utc=[DateTime]::UtcNow.ToString('o')}
 $environmentNames = @('MTW_TEST_GAME_EXE','MTW_TEST_INSTALLER','MTW_RUN_COMPILED_INSTALLER_TESTS',
     'MTW_RUN_LIFECYCLE_FAULTS','MTW_ENABLE_LIFECYCLE_FAULTS','MTW_RELEASE_DIRECTORY',
-    'MTW_TEST_REPORT_DIRECTORY','MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER','MTW_TEST_C_BACKEND',
+    'MTW_TEST_REPORT_DIRECTORY','MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER','MTW_TEST_C_BACKEND','MTW_TEST_MAKENSIS',
     'MTW_CC','MTW_RUN_LEGACY_MIGRATION_TESTS','MTW_C_HISTORICAL_BULK','MTW_LEGACY_CPP_HELPER',
     'SEVENZIP_EXE','PYTHONDONTWRITEBYTECODE','TEMP','TMP','PATH')
 $priorEnvironment = @{}
@@ -177,6 +177,7 @@ try {
     $env:TMP = $tempDirectory
     $env:PATH = $compilerBin + ';' + $env:PATH
     $env:MTW_TEST_NATIVE_HELPER = $nativeHelper
+    $env:MTW_TEST_MAKENSIS = $makeNsis
     $env:MTW_TEST_NATIVE_UNSTRIPPED = Join-Path $BuildDirectory 'medieval_fix_patcher.unstripped.exe'
     $env:MTW_CC = $gcc
     $env:MTW_TEST_C_BACKEND = '1'
@@ -224,7 +225,7 @@ try {
 
     $reports['project_contracts'] = Invoke-PytestStage 'project_contracts' @(
         'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_installer_script.py','tests/test_package_audit.py',
-        'tests/test_build_workflow.py')
+        'tests/test_build_workflow.py','tests/test_installer_elevation.py')
     $selection = Get-GameTestSelection
     $reports['native_guard'] = Invoke-PytestStage 'native_guard' $selection.native_guard
     $toolIdentities = @(

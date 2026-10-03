@@ -143,7 +143,7 @@ function Get-GameTestSelection {
         'tests/test_native_compatibility.py::test_native_recovers_actual_powershell_v2_journal')
     $state = 'tests/test_c_backend_state.py::test_c_genuine_saved_cpp_journals_and_receipts'
     $lifecycle = @('tests/test_install_engine.py','tests/test_lifecycle.py','tests/test_lifecycle_adversarial.py',
-        'tests/test_lifecycle_permissions.py','tests/test_registry_isolation.py',
+        'tests/test_lifecycle_permissions.py','tests/test_registry_permissions.py','tests/test_registry_isolation.py',
         'tests/test_native_compatibility.py','tests/test_c_backend_lifecycle.py')
     foreach ($node in @($cpp + $v2)) { $lifecycle += '--deselect=' + $node }
     return @{lifecycle=$lifecycle;legacy_cpp=$cpp;legacy_v2=$v2;historical_state=@($state);
