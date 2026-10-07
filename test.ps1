@@ -65,7 +65,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -ErrorAction Stop | Out-Null
 $reports = [ordered]@{}
 $result = [ordered]@{schema='unofficial-medieval-game-tests-v1';result='incomplete';
     started_utc=[DateTime]::UtcNow.ToString('o');installer_sha256=$record.inputs.installer.sha256}
-$environmentNames = @('MTW_TEST_GAME_EXE','MTW_TEST_INSTALLER','MTW_RUN_COMPILED_INSTALLER_TESTS',
+$environmentNames = @('MTW_TEST_GAME_EXE','MTW_STOCK_EXE','MTW_TEST_INSTALLER','MTW_RUN_COMPILED_INSTALLER_TESTS',
     'MTW_RUN_LIFECYCLE_FAULTS','MTW_ENABLE_LIFECYCLE_FAULTS','MTW_RELEASE_DIRECTORY','MTW_TEST_REPORT_DIRECTORY',
     'MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER','MTW_TEST_C_BACKEND',
     'MTW_CC','SEVENZIP_EXE','PYTHONDONTWRITEBYTECODE','TEMP','TMP','PATH')
@@ -74,6 +74,7 @@ foreach ($name in $environmentNames) { $priorEnvironment[$name] = [Environment]:
 Push-Location $root
 try {
     $env:MTW_TEST_GAME_EXE = $SupportedGameExecutable
+    $env:MTW_STOCK_EXE = $SupportedGameExecutable
     $env:MTW_TEST_INSTALLER = $installer
     $env:MTW_RUN_COMPILED_INSTALLER_TESTS = '1'
     $env:MTW_RUN_LIFECYCLE_FAULTS = '1'
@@ -102,6 +103,16 @@ try {
         $reports[$entry.Name] = $destination
     }
     $selection = Get-GameTestSelection
+    $reports['sprite_exe'] = Invoke-PytestStage 'sprite_exe' @('tests/test_sprite_exe_patch.py')
+    [xml]$spriteSuite = Get-Content -LiteralPath $reports['sprite_exe'] -Raw -Encoding UTF8
+    $spriteCounts = $spriteSuite.testsuites.testsuite
+    # pytest counts unittest subtests in the suite total, while JUnit emits one
+    # testcase element per method. Require all four methods and no failed subtests.
+    if (@($spriteCounts.testcase).Count -ne 4 -or [int]$spriteCounts.tests -lt 4 -or
+        [int]$spriteCounts.skipped -ne 0 -or
+        [int]$spriteCounts.failures -ne 0 -or [int]$spriteCounts.errors -ne 0) {
+        throw 'The four exact-binary Sprite EXE tests must run without skips or failures.'
+    }
     $reports['lifecycle'] = Invoke-PytestStage 'lifecycle' $selection.lifecycle
     foreach ($entry in @{legacy_cpp='MTW_LEGACY_CPP_HELPER';legacy_v2='MTW_LEGACY_V2_SOURCE';
                          historical_state='MTW_C_HISTORICAL_BULK'}.GetEnumerator()) {

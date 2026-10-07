@@ -12,12 +12,13 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_NAMES = (
-    "medieval.ico", "welcome-finish.bmp", "compatibility.bmp",
+    "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp",
+    "sprite-clipping.bmp",
     "discord-badge.bmp", "discord-badge-hover.bmp", "kofi-badge.bmp",
     "kofi-badge-hover.bmp",
 )
 ENGINE_NAMES = ("medieval_fix_patcher.exe",)
-STAGES = ("project_contracts", "native_guard", "lifecycle", "compiled_installer", "legacy_migration",
+STAGES = ("project_contracts", "native_guard", "sprite_exe", "lifecycle", "compiled_installer", "legacy_migration",
           "legacy_cpp", "legacy_v2", "historical_state", "release_hygiene")
 
 # Deliberately bounded XP SP3 import surface for the installer helper. New imports
@@ -131,30 +132,33 @@ def junit_result(path: Path) -> dict:
     return result
 
 
-def r185_result(path: Path | None, payload_hash: str, scroll_off_hash: str) -> dict:
+def r185_result(path: Path | None, variant_hashes: dict[str, str]) -> dict:
     if path is None:
         return {"status": "not-run", "reason": "No R185 rebuild evidence was supplied."}
     evidence = load_json(path)
     tests = {name.removesuffix("_exit"): value for name, value in evidence.items()
              if name.endswith("_tests_exit")}
-    reproduced = evidence.get("combined_inert_sha256", "").upper() == payload_hash.upper()
-    reproduced_scroll_off = evidence.get("scroll_off_sha256", "").upper() == scroll_off_hash.upper()
+    fields = {
+        "D3D9-scroll-sprite-off.dll": "scroll_sprite_off_sha256",
+    }
+    variants = {name: {"sha256": evidence.get(field),
+                       "matches_packaged_runtime": evidence.get(field, "").upper() == variant_hashes[name].upper()}
+                for name, field in fields.items()}
     passed = bool(tests) and all(value == 0 for value in tests.values())
     smoke = evidence.get("smoke_loader_exit") == 0
     return {
-        "status": "pass" if reproduced and reproduced_scroll_off and passed and smoke else "fail",
+        "status": "pass" if all(item["matches_packaged_runtime"] for item in variants.values()) and passed and smoke else "fail",
         "report": path.name, "report_sha256": sha256(path),
-        "runtime_sha256": evidence.get("combined_inert_sha256"),
-        "matches_packaged_runtime": reproduced, "native_component_tests": tests,
-        "scroll_off_runtime_sha256": evidence.get("scroll_off_sha256"),
-        "scroll_off_matches_packaged_runtime": reproduced_scroll_off,
+        "runtime_sha256": evidence.get("scroll_sprite_off_sha256"),
+        "matches_packaged_runtime": variants["D3D9-scroll-sprite-off.dll"]["matches_packaged_runtime"], "native_component_tests": tests,
+        "runtime_variants": variants,
         "native_component_test_count": len(tests), "smoke_loader_exit": evidence.get("smoke_loader_exit"),
     }
 
 
 def game_test_result(validation: dict) -> dict:
     """A basic build or a skipped game suite cannot establish game validation."""
-    states = [validation[name]["status"] for name in ("lifecycle", "compiled_installer")]
+    states = [validation[name]["status"] for name in ("sprite_exe", "lifecycle", "compiled_installer")]
     for name in ("legacy_migration", "legacy_cpp", "legacy_v2", "historical_state"):
         optional = validation.get(name, {"status": "not-run"})["status"]
         if optional != "not-run":
@@ -166,7 +170,7 @@ def game_test_result(validation: dict) -> dict:
     elif any(state != "pass" for state in states) or not validation["lifecycle_fault_tests_enabled"]:
         status, reason = "incomplete", "Required game tests were missing, skipped, or ran without fault tests."
     else:
-        status, reason = "pass", "Lifecycle and packaged installer suites passed with fault tests enabled."
+        status, reason = "pass", "Exact Sprite EXE, lifecycle and packaged installer suites passed with fault tests enabled."
     return {"status": status, "reason": reason}
 
 
@@ -290,8 +294,8 @@ def main() -> int:
     if not installer.is_file():
         raise ValueError("Installer input is missing.")
     product = load_json(ROOT / "config/product.json")
-    payload = load_json(ROOT / "vendor/runtime/payload-manifest.json")
-    scroll_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-off.json")
+    scroll_sprite_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off.json")
+    payload = scroll_sprite_off_payload
     validation = {stage: not_run("No JUnit evidence was supplied.") for stage in STAGES}
     supplied = set()
     for argument in args.test_result:
@@ -307,8 +311,9 @@ def main() -> int:
     validation["game_tests"] = game_test_result(validation)
     validation["r185_build"] = r185_result(
         args.r185_build_manifest,
-        payload["files"]["D3D9.dll"]["sha256"],
-        scroll_off_payload["files"]["D3D9.dll"]["sha256"],
+        {name: variant["files"]["D3D9.dll"]["sha256"] for name, variant in (
+            ("D3D9-scroll-sprite-off.dll", scroll_sprite_off_payload),
+        )},
     )
     audit = load_json(args.audit) if args.audit else None
     if audit and (audit.get("result") != "pass" or audit.get("sha256") != sha256(installer)):
@@ -343,7 +348,8 @@ def main() -> int:
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "product": {"name": product["product_name"], "version": product["version"],
                     "company": product["company_name"], "component": product["component_name"],
-                    "scroll_component": product["scroll_component_name"]},
+                    "scroll_component": product["scroll_component_name"],
+                    "sprite_component": product["sprite_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
                       "signature": audit["authenticode"] if audit else "not-verified"},
         "uninstaller": {"filename": product["uninstaller_filename"], "location": "game-root",
@@ -354,9 +360,12 @@ def main() -> int:
         "supported_executable_sha256": payload["target_executable"]["sha256"],
         "runtime": {"identity": payload["runtime_identity"], "dgvoodoo_version": payload["dgvoodoo_version"],
                     "files": payload["files"], "locked_settings": payload["locked_settings"]},
-        "scroll_off_runtime": {"identity": scroll_off_payload["runtime_identity"],
-                               "files": scroll_off_payload["files"],
-                               "locked_settings": scroll_off_payload["locked_settings"]},
+        "direct_scroll_executable": {"stock_sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
+                                     "patched_sha256": "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B",
+                                     "shipped_game_executable": False},
+        "direct_sprite_executable": {"sprite_only_sha256": "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0",
+                                      "scroll_and_sprite_sha256": "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
+                                      "sprite_delivery": "direct-exe", "shipped_game_executable": False},
         "assets": {name: file_record(ROOT / "assets" / name) for name in ASSET_NAMES},
         "documentation": {name: file_record(args.output.parent / name) for name in documentation},
         "validation": validation,

@@ -44,6 +44,24 @@ ${Using:StrFunc} StrStr
 ${Using:StrFunc} StrRep
 ${Using:StrFunc} StrLoc
 
+!macro CHECK_PREVIEW_HOVER HANDLE KEY
+    System::Call "*(i 0, i 0, i 0, i 0) p.r2"
+    System::Call "user32::GetWindowRect(p${HANDLE}, p r2)i.r3"
+    ${If} $3 <> 0
+        System::Call "*$2(i.r3, i.r4, i.r5, i.r6)"
+        ${If} $0 >= $3
+        ${AndIf} $0 <= $5
+        ${AndIf} $1 >= $4
+        ${AndIf} $1 <= $6
+            System::Free $2
+            StrCpy $R0 "${KEY}"
+            Call SetPreview
+            Return
+        ${EndIf}
+    ${EndIf}
+    System::Free $2
+!macroend
+
 !define MUI_ABORTWARNING
 !define MUI_CUSTOMFUNCTION_ABORT LogUserAbort
 !define MUI_ICON "${SOURCE_DIR}\assets\medieval.ico"
@@ -93,13 +111,17 @@ Var Dialog
 Var TargetText
 Var BrowseButton
 Var CompatibilityCheck
+Var TerrainSelected
 Var ScrollCheck
 Var ScrollSelected
+Var SpriteCheck
+Var SpriteSelected
 Var PreviewBitmap
 Var PreviewImage
 Var PreviewTitle
 Var PreviewText
 Var PreviewWarningText
+Var CurrentPreviewKey
 Var PatchPageFont
 Var PatchPageTitleFont
 Var PatchPageBodyFont
@@ -128,6 +150,8 @@ Function .onInit
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File /oname=compatibility.bmp "${SOURCE_DIR}\assets\compatibility.bmp"
+    File /oname=campaign-scrolling.bmp "${SOURCE_DIR}\assets\campaign-scrolling.bmp"
+    File /oname=sprite-clipping.bmp "${SOURCE_DIR}\assets\sprite-clipping.bmp"
     File /oname=discord-badge.bmp "${SOURCE_DIR}\assets\discord-badge.bmp"
     File /oname=discord-badge-hover.bmp "${SOURCE_DIR}\assets\discord-badge-hover.bmp"
     File /oname=kofi-badge.bmp "${SOURCE_DIR}\assets\kofi-badge.bmp"
@@ -145,7 +169,19 @@ Function .onInit
         Call FailInstallation
     ${EndIf}
 
+    StrCpy $TerrainSelected "1"
     StrCpy $ScrollSelected "1"
+    StrCpy $SpriteSelected "1"
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/TERRAINFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $TerrainSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $TerrainSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_terrainfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
     StrCpy $0 ""
     ${GetOptions} $CommandOptions "/SCROLLFIX=" $0
     ${If} $0 == "0"
@@ -154,6 +190,16 @@ Function .onInit
         StrCpy $ScrollSelected "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_scrollfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/SPRITEFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $SpriteSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $SpriteSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_spritefix_option value=$0"
         Call FailInstallation
     ${EndIf}
     Call SelectEnginePayload
@@ -168,10 +214,12 @@ Function .onInit
     ${If} $1 == 0
         Call DetectGamePath
     ${EndIf}
-    Call RequireComponentPlatform
 FunctionEnd
 
 Function RequireComponentPlatform
+    ${If} $TerrainSelected != "1"
+        Return
+    ${EndIf}
     StrCpy $ComponentPlatformSupported "0"
     ${If} ${AtLeastWin7}
         StrCpy $ComponentPlatformSupported "1"
@@ -191,17 +239,14 @@ Function RequireComponentPlatform
         StrCpy $InstallError "error=unsupported_component_os component=terrain-movement-fix minimum=Windows7 no_selection=1"
         StrCpy $LogLine "$InstallError"
         Call WriteDiagnostic
-        MessageBox MB_ICONSTOP|MB_OK "Terrain Movement Fix requires Windows 7 or later. No compatible component is available on this version of Windows.$\r$\n$\r$\nThe game was not changed.$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory" /SD IDOK
+        MessageBox MB_ICONSTOP|MB_OK "Terrain Movement Fix requires Windows 7 or later. Deselect it to install either direct EXE fix independently.$\r$\n$\r$\nThe game was not changed.$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory" /SD IDOK
         SetErrorLevel 2
         Quit
     ${EndIf}
 FunctionEnd
 
 Function SelectEnginePayload
-    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload"
-    ${If} $ScrollSelected == "0"
-        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-off"
-    ${EndIf}
+    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
 FunctionEnd
 
 Function DetectGamePath
@@ -488,34 +533,137 @@ compatibilityInteractive:
     ${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"
     Pop $CompatibilityCheck
     !insertmacro SET_TAHOMA $CompatibilityCheck $PatchPageFont
-    ${NSD_Check} $CompatibilityCheck
+    ${If} $TerrainSelected == "1"
+        ${NSD_Check} $CompatibilityCheck
+    ${EndIf}
+    ${NSD_OnClick} $CompatibilityCheck PreviewTerrain
     ${NSD_CreateCheckbox} 12 124 295 24 "${PRODUCT_SCROLL_COMPONENT_NAME}"
     Pop $ScrollCheck
     !insertmacro SET_TAHOMA $ScrollCheck $PatchPageFont
     ${If} $ScrollSelected == "1"
         ${NSD_Check} $ScrollCheck
     ${EndIf}
-    ${NSD_CreateLabel} 24 153 283 68 "Corrects fast campaign-map scrolling without limiting FPS. Uses the required Terrain Movement Fix runtime."
-    Pop $0
-    !insertmacro SET_TAHOMA $0 $PatchPageFont
+    ${NSD_OnClick} $ScrollCheck PreviewScrolling
+    ${NSD_CreateCheckbox} 12 154 295 24 "${PRODUCT_SPRITE_COMPONENT_NAME}"
+    Pop $SpriteCheck
+    !insertmacro SET_TAHOMA $SpriteCheck $PatchPageFont
+    ${If} $SpriteSelected == "1"
+        ${NSD_Check} $SpriteCheck
+    ${EndIf}
+    ${NSD_OnClick} $SpriteCheck PreviewSprite
     ${NSD_CreateGroupBox} 340 62 506 430 "Preview"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
     ${NSD_CreateBitmap} 352 92 480 270 ""
     Pop $PreviewBitmap
-    ${NSD_SetImage} $PreviewBitmap "$PLUGINSDIR\compatibility.bmp" $PreviewImage
-    ${NSD_CreateLabel} 352 374 480 28 "Terrain Movement Fix"
+    ${NSD_CreateLabel} 352 374 480 28 ""
     Pop $PreviewTitle
     !insertmacro SET_TAHOMA $PreviewTitle $PatchPageTitleFont
-    ${NSD_CreateLabel} 352 410 480 56 "Installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems."
+    ${NSD_CreateLabel} 352 410 480 56 ""
     Pop $PreviewText
     !insertmacro SET_TAHOMA $PreviewText $PatchPageBodyFont
-    ${NSD_CreateLabel} 352 474 480 24 "Windows XP is not supported."
+    ${NSD_CreateLabel} 352 474 480 24 ""
     Pop $PreviewWarningText
     !insertmacro SET_TAHOMA $PreviewWarningText $PatchPageBodyFont
     SetCtlColors $PreviewWarningText FF0000 F0F0F0
+    ShowWindow $PreviewWarningText ${SW_HIDE}
 
+    StrCpy $PreviewImage ""
+    StrCpy $CurrentPreviewKey ""
+    StrCpy $R0 "terrain"
+    Call SetPreview
+    ${NSD_CreateTimer} PreviewHoverTimer 120
     nsDialogs::Show
+    ${NSD_KillTimer} PreviewHoverTimer
+    ${If} $PreviewImage != ""
+        System::Call "gdi32::DeleteObject(p$PreviewImage)"
+        StrCpy $PreviewImage ""
+    ${EndIf}
+    System::Call "gdi32::DeleteObject(p$PatchPageFont)"
+    System::Call "gdi32::DeleteObject(p$PatchPageTitleFont)"
+    System::Call "gdi32::DeleteObject(p$PatchPageBodyFont)"
+FunctionEnd
+
+Function PreviewTerrain
+    Pop $0
+    StrCpy $R0 "terrain"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewScrolling
+    Pop $0
+    StrCpy $R0 "scrolling"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewSprite
+    Pop $0
+    StrCpy $R0 "sprite"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewHoverTimer
+    Call PreviewFromCursor
+FunctionEnd
+
+Function PreviewFromCursor
+    System::Call "*(i 0, i 0) p.r8"
+    System::Call "user32::GetCursorPos(p r8)i.r9"
+    ${If} $9 == 0
+        System::Free $8
+        Return
+    ${EndIf}
+    System::Call "*$8(i.r0, i.r1)"
+    System::Free $8
+
+    System::Call "user32::WindowFromPoint(ir0, ir1)p.r7"
+    ${If} $7 == 0
+        Return
+    ${EndIf}
+    ${If} $7 != $HWNDPARENT
+        System::Call "user32::IsChild(p$HWNDPARENT, pr7)i.r9"
+        ${If} $9 == 0
+            Return
+        ${EndIf}
+    ${EndIf}
+
+    !insertmacro CHECK_PREVIEW_HOVER $CompatibilityCheck "terrain"
+    !insertmacro CHECK_PREVIEW_HOVER $ScrollCheck "scrolling"
+    !insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"
+FunctionEnd
+
+Function SetPreview
+    ${If} $CurrentPreviewKey == $R0
+        Return
+    ${EndIf}
+    StrCpy $CurrentPreviewKey "$R0"
+
+    ${If} $PreviewImage != ""
+        System::Call "gdi32::DeleteObject(p$PreviewImage)"
+        StrCpy $PreviewImage ""
+    ${EndIf}
+
+    ${If} $R0 == "sprite"
+        ${NSD_SetText} $PreviewTitle "Sprite-Clipping Crash Fix"
+        ${NSD_SetText} $PreviewText "Prevents a crash when an off-screen prebattle unit-card icon reaches the game's faulty sprite-clipping loop. Patches the game EXE directly; Terrain Movement Fix is optional."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\sprite-clipping.bmp"
+    ${ElseIf} $R0 == "scrolling"
+        ${NSD_SetText} $PreviewTitle "Campaign Scrolling Fix"
+        ${NSD_SetText} $PreviewText "Corrects fast campaign-map scrolling with a direct game EXE fix. It does not limit FPS or require Terrain Movement Fix."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\campaign-scrolling.bmp"
+    ${Else}
+        ${NSD_SetText} $PreviewTitle "Terrain Movement Fix"
+        ${NSD_SetText} $PreviewText "Installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems."
+        ${NSD_SetText} $PreviewWarningText "Windows XP is not supported."
+        ShowWindow $PreviewWarningText ${SW_SHOW}
+        StrCpy $1 "$PLUGINSDIR\compatibility.bmp"
+    ${EndIf}
+
+    ${NSD_SetImage} $PreviewBitmap "$1" $PreviewImage
 FunctionEnd
 
 Function BrowseTarget
@@ -530,10 +678,20 @@ FunctionEnd
 
 Function CompatibilityPageBack
     ${NSD_GetText} $TargetText $SavedTargetDir
+    ${NSD_GetState} $CompatibilityCheck $0
+    StrCpy $TerrainSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $TerrainSelected "1"
+    ${EndIf}
     ${NSD_GetState} $ScrollCheck $0
     StrCpy $ScrollSelected "0"
     ${If} $0 == ${BST_CHECKED}
         StrCpy $ScrollSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $SpriteCheck $0
+    StrCpy $SpriteSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $SpriteSelected "1"
     ${EndIf}
     Call RestoreDefaultWizard
 FunctionEnd
@@ -542,15 +700,27 @@ Function CompatibilityPageLeave
     ${NSD_GetText} $TargetText $INSTDIR
     StrCpy $SavedTargetDir "$INSTDIR"
     ${NSD_GetState} $CompatibilityCheck $0
-    ${If} $0 != ${BST_CHECKED}
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Select ${PRODUCT_COMPONENT_NAME} to continue."
-        Abort
+    StrCpy $TerrainSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $TerrainSelected "1"
     ${EndIf}
     ${NSD_GetState} $ScrollCheck $0
     StrCpy $ScrollSelected "0"
     ${If} $0 == ${BST_CHECKED}
         StrCpy $ScrollSelected "1"
     ${EndIf}
+    ${NSD_GetState} $SpriteCheck $0
+    StrCpy $SpriteSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $SpriteSelected "1"
+    ${EndIf}
+    ${If} $TerrainSelected != "1"
+    ${AndIf} $ScrollSelected != "1"
+    ${AndIf} $SpriteSelected != "1"
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Select at least one fix to continue."
+        Abort
+    ${EndIf}
+    Call RequireComponentPlatform
     Call SelectEnginePayload
     StrCpy $R0 "Inspect"
     StrCpy $EngineUninstaller ""
@@ -655,6 +825,8 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     DetailPrint "Validating and applying the selected fixes..."
     StrCpy $LogLine "campaign_scroll_fix_selected=$ScrollSelected"
     Call WriteDiagnostic
+    StrCpy $LogLine "sprite_clipping_fix_selected=$SpriteSelected"
+    Call WriteDiagnostic
     DetailPrint "Diagnostics: $LogDirectory"
     StrCpy $R0 "Install"
     Push $R0
@@ -671,7 +843,7 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $LogLine "result=success operation=install"
     Call WriteDiagnostic
     Call RequireDiagnostics
-    DetailPrint "Terrain Movement Fix, recovery state and uninstaller verified."
+    DetailPrint "Selected fixes, recovery state and uninstaller verified."
     SetErrorLevel 0
 SectionEnd
 

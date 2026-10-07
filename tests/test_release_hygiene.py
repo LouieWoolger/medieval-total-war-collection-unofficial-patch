@@ -54,6 +54,7 @@ def test_build_and_test_pipeline_contains_every_release_gate() -> None:
         "pytest",
         "makensis",
         "test_compiled_installer.py",
+        "test_sprite_exe_patch.py",
         "build-release-manifest.py",
         "audit-installer.ps1",
         "SHA256SUMS.txt",
@@ -71,10 +72,14 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["schema"] == "unofficial-medieval-total-war-patch-release-v2"
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     assert manifest["product"]["version"] == product["version"] == "1.0.0"
+    assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R186"
+    assert manifest["runtime"]["identity"] == "R186-scroll-sprite-off"
+    assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
+    assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
+    assert manifest["direct_sprite_executable"]["sprite_delivery"] == "direct-exe"
     helper = manifest["native_helper_build"]
     assert helper["language"] == "C99"
     assert helper["compiler"]["role"] == "native-gcc"
@@ -100,7 +105,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     if os.environ.get("MTW_TEST_NATIVE_HELPER"):
         assert sha256(Path(os.environ["MTW_TEST_NATIVE_HELPER"])) == helper["helper"]["sha256"]
     report_directory = os.environ.get("MTW_TEST_REPORT_DIRECTORY")
-    for stage in ("project_contracts", "native_guard", "lifecycle", "compiled_installer", "legacy_migration",
+    for stage in ("project_contracts", "native_guard", "sprite_exe", "lifecycle", "compiled_installer", "legacy_migration",
                   "legacy_cpp", "legacy_v2", "historical_state", "release_hygiene"):
         record = manifest["validation"][stage]
         assert record["status"] in {"pass", "pass-with-skips", "not-run", "incomplete", "fail"}
@@ -128,7 +133,14 @@ def test_release_manifest_and_checksums_match_dist() -> None:
         assert sha256(ROOT / relative) == record["sha256"]
         assert (ROOT / relative).stat().st_size == record["length"]
     assert re.fullmatch(r"[0-9A-F]{64}", manifest["source"]["aggregate_sha256"])
-    assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA"
+    expected_default = json.loads((ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
+    assert manifest["runtime"]["files"]["D3D9.dll"] == expected_default["files"]["D3D9.dll"]
+    for section, binary, payload_name in (
+        ("runtime", "D3D9-scroll-sprite-off.dll", "payload-manifest-scroll-sprite-off.json"),
+    ):
+        expected = json.loads((ROOT / "vendor" / "runtime" / payload_name).read_text(encoding="utf-8"))
+        assert manifest[section]["files"]["D3D9.dll"] == expected["files"]["D3D9.dll"]
+        assert manifest["validation"]["r185_build"]["runtime_variants"][binary]["matches_packaged_runtime"] is True
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
@@ -168,21 +180,18 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
     lowered = "\n".join(paths).lower()
     for required in (
         "medieval_fix_patcher.exe",
-        "payload\\payload-manifest.json",
-        "payload\\d3d9.dll",
-        "payload\\dgvoodoo_d3d9.dll",
-        "payload\\ddraw.dll",
-        "payload\\d3dimm.dll",
-        "payload\\dgvoodoo.conf",
-        "payload-scroll-off\\payload-manifest.json",
-        "payload-scroll-off\\d3d9.dll",
-        "payload-scroll-off\\dgvoodoo_d3d9.dll",
-        "payload-scroll-off\\ddraw.dll",
-        "payload-scroll-off\\d3dimm.dll",
-        "payload-scroll-off\\dgvoodoo.conf",
+        "payload-scroll-sprite-off\\payload-manifest.json",
+        "payload-scroll-sprite-off\\d3d9.dll",
+        "payload-scroll-sprite-off\\dgvoodoo_d3d9.dll",
+        "payload-scroll-sprite-off\\ddraw.dll",
+        "payload-scroll-sprite-off\\d3dimm.dll",
+        "payload-scroll-sprite-off\\dgvoodoo.conf",
         "compatibility.bmp",
+        "campaign-scrolling.bmp",
+        "sprite-clipping.bmp",
     ):
         assert required in lowered
+    assert "payload-scroll-off\\" not in lowered
     for forbidden in ("medieval_tw.exe", "medieval.cfg", "~tmp.vrp", ".pdb", ".vrp", "worklog", "capture", ".ps1", ".cs", "powershell"):
         assert forbidden not in lowered
 

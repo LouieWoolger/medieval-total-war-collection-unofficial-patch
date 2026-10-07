@@ -6,6 +6,12 @@ AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA
 R186 scroll-disabled D3D9 proxy SHA-256:
 24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E
 
+R186 sprite-disabled D3D9 proxy SHA-256:
+5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C
+
+R186 scroll-and-sprite-disabled D3D9 proxy SHA-256:
+300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1
+
 Frontend mapper activation is gated by registered immutable page metadata or semantic main-menu, campaign-setup, prebattle, or Battle Results ownership.
 All 50 known frontend page families are classified from their exact metadata-row spans, so shared mode values such as LAN mode 6 cannot disarm a live frontend.
 Registered frontend ownership is polled by live render-root identity across focus changes while stale roots remain unable to rearm gameplay.
@@ -26,8 +32,9 @@ Decorated-window cursor reads, warps, and mouse messages use the same checked as
 Immediately before a decorated-window Alt+Enter transition, an out-of-client OS cursor is restored to its last valid logical game position (or the live content center when no history exists), preventing origin-driven camera corruption without changing ordinary mouse or keyboard input.
 Frontend-to-loading shrink suppression is restricted to a verified borderless popup, while exact monitor-sized decorated expansion remains rejected.
 For an explicit non-fullscreen dgVoodoo presentation, successful wrapper sizing establishes live window ownership; subsequent game logical-mode moves and smaller backend frame adjustments cannot expose transient internal dimensions while fullscreen, user-resized, stale, or unknown geometry remains fail-open.
-Fully off-clip prebattle unit icons are rejected before the game's RLE sprite row decoder; ordinary and partly visible icons continue through the original decoder.
-Campaign keyboard/action and edge camera inputs receive independent elapsed-time displacement at the verified game call sites, preserving their combined 60 Hz travel without limiting frame rate.
+When Sprite-Clipping Crash Fix is selected, fully off-clip prebattle unit icons are rejected before the game's RLE sprite row decoder; ordinary and partly visible icons continue through the original decoder.
+When Campaign Scrolling Fix is selected, campaign keyboard/action and edge camera inputs receive independent elapsed-time displacement at the verified game call sites, preserving their combined 60 Hz travel without limiting frame rate.
+The two optional hooks are compiled independently; the shared Terrain Movement Fix runtime is present in all four installer choices.
 
 dgVoodoo2 backend version: 2.87.5
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5

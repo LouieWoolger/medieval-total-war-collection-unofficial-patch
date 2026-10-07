@@ -46,13 +46,16 @@ function Invoke-LoggedCommand {
 function Invoke-PytestStage {
     param([string]$Name,[string[]]$Modules)
     # Keep disposable paths short enough for Windows PowerShell 5.1 APIs.
-    $stagePrefixes = @{project_contracts='p';native_guard='n';lifecycle='l';compiled_installer='c';legacy_migration='v';
+    $stagePrefixes = @{project_contracts='p';native_guard='n';sprite_exe='s';lifecycle='l';compiled_installer='c';legacy_migration='v';
         legacy_cpp='x';legacy_v2='w';historical_state='h';release_hygiene='r';final_manifest='f'}
     if (-not $stagePrefixes.ContainsKey($Name)) { throw "Unknown pytest stage: $Name" }
     $baseTemp = Join-Path $TestDirectory ($stagePrefixes[$Name] + '-' + $runId.Substring($runId.Length - 8))
     if (Test-Path -LiteralPath $baseTemp) { throw "Refusing to reuse pytest temporary directory: $baseTemp" }
     $report = Join-Path $ArtifactDirectory ($Name + '.junit.xml')
     $arguments = @('-m','pytest') + $Modules + @('-q','-p','no:cacheprovider','--basetemp',$baseTemp,'--junitxml',$report)
+    # Unicorn handles Windows SEH exceptions internally while mapping emulated
+    # pages; pytest's faulthandler misreports those caught exceptions as fatal.
+    if ($Name -eq 'sprite_exe') { $arguments += @('-p','no:faulthandler') }
     # Python does not apply PowerShell 7's native-launch module-path filtering.
     # Scope Windows PowerShell modules to this test child so legacy PS5.1 fixture
     # processes can autoload their own modules. Restore the caller even on failure.

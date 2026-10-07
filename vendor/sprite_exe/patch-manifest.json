@@ -1,0 +1,36 @@
+{
+  "schema": "mtw-direct-sprite-exe-v1",
+  "source_sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
+  "entry_va": "0x0073D47E",
+  "original_body_va": "0x00F43389",
+  "variants": {
+    "stock": {
+      "sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
+      "size": 5140480
+    },
+    "scroll-only": {
+      "sha256": "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B",
+      "size": 5148672
+    },
+    "sprite-only": {
+      "sha256": "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0",
+      "size": 5144576
+    },
+    "scroll-and-sprite": {
+      "sha256": "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
+      "size": 5152768
+    }
+  },
+  "hooks": {
+    "sprite-only": {
+      "sha256": "7468EB5B3547B4600A3CB4618CF88400EC4D03FFB0178D9A9875180F76323700",
+      "size": 33,
+      "va": "0x00F4C000"
+    },
+    "combined": {
+      "sha256": "B9743B4030E62293B24BBA702A42129ACC1DB82790D144B2FD7E4C93A41BE4CA",
+      "size": 33,
+      "va": "0x00F4E000"
+    }
+  }
+}

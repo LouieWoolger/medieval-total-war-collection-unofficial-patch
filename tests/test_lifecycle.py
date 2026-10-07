@@ -76,7 +76,9 @@ def games(tmp_path: Path):
         remove_test_registration(game, tmp_path)
 
 
-def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None = None):
+def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None = None,
+        terrain_fix: bool | None = None, scroll_fix: bool | None = None,
+        sprite_fix: bool | None = None):
     # This models a supplied package artifact, not a functional NSIS executable.
     # The compiled suite uses WriteUninstaller's actual output instead.
     source = uninstaller or game.parent / "synthetic-uninstaller.bin"
@@ -86,6 +88,10 @@ def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None
                "-Operation", operation, "-Target", str(game),
                "-PayloadDirectory", str(PAYLOAD), "-InstallerVersion", PRODUCT["version"],
                "-UninstallerSource", str(source)]
+    for option, selected in (("TerrainFix", terrain_fix), ("ScrollFix", scroll_fix),
+                             ("SpriteFix", sprite_fix)):
+        if selected is not None:
+            command.extend(("-" + option, str(int(selected))))
     environment = dict(os.environ)
     if fault:
         environment["MTW_ENABLE_LIFECYCLE_FAULTS"] = "1"

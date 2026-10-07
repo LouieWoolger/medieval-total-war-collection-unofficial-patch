@@ -138,8 +138,9 @@ else {
     if (-not (Test-Path -LiteralPath $windres -PathType Leaf)) { $windres = Join-Path $compilerBin 'windres.exe' }
 }
 if (-not (Test-Path -LiteralPath $windres -PathType Leaf)) { throw 'Supply -WindresPath with the MinGW resource compiler.' }
-$payload = Get-Content -LiteralPath (Join-Path $root 'vendor\runtime\payload-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-$scrollOffPayload = Get-Content -LiteralPath (Join-Path $root 'vendor\runtime\payload-manifest-scroll-off.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$payloadVariants = [ordered]@{
+    'D3D9-scroll-sprite-off.dll' = 'payload-manifest-scroll-sprite-off.json'
+}
 New-Item -ItemType Directory -Path $OutputDirectory,$ArtifactDirectory,$BuildDirectory,$TestDirectory -Force | Out-Null
 $tempDirectory = Join-Path $BuildDirectory ('temp-' + $runId)
 New-Item -ItemType Directory -Path $tempDirectory -ErrorAction Stop | Out-Null
@@ -202,14 +203,15 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "R185 build failed: $LASTEXITCODE" }
         }
         finally { Pop-Location }
-        $rebuilt = Join-Path $r185Build 'combined-r154\D3D9.dll'
-        if ((Get-FileHash -LiteralPath $rebuilt -Algorithm SHA256).Hash -ne $payload.files.'D3D9.dll'.sha256) {
-            throw 'Rebuilt R185 bytes do not match the packaged runtime.'
-        }
-        $rebuiltScrollOff = Join-Path $r185Build 'combined-r154\D3D9-scroll-off.dll'
-        if ((Get-FileHash -LiteralPath $rebuiltScrollOff -Algorithm SHA256).Hash -ne
-            $scrollOffPayload.files.'D3D9.dll'.sha256) {
-            throw 'Rebuilt scroll-disabled bytes do not match the packaged runtime.'
+        foreach ($entry in $payloadVariants.GetEnumerator()) {
+            $rebuilt = Join-Path $r185Build ('combined-r154\' + $entry.Key)
+            $packaged = Join-Path $root ('vendor\runtime\' + $entry.Key)
+            $manifest = Get-Content -LiteralPath (Join-Path $root ('vendor\runtime\' + $entry.Value)) -Raw -Encoding UTF8 | ConvertFrom-Json
+            $actual = (Get-FileHash -LiteralPath $rebuilt -Algorithm SHA256).Hash
+            if ($actual -ne $manifest.files.'D3D9.dll'.sha256 -or
+                $actual -ne (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash) {
+                throw "Rebuilt $($entry.Key) bytes do not match the packaged runtime."
+            }
         }
         $r185Evidence = Join-Path $ArtifactDirectory 'r185-build-manifest.json'
         Copy-Item -LiteralPath (Join-Path $r185Build 'BUILD_MANIFEST.json') -Destination $r185Evidence -ErrorAction Stop

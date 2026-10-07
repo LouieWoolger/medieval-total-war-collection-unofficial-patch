@@ -32,6 +32,11 @@ Function un.Fail
 FunctionEnd
 
 Function un.onInit
+    ; Removal reads the installed receipt; these valid request defaults do not
+    ; select or change components during restoration.
+    StrCpy $TerrainSelected "1"
+    StrCpy $ScrollSelected "0"
+    StrCpy $SpriteSelected "1"
     StrCpy $OperationName "removal"
     StrCpy $ChildStatus "not-started"
     StrCpy $RemovalRestored "0"
@@ -53,7 +58,7 @@ Function un.onInit
         StrCpy $InstallError "error=engine_extraction_failed"
         Call un.Fail
     ${EndIf}
-    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload"
+    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
 FunctionEnd
 
 Section "Uninstall"

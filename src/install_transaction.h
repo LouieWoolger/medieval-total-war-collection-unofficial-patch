@@ -18,6 +18,7 @@
 typedef struct {
     const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
+    int terrain_fix, scroll_fix, sprite_fix, selection_provided;
 } MedievalOptions;
 typedef struct {
     JsonDocument document;
@@ -46,8 +47,8 @@ typedef struct {
     int mutex_owned, have_receipt_record;
     wchar_t *state, *transaction_path;
     JsonValue *payload, *warnings;
-    PatchFileRecord payload_records[5], receipt_record;
-    MedievalObservation observations[18];
+    PatchFileRecord payload_records[MEDIEVAL_FILE_COUNT], receipt_record;
+    MedievalObservation observations[24];
     size_t observation_count;
     char *recovery_archive;
 } MedievalEngine;
@@ -210,7 +211,7 @@ static inline int mtw_observe(MedievalEngine *m, PatchError *e) {
     size_t i, kind;
     char relative[192];
     m->observation_count = 0;
-    for (kind = 0; kind < 3; ++kind) for (i = 0; i < 5; ++i) {
+    for (kind = 0; kind < 3; ++kind) for (i = 0; i < MEDIEVAL_FILE_COUNT; ++i) {
         MedievalObservation *o = &m->observations[m->observation_count++];
         if (!kind) snprintf(relative, sizeof relative, "%s", medieval_payload_names[i]);
         else if (kind == 1) snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
@@ -380,12 +381,30 @@ static inline int mtw_transaction_add_registry(MedievalEngine *m, MedievalTransa
 static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *actual,
                                    const MedievalReceipt *retained, const char *status, PatchError *e) {
     size_t k;
-    if (strcmp(actual->installation_id, retained->installation_id) || strcmp(actual->status, status) ||
+    if (actual->old_v3 != retained->old_v3 ||
+        medieval_receipt_file_count(actual) != medieval_receipt_file_count(retained) ||
+        strcmp(actual->installation_id, retained->installation_id) || strcmp(actual->status, status) ||
         strcmp(actual->uninstaller_sha256, retained->uninstaller_sha256) ||
         strcmp(actual->preinstall_mode, retained->preinstall_mode) ||
         strcmp(actual->installer_version, retained->installer_version))
         return mtw_fail(m, e, "receipt_invalid", "The receipt does not describe this transaction's installation.");
-    for (k = 0; k < 5; ++k) {
+    if (!actual->old_v2 && !actual->legacy) {
+        int a, b;
+        if (!medieval_boolean(actual->json, "terrain_fix_enabled", &a, e) ||
+            !medieval_boolean(retained->json, "terrain_fix_enabled", &b, e)) return 0;
+        if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained Terrain selection.");
+        if (!medieval_boolean(actual->json, "scroll_fix_enabled", &a, e) ||
+            !medieval_boolean(retained->json, "scroll_fix_enabled", &b, e)) return 0;
+        if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained scrolling selection.");
+        if (!actual->old_v3) {
+            if (!medieval_boolean(actual->json, "sprite_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "sprite_fix_enabled", &b, e)) return 0;
+            if (a != b || strcmp(mtw_s(actual->json, "sprite_delivery"), "direct-exe") ||
+                strcmp(mtw_s(retained->json, "sprite_delivery"), "direct-exe"))
+                return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained Sprite selection or delivery.");
+        }
+    }
+    for (k = 0; k < medieval_receipt_file_count(actual); ++k) {
         const MedievalFileState *x = &actual->files[k], *y = &retained->files[k];
         if (!patch_record_equal(&x->original, &y->original) || !patch_record_equal(&x->installed, &y->installed) ||
             x->sidecar_created != y->sidecar_created || strcmp(x->snapshot_relative, y->snapshot_relative) ||
@@ -417,7 +436,7 @@ static inline int mtw_staged_receipt(MedievalEngine *m, MedievalTransaction *t, 
         if (!patch_record_equal(&actual, &a->after_file))
             return mtw_fail(m, e, "receipt_invalid", "The staged receipt is missing or damaged; all recovery files were retained.");
         MTW_TRY(mtw_read_json(m, &m->guard, p, &raw, NULL, e) &&
-                medieval_receipt_validate(&m->document, raw, &m->identity, 0, &staged, e));
+                medieval_receipt_validate(&m->document, raw, &m->identity, 1, &staged, e));
         return mtw_receipt_bound(m, &staged, &t->typed.receipt, mtw_is(t->typed.operation, "restore") ? "restored" : "installed", e);
     }
     return mtw_fail(m, e, "receipt_invalid", "Recovery metadata has no receipt action.");

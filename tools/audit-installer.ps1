@@ -39,8 +39,8 @@ New-Item -ItemType Directory -Path $extractRoot -ErrorAction Stop | Out-Null
 
 $engineNames = @('medieval_fix_patcher.exe')
 $runtimeNames = @('payload-manifest.json','D3D9.dll','dgVoodoo_D3D9.dll','ddraw.dll','D3DImm.dll','dgVoodoo.conf')
-$runtimeVariants = @('payload','payload-scroll-off')
-$uiNames = @('compatibility.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
+$runtimeVariants = @('payload-scroll-sprite-off')
+$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','sprite-clipping.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
 $common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
 $common += @(foreach ($variant in $runtimeVariants) {
@@ -110,11 +110,12 @@ function Expand-And-Verify {
         Assert-NoPrivatePaths $embedded
     }
     foreach ($variant in $runtimeVariants) {
+        $variantSuffix = $variant.Substring('payload'.Length)
         foreach ($name in $runtimeNames) {
             $sourceName = $name
-            if ($variant -eq 'payload-scroll-off') {
-                if ($name -eq 'payload-manifest.json') { $sourceName = 'payload-manifest-scroll-off.json' }
-                if ($name -eq 'D3D9.dll') { $sourceName = 'D3D9-scroll-off.dll' }
+            if ($variantSuffix) {
+                if ($name -eq 'payload-manifest.json') { $sourceName = 'payload-manifest' + $variantSuffix + '.json' }
+                if ($name -eq 'D3D9.dll') { $sourceName = 'D3D9' + $variantSuffix + '.dll' }
             }
             $embedded = Join-Path $pluginDirectory ($variant + '\' + $name)
             $source = Join-Path $root ('vendor\runtime\' + $sourceName)

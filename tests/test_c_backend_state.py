@@ -352,7 +352,7 @@ def test_c_genuine_saved_cpp_journals_and_receipts(state_exe,tmp_path):
 
 def test_c_migration_classification_and_wire_file_identity(state_exe):
     result=invoke(state_exe,["--migration-suite"]);assert result.returncode==0,result.stdout
-    assert b"RESULT passed=9 failed=0" in result.stdout
+    assert b"RESULT passed=11 failed=0" in result.stdout
 
 def test_c_receipt_draft_repair_preserves_guid_baseline_and_member_order(state_exe,tmp_path,receipt_fixture):
     game,receipt,_=receipt_fixture;path=tmp_path/"receipt.json";path.write_bytes(canonical(receipt))

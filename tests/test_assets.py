@@ -14,6 +14,14 @@ EXPECTED_ASSETS = {
         388854,
         "E735AB2EDBE15A88D3E2A7A1EED19188EB97B2A6A1640C2ED61F5129A87F896E",
     ),
+    "campaign-scrolling.bmp": (
+        388854,
+        "504DFA880F0C98A2E4BD7168C02A9237F89A70FCAAE08D70D364A42E214B5B6E",
+    ),
+    "sprite-clipping.bmp": (
+        388854,
+        "945FF6E4CAF7974B4CF67875930152470ED1E93B8EAF47C927D68FC30626FA81",
+    ),
     "discord-badge-hover.bmp": (
         11702,
         "73BCF5C4A9D130C40EE1AD1D0DE818137B27C18738D64DF46F65C33E318C252D",
@@ -65,6 +73,8 @@ def test_nsis_bitmaps_have_exact_dimensions_and_format() -> None:
     expected = {
         "welcome-finish.bmp": (164, 314),
         "compatibility.bmp": (480, 270),
+        "campaign-scrolling.bmp": (480, 270),
+        "sprite-clipping.bmp": (480, 270),
         "discord-badge.bmp": (138, 28),
         "discord-badge-hover.bmp": (138, 28),
         "kofi-badge.bmp": (138, 28),

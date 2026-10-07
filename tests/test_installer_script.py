@@ -95,9 +95,11 @@ def test_steam_detection_precedes_gog_across_registry_views() -> None:
 
 def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
     text = script_text()
-    for name in ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf"):
+    for name in ("dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf"):
         assert f'vendor\\runtime\\{name}' in text
-    assert 'vendor\\runtime\\payload-manifest.json' in text
+    assert 'vendor\\runtime\\D3D9-scroll-sprite-off.dll' in text
+    assert 'vendor\\runtime\\D3D9-scroll-off.dll' not in text
+    assert 'vendor\\runtime\\payload-manifest-scroll-off.json' not in text
     assert 'File /oname=medieval_fix_patcher.exe "${NATIVE_HELPER}"' in text
     assert 'File /oname=MinGW-w64-runtime.txt "${SOURCE_DIR}\\licenses\\MinGW-w64-runtime.txt"' in text
     for dependency in ("install-engine.ps1", "lifecycle.ps1", "lifecycle-transaction.ps1", "lifecycle-registry.ps1", "lifecycle-native.cs"):
@@ -113,7 +115,7 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
     )
 
 
-def test_campaign_scroll_is_a_separate_selectable_payload() -> None:
+def test_campaign_scroll_is_an_independent_executable_choice() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     text = script_text()
     assert product["scroll_component_name"] == "Campaign Scrolling Fix"
@@ -121,10 +123,52 @@ def test_campaign_scroll_is_a_separate_selectable_payload() -> None:
     assert '${NSD_CreateCheckbox} 12 124 295 24 "${PRODUCT_SCROLL_COMPONENT_NAME}"' in text
     assert '${NSD_GetState} $ScrollCheck' in text
     assert '"/SCROLLFIX="' in text
-    assert 'payload-scroll-off' in text
+    assert 'Var TerrainSelected' in text
+    assert '"/TERRAINFIX="' in text
+    assert 'payload-scroll-off' not in text
+    assert 'terrain_fix=$TerrainSelected' in text
+    assert 'scroll_fix=$ScrollSelected' in text
     assert 'payload=$EnginePayloadDirectory' in text
     assert (ROOT / "vendor/runtime/payload-manifest-scroll-off.json").is_file()
     assert (ROOT / "vendor/runtime/D3D9-scroll-off.dll").is_file()
+
+
+def test_campaign_scroll_description_uses_hover_preview() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert '${NSD_CreateLabel} 24 153 283 68' not in text
+    assert 'File /oname=campaign-scrolling.bmp' in text
+    assert '${NSD_OnClick} $CompatibilityCheck PreviewTerrain' in text
+    assert '${NSD_OnClick} $ScrollCheck PreviewScrolling' in text
+    assert '${NSD_CreateTimer} PreviewHoverTimer 120' in text
+    assert '${NSD_KillTimer} PreviewHoverTimer' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $CompatibilityCheck "terrain"' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $ScrollCheck "scrolling"' in text
+    assert '${NSD_SetText} $PreviewTitle "Campaign Scrolling Fix"' in text
+    assert '${NSD_SetText} $PreviewText "Corrects fast campaign-map scrolling with a direct game EXE fix. It does not limit FPS or require Terrain Movement Fix."' in text
+    image = (ROOT / "assets" / "campaign-scrolling.bmp").read_bytes()
+    assert image[:2] == b"BM"
+    assert int.from_bytes(image[18:22], "little") == 480
+    assert int.from_bytes(image[22:26], "little") == 270
+
+
+def test_sprite_crash_fix_has_an_independent_installer_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["sprite_component_name"] == "Sprite-Clipping Crash Fix"
+    assert 'Var SpriteCheck' in text and 'Var SpriteSelected' in text
+    assert '${NSD_CreateCheckbox} 12 154 295 24 "${PRODUCT_SPRITE_COMPONENT_NAME}"' in text
+    assert '"/SPRITEFIX="' in text
+    assert '${NSD_GetState} $SpriteCheck' in text
+    assert 'payload-scroll-sprite-off' in text
+    assert 'Sprite-Clipping Crash Fix requires Terrain Movement Fix' not in text
+    assert 'Patches the game EXE directly; Terrain Movement Fix is optional.' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"' in text
+    assert '${NSD_SetText} $PreviewTitle "Sprite-Clipping Crash Fix"' in text
+    assert 'File /oname=sprite-clipping.bmp' in text
+    image = (ROOT / "assets" / "sprite-clipping.bmp").read_bytes()
+    assert image[:2] == b"BM"
+    assert int.from_bytes(image[18:22], "little") == 480
+    assert int.from_bytes(image[22:26], "little") == 270
 
 
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:

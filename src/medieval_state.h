@@ -5,15 +5,21 @@
    Original/staged-file verification is separate and mandatory before mutation. */
 #include "patch_files.h"
 #include "patch_registry.h"
+#include "direct_exe_patch.h"
 
 #define MEDIEVAL_STATE_NAME ".unofficial-medieval-total-war-patch"
 #define MEDIEVAL_RECEIPT_NAME "install-manifest.json"
-#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v2"
+#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v4"
+#define MEDIEVAL_RECEIPT_SCHEMA_V3 "unofficial-medieval-total-war-patch-install-v3"
+#define MEDIEVAL_RECEIPT_SCHEMA_V2 "unofficial-medieval-total-war-patch-install-v2"
 #define MEDIEVAL_LEGACY_SCHEMA "unofficial-medieval-total-war-patch-install-v1"
 #define MEDIEVAL_JOURNAL_SCHEMA "unofficial-medieval-patch-transaction-v2"
 #define MEDIEVAL_EXECUTABLE_HASH "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+#define MEDIEVAL_SPRITE_DISABLED_PROXY_HASH "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"
+#define MEDIEVAL_RUNTIME_COUNT 5u
+#define MEDIEVAL_FILE_COUNT 6u
 static const char *const medieval_payload_names[] = {"dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll",
-                                                     "dgVoodoo.conf", "D3D9.dll"};
+                                                     "dgVoodoo.conf", "D3D9.dll", "Medieval_TW.exe"};
 
 typedef struct {
     PatchContext context;
@@ -31,11 +37,17 @@ typedef struct {
 } MedievalFileState;
 typedef struct {
     int legacy;
+    int old_v2;
+    int old_v3;
     const JsonValue *json;
     const char *installation_id, *status, *target_directory, *installer_version, *preinstall_mode,
         *uninstaller_sha256;
-    MedievalFileState files[5];
+    MedievalFileState files[MEDIEVAL_FILE_COUNT];
 } MedievalReceipt;
+
+static inline size_t medieval_receipt_file_count(const MedievalReceipt *r) {
+    return r->legacy || r->old_v2 ? MEDIEVAL_RUNTIME_COUNT : MEDIEVAL_FILE_COUNT;
+}
 typedef struct {
     int is_registry;
     const JsonValue *json;
@@ -191,7 +203,10 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
     if (!schema)
         return 0;
     r.legacy = !strcmp(schema, MEDIEVAL_LEGACY_SCHEMA);
-    if (strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA) && !(allow_legacy && r.legacy))
+    r.old_v2 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V2);
+    r.old_v3 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V3);
+    if (strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA) &&
+        !(allow_legacy && (r.legacy || r.old_v2 || r.old_v3)))
         return json_invalid(e, "Unsupported installation receipt schema.");
     if (!r.legacy && !medieval_integrity_valid(owner, value, e))
         return 0;
@@ -229,25 +244,27 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         return 0;
     if (!medieval_guid_valid(r.installation_id) || strcmp(hash, MEDIEVAL_EXECUTABLE_HASH) ||
         (strcmp(r.status, "installed") && strcmp(r.status, "installing") && strcmp(r.status, "restored")) ||
-        !files || files->type != JSON_OBJECT || files->count != 5)
+        !files || files->type != JSON_OBJECT ||
+        files->count != medieval_receipt_file_count(&r))
         return json_invalid(e, "Invalid installation identity or file table.");
     r.installer_version = medieval_string(value, "installer_version", 1, e);
     r.preinstall_mode = medieval_string(value, "preinstall_mode", 1, e);
     if (!r.installer_version || !r.preinstall_mode)
         return 0;
-    for (i = 0; i < 5; ++i) {
+    for (i = 0; i < medieval_receipt_file_count(&r); ++i) {
         MedievalFileState *f = &r.files[i];
         f->name = medieval_payload_names[i];
         rec = json_get(files, f->name);
         if (!medieval_boolean(rec, "existed", &existed, e) ||
             !medieval_boolean(rec, "sidecar_created", &created, e))
             return 0;
-        hash = medieval_string(rec, "installed_sha256", 0, e);
-        if (!hash || !medieval_hash_valid(hash) ||
-            !medieval_integer(rec, "installed_length", 0, &length, e) || length <= 0)
+        hash = medieval_string(rec, "installed_sha256", r.legacy || r.old_v2 ? 0 : 1, e);
+        if (!hash || !medieval_integer(rec, "installed_length", 0, &length, e) ||
+            ((r.legacy || r.old_v2 || *hash) && (!medieval_hash_valid(hash) || length <= 0)) ||
+            (!*hash && length != 0))
             return json_invalid(e, "Invalid installed file record.");
-        f->installed.exists = 1;
-        memcpy(f->installed.sha256, hash, 65);
+        f->installed.exists = !!*hash;
+        if (*hash) memcpy(f->installed.sha256, hash, 65);
         f->installed.length = (uint64_t)length;
         original = medieval_string(rec, "original_sha256", 1, e);
         snapshot = medieval_string(rec, "snapshot_relative", 1, e);
@@ -274,6 +291,38 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         f->legacy_original_sha256 = legacy_hash;
         f->json = rec;
     }
+    if (!r.legacy && !r.old_v2) {
+        int terrain, scroll, sprite = 0;
+        const char *delivery = NULL;
+        if (!medieval_boolean(value, "terrain_fix_enabled", &terrain, e) ||
+            !medieval_boolean(value, "scroll_fix_enabled", &scroll, e))
+            return 0;
+        if (!r.old_v3) {
+            delivery = medieval_string(value, "sprite_delivery", 0, e);
+            if (!delivery || strcmp(delivery, "direct-exe") ||
+                !medieval_boolean(value, "sprite_fix_enabled", &sprite, e))
+                return json_invalid(e, "Invalid direct Sprite delivery metadata.");
+        }
+        for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i)
+            if (terrain ? !r.files[i].installed.exists :
+                !patch_record_equal(&r.files[i].installed, &r.files[i].original))
+                return json_invalid(e, "Inconsistent Terrain runtime selection.");
+        if (!r.old_v3 && terrain &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_SPRITE_DISABLED_PROXY_HASH))
+            return json_invalid(e, "A direct Sprite receipt cannot retain an active proxy Sprite hook.");
+        if (!r.files[5].original.exists ||
+            strcmp(r.files[5].original.sha256, MEDIEVAL_EXECUTABLE_HASH) ||
+            r.files[5].original.length != MTW_SCROLL_STOCK_SIZE ||
+            !r.files[5].installed.exists ||
+            strcmp(r.files[5].installed.sha256,
+                   r.old_v3 ? (scroll ? MTW_SCROLL_PATCHED_SHA256 : MEDIEVAL_EXECUTABLE_HASH) :
+                   (scroll ? (sprite ? MTW_SCROLL_SPRITE_SHA256 : MTW_SCROLL_PATCHED_SHA256) :
+                             (sprite ? MTW_SPRITE_ONLY_SHA256 : MEDIEVAL_EXECUTABLE_HASH))) ||
+            r.files[5].installed.length !=
+                (scroll ? (sprite ? MTW_SCROLL_SPRITE_SIZE : MTW_SCROLL_PATCHED_SIZE) :
+                          (sprite ? MTW_SPRITE_ONLY_SIZE : MTW_SCROLL_STOCK_SIZE)))
+            return json_invalid(e, "Inconsistent direct EXE fix selection.");
+    }
     r.json = value;
     r.target_directory = target;
     *out = r;
@@ -290,7 +339,7 @@ static inline int medieval_receipt_verify_originals(const MedievalIdentity *iden
     local.memory_limit = identity->context.memory_limit;
     if (!patch_path_join(&local, identity->guard->canonical, MEDIEVAL_STATE_NAME, &state, e))
         goto done;
-    for (i = 0; i < 5; ++i)
+    for (i = 0; i < medieval_receipt_file_count(receipt); ++i)
         if (receipt->files[i].original.exists) {
             if (!patch_path_join(&local, state, receipt->files[i].snapshot_relative, &path, e) ||
                 !patch_file_record(identity->guard, path, &actual, e))
@@ -458,7 +507,7 @@ done:
 static inline int medieval_path_role(const char *relative, size_t *file_index) {
     size_t i;
     char path[160];
-    for (i = 0; i < 5; ++i) {
+    for (i = 0; i < MEDIEVAL_FILE_COUNT; ++i) {
         *file_index = i;
         if (!strcmp(relative, medieval_payload_names[i]))
             return 1;
@@ -535,7 +584,7 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
         (!strcmp(j.phase, "committed") && (uint64_t)started != actions->count))
         return json_invalid(e, "Transaction belongs to another directory/account or has invalid progress.");
     retained = json_get(value, restore ? "removal_receipt" : "install_receipt");
-    if (!medieval_receipt_validate(owner, retained, identity, 0, &j.receipt, &nested)) {
+    if (!medieval_receipt_validate(owner, retained, identity, 1, &j.receipt, &nested)) {
         if (nested.code)
             patch_error_set(e, nested.code, nested.message, nested.win32);
         return 0;
@@ -583,12 +632,12 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
                     (restore && (!action->before_file.exists ||
                                  strcmp(action->before_file.sha256, j.receipt.uninstaller_sha256))))
                     return json_invalid(e, "Recovery uninstaller is not bound to receipt.");
-                required |= 32;
+                required |= 64;
             } else if (role == 4) {
                 if (!action->after_file.exists || !action->after_file.length ||
                     (restore && !action->before_file.exists))
                     return json_invalid(e, "Incomplete recovery receipt action.");
-                required |= 64;
+                required |= 128;
             } else if (restore) {
                 const MedievalFileState *f = &j.receipt.files[index];
                 if (role != 2 || !f->sidecar_created ||
@@ -666,11 +715,11 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
                     return json_invalid(e, "Legacy registration does not belong to this folder.");
             }
             if (own)
-                required |= 128;
+                required |= 256;
         } else
             return json_invalid(e, "Unknown transaction action.");
     }
-    if (required != 255)
+    if (required != (j.receipt.old_v2 || j.receipt.legacy ? 479U : 511U))
         return json_invalid(e, "Recovery omits a required runtime, receipt, uninstaller or registration.");
     j.json = value;
     j.count = actions->count;
@@ -751,7 +800,9 @@ static inline const char *medieval_known_d3d9_mode(const char *hash) {
                  {"CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A", "r185"},
                  {"9791F095DB66817A4CB6A6B23DF4983254950F7F1266D1CDC3040E1E9FEFDE4C", "r186"},
                  {"AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA", "r186"},
-                 {"24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E", "r186"}};
+                 {"24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E", "r186"},
+                 {"5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C", "r186"},
+                 {"300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1", "r186"}};
     size_t i;
     for (i = 0; i < sizeof(known) / sizeof(*known); ++i)
         if (!strcmp(hash, known[i].hash))

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import winreg
@@ -18,30 +19,51 @@ from test_lifecycle import (
 from test_lifecycle_adversarial import tree_snapshot
 
 
-@pytest.mark.parametrize("operation", ["Install", "Restore"])
-def test_supported_executable_stays_pinned_until_the_operation_finishes(games, operation):
+def test_scroll_only_fault_before_exe_stage_restores_original(games):
     game = games()
     before = relevant(game)
+    result, report = run("Install", game, fault="throw:before-stage-exe",
+                         terrain_fix=False, scroll_fix=True, sprite_fix=False)
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert report["rollback"] in {"not-needed", "verified"}, report
+    assert relevant(game) == before
+    assert not (game / STATE).exists()
+    assert not registry(game)
+
+
+def test_scroll_only_fault_after_exe_publication_rolls_back(games):
+    game = games()
+    before = relevant(game)
+    # File actions are original EXE snapshot, five absent runtime paths, then
+    # the EXE replacement. This interruption occurs after the replacement.
+    result, report = run("Install", game, fault="throw:after-file-6",
+                         terrain_fix=False, scroll_fix=True, sprite_fix=False)
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert report["rollback"] == "verified", report
+    assert relevant(game) == before
+    assert not (game / STATE).exists()
+    assert not registry(game)
+
+
+@pytest.mark.parametrize("operation", ["Install", "Restore"])
+def test_concurrent_executable_replacement_is_detected_and_preserved(games, operation):
+    game = games()
     if operation == "Restore":
         installed(game)
+    before = relevant(game)
     executable = game / "Medieval_TW.exe"
-    original = digest(executable)
+    replacement = b"unsupported concurrent replacement"
 
     def try_update():
-        with pytest.raises(PermissionError):
-            executable.write_bytes(b"unsupported concurrent replacement")
-        with pytest.raises(PermissionError):
-            executable.rename(game / "replaced-executable.exe")
-        assert digest(executable) == original
+        executable.write_bytes(replacement)
 
     code, report, output, error = run_at_wait(operation, game, "after-preservation", try_update)
-    assert code == 0, (report, output, error)
-    with executable.open("r+b"):
-        pass  # The operation must release its pin when its process exits.
-    if operation == "Install":
-        result, report = run("Restore", game)
-        assert result.returncode == 0, report
-    assert relevant(game) == before
+    assert code != 0, (report, output, error)
+    assert report["code"] in {"concurrent_change", "unsupported_executable"}
+    assert executable.read_bytes() == replacement
+    after = relevant(game)
+    assert {k: v for k, v in after.items() if k != "Medieval_TW.exe"} == {
+        k: v for k, v in before.items() if k != "Medieval_TW.exe"}
 
 
 @pytest.mark.parametrize("point", ["cleanup-after-first-backup", "cleanup-after-journal-delete",
@@ -172,10 +194,14 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     installed(game)
     state = game / STATE
     original = b"unknown historical wrapper that must be preserved"
-    (state / "originals").mkdir()
+    (state / "originals").mkdir(exist_ok=True)
     (state / "originals/ddraw.dll").write_bytes(original)
     receipt = read_receipt(game)
+    # A v1 installation predates both direct EXE fixes. Restore its stock
+    # executable before synthesizing that historical receipt.
+    shutil.copy2(state / "originals/Medieval_TW.exe", game / "Medieval_TW.exe")
     receipt["schema"] = "unofficial-medieval-total-war-patch-install-v1"
+    receipt["files"].pop("Medieval_TW.exe")
     receipt["preinstall_mode"] = "r185"
     receipt["files"]["ddraw.dll"].update(existed=True, original_sha256=hashlib.sha256(original).hexdigest().upper(),
                                            original_length=len(original), snapshot_relative="originals/ddraw.dll",
@@ -189,6 +215,32 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     result, report = run("Restore", game)
     assert result.returncode == 0, report
     assert (game / "ddraw.dll").read_bytes() == original
+
+
+def test_actual_v3_receipt_uninstalls_directly_with_new_helper(games):
+    """A v3 owner can remove the patch without first upgrading to v4."""
+    source_name = os.environ.get("MTW_LEGACY_V3_INSTALLER")
+    if not source_name:
+        pytest.skip("MTW_LEGACY_V3_INSTALLER is required for actual v3 package proof")
+    old_installer = Path(source_name)
+    assert digest(old_installer) == "1E0F95073D65FD2B9A74FEC9489352DACC5F18AE9E4138CA81D7E930055FA9D3"
+    game = games("Direct v3 removal")
+    before = relevant(game)
+    local_installer = game / old_installer.name
+    shutil.copy2(old_installer, local_installer)
+    old_result = subprocess.run(
+        [str(local_installer), "/S", "/TERRAINFIX=1", "/SCROLLFIX=1", "/SPRITEFIX=1"],
+        cwd=game, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+    )
+    assert old_result.returncode == 0, (old_result.stdout, old_result.stderr)
+    assert read_receipt(game)["schema"] == "unofficial-medieval-total-war-patch-install-v3"
+    assert digest(game / "Medieval_TW.exe") == "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B"
+    result, report = run("Restore", game)
+    assert result.returncode == 0, (result.stdout, result.stderr, report)
+    assert relevant(game) == before
+    assert not (game / UNINSTALL).exists()
+    assert not (game / STATE / "install-manifest.json").exists()
+    assert not registry(game)
 
 
 @pytest.fixture

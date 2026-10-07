@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (161792, "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA"),
+    "D3D9.dll": (159232, "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -41,7 +41,10 @@ def test_runtime_payload_is_exact_and_complete() -> None:
     actual_names = {path.name for path in RUNTIME.iterdir() if path.is_file()}
     assert actual_names == set(EXPECTED_RUNTIME) | {
         "payload-manifest.json", "payload-manifest-scroll-off.json",
-        "D3D9-scroll-off.dll", "VERSION.txt",
+        "payload-manifest-sprite-off.json", "payload-manifest-scroll-sprite-off.json",
+        "payload-manifest-scroll-sprite-on.json",
+        "D3D9-scroll-off.dll", "D3D9-sprite-off.dll",
+        "D3D9-scroll-sprite-off.dll", "D3D9-scroll-sprite-on.dll", "VERSION.txt",
     }
     assert set(manifest["files"]) == set(EXPECTED_RUNTIME)
     for name, (length, digest) in EXPECTED_RUNTIME.items():
@@ -53,7 +56,7 @@ def test_runtime_payload_is_exact_and_complete() -> None:
 
 
 def test_scroll_off_payload_differs_only_in_the_proxy() -> None:
-    enabled = json.loads((RUNTIME / "payload-manifest.json").read_text(encoding="utf-8"))
+    enabled = json.loads((RUNTIME / "payload-manifest-scroll-sprite-on.json").read_text(encoding="utf-8"))
     disabled = json.loads((RUNTIME / "payload-manifest-scroll-off.json").read_text(encoding="utf-8"))
     assert enabled["scroll_fix_enabled"] is True
     assert disabled["scroll_fix_enabled"] is False
@@ -69,6 +72,32 @@ def test_scroll_off_payload_differs_only_in_the_proxy() -> None:
             assert disabled["files"][name]["sha256"] != enabled["files"][name]["sha256"]
         else:
             assert disabled["files"][name] == enabled["files"][name]
+
+
+def test_historical_proxy_variants_remain_identifiable_for_migration() -> None:
+    choices = {
+        (True, True): ("payload-manifest-scroll-sprite-on.json", "D3D9-scroll-sprite-on.dll"),
+        (False, True): ("payload-manifest-scroll-off.json", "D3D9-scroll-off.dll"),
+        (True, False): ("payload-manifest-sprite-off.json", "D3D9-sprite-off.dll"),
+        (False, False): ("payload-manifest-scroll-sprite-off.json", "D3D9-scroll-sprite-off.dll"),
+    }
+    reference = json.loads((RUNTIME / "payload-manifest.json").read_text(encoding="utf-8"))
+    hashes = set()
+    for (scroll, sprite), (manifest_name, binary_name) in choices.items():
+        manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
+        binary = RUNTIME / binary_name
+        assert manifest["scroll_fix_enabled"] is scroll
+        assert manifest["sprite_fix_enabled"] is sprite
+        assert manifest["target_executable"] == reference["target_executable"]
+        assert manifest["locked_settings"] == reference["locked_settings"]
+        assert manifest["files"]["D3D9.dll"]["sha256"] == sha256(binary)
+        assert manifest["files"]["D3D9.dll"]["length"] == binary.stat().st_size
+        for name in reference["files"].keys() - {"D3D9.dll"}:
+            assert manifest["files"][name] == reference["files"][name]
+        hashes.add(sha256(binary))
+    assert len(hashes) == 4
+    assert (RUNTIME / "D3D9.dll").read_bytes() == (RUNTIME / "D3D9-scroll-sprite-off.dll").read_bytes()
+    assert (RUNTIME / "payload-manifest.json").read_bytes() == (RUNTIME / "payload-manifest-scroll-sprite-off.json").read_bytes()
 
 
 def test_official_dgvoodoo_2875_x86_payload_is_pinned() -> None:

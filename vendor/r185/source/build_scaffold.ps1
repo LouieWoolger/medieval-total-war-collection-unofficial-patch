@@ -38,6 +38,8 @@ $expectedBackend = '6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA540
 $expectedControlBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
 $expectedR185Proxy = 'AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA'
 $expectedScrollOffProxy = '24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E'
+$expectedSpriteOffProxy = '5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C'
+$expectedScrollSpriteOffProxy = '300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -105,6 +107,8 @@ $acceptedObj = Join-Path $combined 'accepted_dust.obj'
 $publicObj = Join-Path $combined 'combined_proxy.obj'
 $frontendObj = Join-Path $combined 'frontend_fix.obj'
 $frontendScrollOffObj = Join-Path $combined 'frontend_fix_scroll_off.obj'
+$frontendSpriteOffObj = Join-Path $combined 'frontend_fix_sprite_off.obj'
+$frontendScrollSpriteOffObj = Join-Path $combined 'frontend_fix_scroll_sprite_off.obj'
 $campaignPanObj = Join-Path $combined 'campaign_pan_core.obj'
 $frontendEpochObj = Join-Path $combined 'frontend_epoch_core.obj'
 $presentationInputObj = Join-Path $combined 'presentation_input_core.obj'
@@ -120,6 +124,8 @@ $mapperCloneObj = Join-Path $combined 'mapper_shader_clone_core.obj'
 $mapperActivationObj = Join-Path $combined 'mapper_activation_core.obj'
 $combinedDll = Join-Path $combined 'D3D9.dll'
 $scrollOffDll = Join-Path $combined 'D3D9-scroll-off.dll'
+$spriteOffDll = Join-Path $combined 'D3D9-sprite-off.dll'
+$scrollSpriteOffDll = Join-Path $combined 'D3D9-scroll-sprite-off.dll'
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -138,6 +144,7 @@ if ($LASTEXITCODE -ne 0) { throw "Public bridge build failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
     '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=1',
+    '/DMTW_ENABLE_SPRITE_CLIP_FIX=1',
     ('/Fo' + $frontendObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Inert frontend build failed: $LASTEXITCODE" }
@@ -145,9 +152,26 @@ if ($LASTEXITCODE -ne 0) { throw "Inert frontend build failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
     '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=0',
+    '/DMTW_ENABLE_SPRITE_CLIP_FIX=1',
     ('/Fo' + $frontendScrollOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled frontend build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=1',
+    '/DMTW_ENABLE_SPRITE_CLIP_FIX=0',
+    ('/Fo' + $frontendSpriteOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled frontend build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=0',
+    '/DMTW_ENABLE_SPRITE_CLIP_FIX=0',
+    ('/Fo' + $frontendScrollSpriteOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled frontend build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -242,13 +266,35 @@ if ($LASTEXITCODE -ne 0) { throw "Combined inert proxy link failed: $LASTEXITCOD
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $spriteOffDll),$acceptedObj,$publicObj,$frontendSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $scrollSpriteOffDll),$acceptedObj,$publicObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled proxy link failed: $LASTEXITCODE" }
 $combinedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $combinedDll).Hash
 $scrollOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollOffDll).Hash
+$spriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $spriteOffDll).Hash
+$scrollSpriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffDll).Hash
 if (-not $AllowUnpinnedOutput -and $combinedHash -ne $expectedR185Proxy) {
     throw "R185 reproducible build drift: $combinedHash"
 }
 if (-not $AllowUnpinnedOutput -and $scrollOffHash -ne $expectedScrollOffProxy) {
     throw "Scroll-disabled reproducible build drift: $scrollOffHash"
+}
+if (-not $AllowUnpinnedOutput -and $spriteOffHash -ne $expectedSpriteOffProxy) {
+    throw "Sprite-disabled reproducible build drift: $spriteOffHash"
+}
+if (-not $AllowUnpinnedOutput -and $scrollSpriteOffHash -ne $expectedScrollSpriteOffProxy) {
+    throw "Scroll-and-sprite-disabled reproducible build drift: $scrollSpriteOffHash"
 }
 Copy-Item -LiteralPath $backend -Destination (Join-Path $combined 'dgVoodoo_D3D9.dll') -Force
 
@@ -431,6 +477,8 @@ $manifest = [ordered]@{
     accepted_control_sha256 = $controlHash
     combined_inert_sha256 = $combinedHash
     scroll_off_sha256 = $scrollOffHash
+    sprite_off_sha256 = $spriteOffHash
+    scroll_sprite_off_sha256 = $scrollSpriteOffHash
     backend_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $combined 'dgVoodoo_D3D9.dll')).Hash
     smoke_loader_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $smokeExe).Hash
     smoke_loader_exit = 0

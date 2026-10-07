@@ -10,6 +10,7 @@
   "copyright": "Copyright 2026 Louie Woolger",
   "component_name": "Terrain Movement Fix",
   "scroll_component_name": "Campaign Scrolling Fix",
+  "sprite_component_name": "Sprite-Clipping Crash Fix",
   "discord_url": "https://discord.gg/zKbDADqWRC",
   "kofi_url": "https://ko-fi.com/louiewoolger"
 }

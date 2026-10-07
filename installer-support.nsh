@@ -56,22 +56,15 @@ Var ElevatedExit
     File /oname=medieval_fix_patcher.exe "${NATIVE_HELPER}"
     File /oname=LICENSE.txt "${SOURCE_DIR}\LICENSE"
     File /oname=MinGW-w64-runtime.txt "${SOURCE_DIR}\licenses\MinGW-w64-runtime.txt"
-    SetOutPath "$PLUGINSDIR\payload"
-    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest.json"
-    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9.dll"
+    SetOutPath "$PLUGINSDIR\payload-scroll-sprite-off"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-sprite-off.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-sprite-off.dll"
     File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
     File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
     File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
     File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
-    SetOutPath "$PLUGINSDIR\payload-scroll-off"
-    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-off.json"
-    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-off.dll"
-    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
-    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
-    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
-    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
-    ; Runtime inputs stay in their own payload directory.
-    SetOutPath "$PLUGINSDIR\payload"
+    ; This is the sole newly installable Terrain runtime. Both EXE fixes are
+    ; disabled in its proxy, even when selected in the installer.
     ${EndIf}
 !macroend
 ; Shared installer/uninstaller diagnostics and native process runner.
@@ -285,7 +278,7 @@ Function ${PREFIX}RunHelper
     ; dwFlags=STARTF_USESTDHANDLES; the last three fields are stdin/out/err.
     System::Call '*(i 68,p 0,p 0,p 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0,i 0x100,i 0,p 0,p $NullInputHandle,p $ConsoleHandle,p $ConsoleHandle) p.r1'
     System::Call '*(p 0,p 0,i 0,i 0) p.r2'
-    System::Call 'kernel32::CreateProcessW(w "$NativeDirectory\medieval_fix_patcher.exe",w r0,p 0,p 0,i 1,i 0x08000000,p 0,w "$NativeDirectory\payload",p r1,p r2) i.r3 ?e'
+    System::Call 'kernel32::CreateProcessW(w "$NativeDirectory\medieval_fix_patcher.exe",w r0,p 0,p 0,i 1,i 0x08000000,p 0,w "$EnginePayloadDirectory",p r1,p r2) i.r3 ?e'
     Pop $4
     System::Call 'kernel32::CloseHandle(p $NullInputHandle)'
     ${If} $3 == 0
@@ -361,6 +354,9 @@ Function ${PREFIX}WriteEngineRequest
     FileWriteUTF16LE $RequestHandle "uninstaller=$EngineUninstaller$\r$\n"
     FileWriteUTF16LE $RequestHandle "log=$HelperLog$\r$\n"
     FileWriteUTF16LE $RequestHandle "require_owner=$RequiredOwnerSid$\r$\n"
+    FileWriteUTF16LE $RequestHandle "terrain_fix=$TerrainSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "scroll_fix=$ScrollSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "sprite_fix=$SpriteSelected$\r$\n"
     ${If} ${Errors}
         StrCpy $RequestWriteFailed "1"
     ${EndIf}
@@ -482,7 +478,7 @@ Function InstallWithAdministratorPermission
     ${EndIf}
     DetailPrint "Windows permission is needed to update an older patch entry."
     ; NSIS /D= must be last and unquoted, including paths with spaces.
-    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /D=$INSTDIR'
+    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /TERRAINFIX=$TerrainSelected /SCROLLFIX=$ScrollSelected /SPRITEFIX=$SpriteSelected /D=$INSTDIR'
     StrLen $0 $ElevationArguments
     ${If} $0 >= 1023
         StrCpy $InstallError "The administrator command is too long. Close setup and use Run as administrator."

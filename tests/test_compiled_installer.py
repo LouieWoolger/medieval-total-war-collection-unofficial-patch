@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST_INSTALLER = Path(os.environ.get("MTW_TEST_INSTALLER", str(ROOT / "dist" / "Unofficial Medieval Total War Collection Patch.exe")))
 PAYLOAD = ROOT / "vendor" / "runtime"
 SUPPORTED_EXE_HASH = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+SCROLL_EXE_HASH = "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B"
+SPRITE_EXE_HASH = "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0"
+COMBINED_EXE_HASH = "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"
 RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf")
 
 
@@ -80,7 +83,7 @@ def snapshot(game: Path) -> dict[str, str | None]:
 
 
 def expected_runtime() -> dict[str, str]:
-    manifest = json.loads((PAYLOAD / "payload-manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
     return {name: record["sha256"] for name, record in manifest["files"].items()}
 
 
@@ -96,12 +99,17 @@ def assert_registration(game: Path) -> None:
     assert values["UninstallString"][0] == f'"{game / "Uninstall Unofficial Medieval Patch.exe"}"'
 
 
-def run_installer(game: Path, *, scroll_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
+def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bool | None = None,
+                  sprite_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
     logs.mkdir(parents=True)
     command = [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
+    if terrain_fix is not None:
+        command.append(f"/TERRAINFIX={int(terrain_fix)}")
     if scroll_fix is not None:
         command.append(f"/SCROLLFIX={int(scroll_fix)}")
+    if sprite_fix is not None:
+        command.append(f"/SPRITEFIX={int(sprite_fix)}")
     result = subprocess.run(
         command,
         cwd=game,
@@ -115,31 +123,88 @@ def run_installer(game: Path, *, scroll_fix: bool | None = None) -> subprocess.C
     return result
 
 
-def test_compiled_scroll_choice_changes_only_managed_proxy_and_can_toggle(tmp_path: Path) -> None:
+def test_compiled_scroll_choice_changes_exe_and_can_toggle(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Scroll choice")
     before = snapshot(game)
-    enabled_proxy = expected_runtime()["D3D9.dll"]
+    proxy = expected_runtime()["D3D9.dll"]
 
-    disabled = run_installer(game, scroll_fix=False)
+    disabled = run_installer(game, scroll_fix=False, sprite_fix=False)
     assert disabled.returncode == 0, (disabled.stdout, disabled.stderr)
-    disabled_proxy = sha256(game / "D3D9.dll")
-    assert disabled_proxy != enabled_proxy
+    assert sha256(game / "D3D9.dll") == proxy
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
     receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
     disabled_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
-    assert disabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == disabled_proxy
+    assert disabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == proxy
     for name in RUNTIME_NAMES[1:]:
         assert sha256(game / name) == expected_runtime()[name]
 
-    enabled = run_installer(game, scroll_fix=True)
+    enabled = run_installer(game, scroll_fix=True, sprite_fix=False)
     assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
-    assert sha256(game / "D3D9.dll") == enabled_proxy
+    assert sha256(game / "D3D9.dll") == proxy
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
     enabled_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
     assert enabled_receipt["installation_id"] == disabled_receipt["installation_id"]
-    assert enabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == enabled_proxy
+    assert enabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == proxy
+    assert enabled_receipt["files"]["Medieval_TW.exe"]["installed_sha256"] == SCROLL_EXE_HASH
 
-    disabled_again = run_installer(game, scroll_fix=False)
+    disabled_again = run_installer(game, scroll_fix=False, sprite_fix=False)
     assert disabled_again.returncode == 0, (disabled_again.stdout, disabled_again.stderr)
-    assert sha256(game / "D3D9.dll") == disabled_proxy
+    assert sha256(game / "D3D9.dll") == proxy
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_all_seven_independent_fix_combinations(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Independent fixes")
+    before = snapshot(game)
+    choices = ((False, False, True), (False, True, False), (False, True, True),
+               (True, False, False), (True, False, True),
+               (True, True, False), (True, True, True))
+    installation_id = None
+    for terrain, scroll, sprite in choices:
+        manifest = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
+        result = run_installer(game, terrain_fix=terrain, scroll_fix=scroll, sprite_fix=sprite)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        expected_hash = manifest["files"]["D3D9.dll"]["sha256"]
+        if terrain:
+            assert sha256(game / "D3D9.dll") == expected_hash
+        else:
+            assert all(not (game / name).exists() for name in RUNTIME_NAMES)
+        exe_hash = {(False, False): SUPPORTED_EXE_HASH, (True, False): SCROLL_EXE_HASH,
+                    (False, True): SPRITE_EXE_HASH, (True, True): COMBINED_EXE_HASH}[(scroll, sprite)]
+        assert sha256(game / "Medieval_TW.exe") == exe_hash
+        assert manifest["scroll_fix_enabled"] is False
+        assert manifest["sprite_fix_enabled"] is False
+        receipt = json.loads((game / ".unofficial-medieval-total-war-patch" / "install-manifest.json").read_text(encoding="utf-8-sig"))
+        assert receipt["files"]["D3D9.dll"]["installed_sha256"] == (expected_hash if terrain else None)
+        assert receipt["terrain_fix_enabled"] is terrain
+        assert receipt["scroll_fix_enabled"] is scroll
+        assert receipt["sprite_fix_enabled"] is sprite
+        assert receipt["sprite_delivery"] == "direct-exe"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v4"
+        if installation_id is None:
+            installation_id = receipt["installation_id"]
+        assert receipt["installation_id"] == installation_id
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_repairs_stock_exe_restored_by_storefront_verification(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Storefront EXE restoration")
+    before = snapshot(game)
+    assert run_installer(game, terrain_fix=False, scroll_fix=True, sprite_fix=False).returncode == 0
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    original_id = json.loads(receipt_path.read_text(encoding="utf-8-sig"))["installation_id"]
+    shutil.copy2(supported_exe_source(), game / "Medieval_TW.exe")
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    repaired = run_installer(game, terrain_fix=False, scroll_fix=True, sprite_fix=False)
+    assert repaired.returncode == 0, (repaired.stdout, repaired.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert receipt["installation_id"] == original_id
+    assert receipt["repair_count"] == 1
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before
 
@@ -263,6 +328,31 @@ def test_compiled_pre_win7_component_refusal_precedes_helper_launch(tmp_path: Pa
     assert read_registration(registration_name(game)) is None
 
 
+def test_compiled_scrolling_only_bypasses_terrain_platform_gate(tmp_path: Path, monkeypatch) -> None:
+    """A synthetic pre-Win7 probe checks selection routing, not OS compatibility."""
+    game = new_game(tmp_path, "Scrolling-only platform selection")
+    (game / ".umtwp-test-fixture").write_text("disposable package capability fixture")
+    before = snapshot(game)
+    monkeypatch.setenv("MTW_ENABLE_LIFECYCLE_FAULTS", "1")
+    monkeypatch.setenv("MTW_TEST_COMPONENT_OS", "pre-win7")
+    result = run_installer(game, terrain_fix=False, scroll_fix=True, sprite_fix=False)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    assert all(not (game / name).exists() for name in RUNTIME_NAMES)
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_invalid_component_combinations_leave_game_untouched(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Invalid component combinations")
+    before = snapshot(game)
+    for terrain, scroll, sprite in ((False, False, False),):
+        result = run_installer(game, terrain_fix=terrain, scroll_fix=scroll, sprite_fix=sprite)
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert snapshot(game) == before
+        assert read_registration(registration_name(game)) is None
+
+
 def test_compiled_custom_config_is_replaced_and_restored(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Existing custom config")
     config = game / "dgVoodoo.conf"
@@ -318,9 +408,10 @@ def test_compiled_unmanaged_r186_adoption_and_managed_repair(tmp_path: Path) -> 
     second_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     assert second_receipt["installation_id"] == first_receipt["installation_id"]
     assert second_receipt["repair_count"] == 1
+    installed_manifest = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
     for name, expected in expected_runtime().items():
         assert second_receipt["files"][name]["installed_sha256"] == expected
-        assert second_receipt["files"][name]["installed_length"] == (PAYLOAD / name).stat().st_size
+        assert second_receipt["files"][name]["installed_length"] == installed_manifest["files"][name]["length"]
     assert second_receipt["installer_sha256"] == sha256(game / DIST_INSTALLER.name)
     assert_runtime(game)
     assert run_uninstaller(game).returncode == 0

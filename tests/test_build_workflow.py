@@ -82,21 +82,42 @@ def test_build_record_rejects_changed_inputs(tmp_path: Path, changed: str | None
         assert record["inputs"]["installer"]["sha256"] in result.stdout
 
 
-@pytest.mark.parametrize("lifecycle,package,faults,expected", [
-    ("not-run", "not-run", False, "not-run"),
-    ("pass", "not-run", True, "incomplete"),
-    ("pass", "pass", False, "incomplete"),
-    ("pass-with-skips", "pass", True, "incomplete"),
-    ("pass", "fail", True, "fail"),
-    ("pass", "pass", True, "pass"),
+@pytest.mark.parametrize("sprite,lifecycle,package,faults,expected", [
+    ("not-run", "not-run", "not-run", False, "not-run"),
+    ("pass", "pass", "not-run", True, "incomplete"),
+    ("not-run", "pass", "pass", True, "incomplete"),
+    ("pass-with-skips", "pass", "pass", True, "incomplete"),
+    ("pass", "pass", "pass", False, "incomplete"),
+    ("pass", "pass-with-skips", "pass", True, "incomplete"),
+    ("pass", "pass", "fail", True, "fail"),
+    ("pass", "pass", "pass", True, "pass"),
 ])
-def test_game_validation_requires_both_suites_without_skips(lifecycle, package, faults, expected) -> None:
+def test_game_validation_requires_exact_sprite_and_both_suites_without_skips(
+    sprite, lifecycle, package, faults, expected,
+) -> None:
     spec = importlib.util.spec_from_file_location("manifest_workflow", ROOT / "tools/build-release-manifest.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    validation = {"lifecycle": {"status": lifecycle}, "compiled_installer": {"status": package},
+    validation = {"sprite_exe": {"status": sprite}, "lifecycle": {"status": lifecycle},
+                  "compiled_installer": {"status": package},
                   "legacy_migration": {"status": "not-run"}, "lifecycle_fault_tests_enabled": faults}
     assert module.game_test_result(validation)["status"] == expected
+
+
+def test_runtime_build_gate_requires_the_solo_sprite_disabled_proxy(tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("manifest_workflow", ROOT / "tools/build-release-manifest.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    expected = {"D3D9-scroll-sprite-off.dll": "D3D9-scroll-sprite-off.dll"}
+    fields = ("scroll_sprite_off_sha256",)
+    report = tmp_path / "r185.json"
+    evidence = dict(zip(fields, expected.values()))
+    evidence.update(smoke_loader_exit=0, campaign_pan_tests_exit=0)
+    report.write_text(json.dumps(evidence), encoding="utf-8")
+    assert module.r185_result(report, expected)["status"] == "pass"
+    evidence.pop("scroll_sprite_off_sha256")
+    report.write_text(json.dumps(evidence), encoding="utf-8")
+    assert module.r185_result(report, expected)["status"] == "fail"
 
 
 @pytest.mark.parametrize("case_count", [0, 2])
@@ -110,7 +131,8 @@ def test_requested_empty_or_skipped_historical_suite_cannot_pass(tmp_path: Path,
     historical = module.junit_result(report)
     assert historical["tests"] == historical["skipped"] == case_count
     assert historical["report_sha256"] == hashlib.sha256(report.read_bytes()).hexdigest().upper()
-    validation = {"lifecycle": {"status": "pass"}, "compiled_installer": {"status": "pass"},
+    validation = {"sprite_exe": {"status": "pass"}, "lifecycle": {"status": "pass"},
+                  "compiled_installer": {"status": "pass"},
                   "legacy_cpp": historical, "lifecycle_fault_tests_enabled": True}
     assert module.game_test_result(validation)["status"] == "incomplete"
 

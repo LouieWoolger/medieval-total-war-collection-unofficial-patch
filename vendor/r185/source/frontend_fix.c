@@ -34,6 +34,12 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX != 0 && MTW_ENABLE_CAMPAIGN_SCROLL_FIX != 1
 #error MTW_ENABLE_CAMPAIGN_SCROLL_FIX must be 0 or 1.
 #endif
+#ifndef MTW_ENABLE_SPRITE_CLIP_FIX
+#define MTW_ENABLE_SPRITE_CLIP_FIX 1
+#endif
+#if MTW_ENABLE_SPRITE_CLIP_FIX != 0 && MTW_ENABLE_SPRITE_CLIP_FIX != 1
+#error MTW_ENABLE_SPRITE_CLIP_FIX must be 0 or 1.
+#endif
 
 #define MTW_INITIAL_COPY_PRE_UNLOCK_RVA 0x0000BF60u
 #define MTW_PROGRESS_POST_LOCK_RVA 0x0031CBC8u
@@ -180,12 +186,14 @@ static const unsigned char d3d11_create_device_call_expected[6] = {
 static const unsigned char resolution_initialize_call_expected[5] = {
     0xE8, 0x1C, 0xF1, 0xFF, 0xFF
 };
+#if MTW_ENABLE_SPRITE_CLIP_FIX
 static const unsigned char blitter_entry_expected[5] = {
     0xE9, 0x06, 0x5F, 0x80, 0x00
 };
 static const unsigned char blitter_body_expected[7] = {
     0x55, 0x8B, 0xEC, 0x83, 0x7D, 0x18, 0x00
 };
+#endif
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
 static const unsigned char campaign_pan_target_expected[6] = {
     0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08
@@ -257,7 +265,9 @@ static void *veh_handled_continue;
 static void *mapper_draw_continue;
 static void *d3d11_create_success_continue;
 static void *d3d11_create_failure_continue;
+#if MTW_ENABLE_SPRITE_CLIP_FIX
 static void *blitter_original_target;
+#endif
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
 typedef int (__cdecl *mtw_campaign_pan_fn)(int direction, double distance);
 static mtw_campaign_pan_fn original_campaign_pan;
@@ -395,7 +405,9 @@ __declspec(naked) static void constructor_return_hook_stub(void);
 __declspec(naked) static void d3d11_create_device_hook_stub(void);
 __declspec(naked) static void prebattle_entry_hook_stub(void);
 __declspec(naked) static void prebattle_resolution_return_hook_stub(void);
+#if MTW_ENABLE_SPRITE_CLIP_FIX
 __declspec(naked) static void blitter_entry_hook_stub(void);
+#endif
 static int install_d3d11_create_device_hook(void);
 static int install_transition_resolution_hooks(void);
 static int diagnostic_trace_armed(void);
@@ -3568,6 +3580,7 @@ __declspec(naked) static void prebattle_resolution_return_hook_stub(void) {
     }
 }
 
+#if MTW_ENABLE_SPRITE_CLIP_FIX
 /* The original RLE routine computes a signed visible row count and enters
  * its row decoder even when the sprite starts below the clip bottom. Avoid
  * that invalid draw before the destination pointer is formed. The original
@@ -3588,6 +3601,7 @@ __declspec(naked) static void blitter_entry_hook_stub(void) {
         ret
     }
 }
+#endif
 
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
 /* Only the verified campaign direction call sites are redirected. The game
@@ -4089,6 +4103,7 @@ static void restore_original(uintptr_t target,
     VirtualProtect((void *)target, size, old_protect, &ignored);
 }
 
+#if MTW_ENABLE_SPRITE_CLIP_FIX
 static int install_blitter_guard_hook(void) {
     uintptr_t entry = game_base + MTW_BLITTER_ENTRY_RVA;
     uintptr_t body = game_base + MTW_BLITTER_BODY_RVA;
@@ -4107,6 +4122,7 @@ static int install_blitter_guard_hook(void) {
     }
     return 1;
 }
+#endif
 
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
 static int install_campaign_pan_hooks(void) {
@@ -4629,11 +4645,15 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         return TRUE;
     }
     if (install_all_hooks_transactionally()) {
+#if MTW_ENABLE_SPRITE_CLIP_FIX
         if (install_blitter_guard_hook()) {
             diagnostic_write("offscreen RLE sprite guard installed mtw001\r\n");
         } else {
             diagnostic_write("offscreen RLE sprite guard unavailable mtw001\r\n");
         }
+#else
+        diagnostic_write("offscreen RLE sprite guard disabled by installer mtw001\r\n");
+#endif
 #if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
         if (install_campaign_pan_hooks()) {
             diagnostic_write("elapsed-time campaign pan installed scroll01\r\n");

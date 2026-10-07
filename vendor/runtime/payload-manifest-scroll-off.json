@@ -47,5 +47,6 @@
     "Medieval_TW.exe",
     "~tmp.vrp"
   ],
-  "scroll_fix_enabled": false
+  "scroll_fix_enabled": false,
+  "sprite_fix_enabled": true
 }
