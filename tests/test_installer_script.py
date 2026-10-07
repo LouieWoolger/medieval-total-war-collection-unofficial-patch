@@ -118,7 +118,7 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
 def test_campaign_scroll_is_an_independent_executable_choice() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     text = script_text()
-    assert product["scroll_component_name"] == "Campaign Scrolling Fix"
+    assert product["scroll_component_name"] == "Campaign Map Scroll Fix"
     assert 'Var ScrollCheck' in text
     assert '${NSD_CreateCheckbox} 12 124 295 24 "${PRODUCT_SCROLL_COMPONENT_NAME}"' in text
     assert '${NSD_GetState} $ScrollCheck' in text
@@ -143,8 +143,8 @@ def test_campaign_scroll_description_uses_hover_preview() -> None:
     assert '${NSD_KillTimer} PreviewHoverTimer' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $CompatibilityCheck "terrain"' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $ScrollCheck "scrolling"' in text
-    assert '${NSD_SetText} $PreviewTitle "Campaign Scrolling Fix"' in text
-    assert '${NSD_SetText} $PreviewText "Corrects fast campaign-map scrolling with a direct game EXE fix. It does not limit FPS or require Terrain Movement Fix."' in text
+    assert '${NSD_SetText} $PreviewTitle "Campaign Map Scroll Fix"' in text
+    assert '${NSD_SetText} $PreviewText "Fixes campaign-map scrolling speed at high frame rates."' in text
     image = (ROOT / "assets" / "campaign-scrolling.bmp").read_bytes()
     assert image[:2] == b"BM"
     assert int.from_bytes(image[18:22], "little") == 480
@@ -154,16 +154,16 @@ def test_campaign_scroll_description_uses_hover_preview() -> None:
 def test_sprite_crash_fix_has_an_independent_installer_choice() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     text = script_text()
-    assert product["sprite_component_name"] == "Sprite-Clipping Crash Fix"
+    assert product["sprite_component_name"] == "Prebattle Screen Crash Fix"
     assert 'Var SpriteCheck' in text and 'Var SpriteSelected' in text
     assert '${NSD_CreateCheckbox} 12 154 295 24 "${PRODUCT_SPRITE_COMPONENT_NAME}"' in text
     assert '"/SPRITEFIX="' in text
     assert '${NSD_GetState} $SpriteCheck' in text
     assert 'payload-scroll-sprite-off' in text
-    assert 'Sprite-Clipping Crash Fix requires Terrain Movement Fix' not in text
-    assert 'Patches the game EXE directly; Terrain Movement Fix is optional.' in text
+    assert 'Prebattle Screen Crash Fix requires Terrain Movement Fix' not in text
+    assert '${NSD_SetText} $PreviewText "Fixes a crash that can occur on the prebattle screen during the campaign."' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"' in text
-    assert '${NSD_SetText} $PreviewTitle "Sprite-Clipping Crash Fix"' in text
+    assert '${NSD_SetText} $PreviewTitle "Prebattle Screen Crash Fix"' in text
     assert 'File /oname=sprite-clipping.bmp' in text
     image = (ROOT / "assets" / "sprite-clipping.bmp").read_bytes()
     assert image[:2] == b"BM"

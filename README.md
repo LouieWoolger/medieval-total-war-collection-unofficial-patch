@@ -13,10 +13,8 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 **Recommended**:
 
 - Terrain Movement Fix - installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems.
-- Campaign Scrolling Fix - separately selectable and enabled by default. Corrects campaign map scrolling speed at high frame rates with a direct change to your game's EXE. It does not limit FPS or require Terrain Movement Fix.
-- Sprite-Clipping Crash Fix - separately selectable and enabled by default. Prevents an 800x600 prebattle unit-card crash caused by an off-screen icon entering the game's faulty sprite-clipping loop. It patches the game EXE directly and does not require Terrain Movement Fix.
-
-Campaign Scrolling Fix and Sprite-Clipping Crash Fix can each be installed by themselves or together, with or without Terrain Movement Fix. The installer keeps a private copy of the exact supported original EXE so it can restore it on uninstall. Older managed Sprite installations are migrated from the proxy guard to the direct EXE guard after their receipt and private original are verified.
+- Campaign Map Scroll Fix - Fixes campaign-map scrolling speed at high frame rates.
+- Prebattle Screen Crash Fix - Fixes a crash that can occur on the prebattle screen during the campaign.
 
 ## Requirements
 
@@ -25,7 +23,6 @@ Campaign Scrolling Fix and Sprite-Clipping Crash Fix can each be installed by th
 - A game folder containing `Medieval_TW.exe`
 
 The Terrain Movement Fix requires Windows 7 or later.
-The two direct EXE fixes have been gameplay-tested on Windows 10; gameplay on other Windows versions has not yet been verified.
 
 ## Usage
 

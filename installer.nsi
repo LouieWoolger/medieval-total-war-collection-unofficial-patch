@@ -20,7 +20,7 @@ InstallDir "$EXEDIR"
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
-UninstallCaption "Remove Unofficial Medieval Patch"
+UninstallCaption "Remove Unofficial Medieval: Total War Collection Patch"
 BrandingText " "
 
 VIProductVersion "${PRODUCT_VERSION_QUAD}"
@@ -98,11 +98,12 @@ Page custom CompatibilityPageCreate CompatibilityPageLeave
 
 !define MUI_UNABORTWARNING
 !define MUI_CUSTOMFUNCTION_UNABORT un.LogUserAbort
-!define MUI_UNCONFIRMPAGE_TEXT_TOP "Remove the unofficial patch only. Your game, saves and unrelated files are kept. Close the game before continuing."
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "Only patch files will be removed. Your game, saves and other files will be kept."
 !define MUI_UNCONFIRMPAGE_TEXT_LOCATION "Game folder:"
+!define MUI_PAGE_HEADER_SUBTEXT ""
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
-!define MUI_FINISHPAGE_TITLE "Unofficial patch removed"
+!define MUI_FINISHPAGE_TITLE "Unofficial Patch Removed"
 !define MUI_FINISHPAGE_TEXT "The patch was removed from:$\r$\n$INSTDIR$\r$\n$\r$\nYour game and personal files have been kept."
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
@@ -644,14 +645,14 @@ Function SetPreview
     ${EndIf}
 
     ${If} $R0 == "sprite"
-        ${NSD_SetText} $PreviewTitle "Sprite-Clipping Crash Fix"
-        ${NSD_SetText} $PreviewText "Prevents a crash when an off-screen prebattle unit-card icon reaches the game's faulty sprite-clipping loop. Patches the game EXE directly; Terrain Movement Fix is optional."
+        ${NSD_SetText} $PreviewTitle "Prebattle Screen Crash Fix"
+        ${NSD_SetText} $PreviewText "Fixes a crash that can occur on the prebattle screen during the campaign."
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\sprite-clipping.bmp"
     ${ElseIf} $R0 == "scrolling"
-        ${NSD_SetText} $PreviewTitle "Campaign Scrolling Fix"
-        ${NSD_SetText} $PreviewText "Corrects fast campaign-map scrolling with a direct game EXE fix. It does not limit FPS or require Terrain Movement Fix."
+        ${NSD_SetText} $PreviewTitle "Campaign Map Scroll Fix"
+        ${NSD_SetText} $PreviewText "Fixes campaign-map scrolling speed at high frame rates."
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\campaign-scrolling.bmp"
