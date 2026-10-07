@@ -8,6 +8,7 @@
 #include <intrin.h>
 
 #include "frontend_fix.h"
+#include "campaign_pan_core.h"
 #include "frontend_epoch_core.h"
 #include "focus_plane_shadow_core.h"
 #include "focus_span_core.h"
@@ -25,6 +26,13 @@ extern IMAGE_DOS_HEADER __ImageBase;
 
 #if !defined(_M_IX86)
 #error This loading fix is valid only for the verified PE32 game.
+#endif
+
+#ifndef MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+#define MTW_ENABLE_CAMPAIGN_SCROLL_FIX 1
+#endif
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX != 0 && MTW_ENABLE_CAMPAIGN_SCROLL_FIX != 1
+#error MTW_ENABLE_CAMPAIGN_SCROLL_FIX must be 0 or 1.
 #endif
 
 #define MTW_INITIAL_COPY_PRE_UNLOCK_RVA 0x0000BF60u
@@ -74,27 +82,39 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_TOP_LEVEL_MODE_CAMPAIGN 1u
 #define MTW_TOP_LEVEL_MODE_QUICK_BATTLE 12u
 
-#define DGVOODOO_FAST_SURFACE_CONSTRUCTOR_RVA 0x0002CC1Cu
-#define DGVOODOO_REVERSE_DISPATCHER_RVA 0x0002D99Fu
-#define DGVOODOO_UPLOAD_FALLBACK_RVA 0x00079CD4u
-#define DGVOODOO_UPLOAD_FALLBACK_CALL_RVA 0x0007C330u
-#define DGVOODOO_CONSTRUCTOR_GLOBAL_RVA 0x000DFA74u
-#define DGVOODOO_OUTER_ACQUIRE_CALL_RVA 0x000948E2u
-#define DGVOODOO_OUTER_RELEASE_CALL_RVA 0x00094C0Bu
-#define DGVOODOO_INNER_ACQUIRE_CALL_RVA 0x0002AA07u
-#define DGVOODOO_INNER_RELEASE_OK_CALL_RVA 0x0002AA39u
-#define DGVOODOO_INNER_RELEASE_FAIL_CALL_RVA 0x0002AA49u
-#define DGVOODOO_VEH_HANDLED_RVA 0x0002AA4Eu
-#define DGVOODOO_CUSTOM_ACQUIRE_RVA 0x00003C76u
-#define DGVOODOO_CUSTOM_RELEASE_RVA 0x00003CBFu
-#define DGVOODOO_NESTED_ACQUIRE_RVA 0x000297EBu
-#define DGVOODOO_NESTED_RELEASE_RVA 0x0002984Bu
-#define DGVOODOO_GLOBAL_SLOT_RVA 0x000DFAA4u
-#define DGVOODOO_MAPPER_DRAW_CALLSITE_RVA 0x000B47DAu
-#define DGVOODOO_D3D11_CREATE_DEVICE_CALLSITE_RVA 0x000B666Bu
-#define DGVOODOO_SET_WINDOW_POS_SLOT_RVA 0x000D21FCu
-#define DGVOODOO_EXPECTED_TIMESTAMP 0x6A088020u
-#define DGVOODOO_EXPECTED_IMAGE_SIZE 0x001A3000u
+/* These sites belong to the pinned Medieval_TW.exe SHA-256 in the accepted
+ * proxy. They are kept separate from the frontend/presentation hook group. */
+#define MTW_BLITTER_ENTRY_RVA 0x0033D47Eu
+#define MTW_BLITTER_BODY_RVA 0x00B43389u
+#define MTW_BLITTER_CLIP_WIDTH_VA 0x00F44100u
+#define MTW_BLITTER_CLIP_HEIGHT_VA 0x00F44104u
+#define MTW_CAMPAIGN_PAN_TARGET_RVA 0x00227DD0u
+
+/* Official dgVoodoo2 v2.87.5 x86 D3D9.dll, SHA-256
+ * 6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2.
+ * The executable section is unpacked at runtime. These RVAs and instruction
+ * boundaries were checked against loaded images of v2.87.2 and v2.87.5. */
+#define DGVOODOO_FAST_SURFACE_CONSTRUCTOR_RVA 0x0002CDA3u
+#define DGVOODOO_REVERSE_DISPATCHER_RVA 0x0002DB28u
+#define DGVOODOO_UPLOAD_FALLBACK_RVA 0x00079015u
+#define DGVOODOO_UPLOAD_FALLBACK_CALL_RVA 0x0007B652u
+#define DGVOODOO_CONSTRUCTOR_GLOBAL_RVA 0x000DEA74u
+#define DGVOODOO_OUTER_ACQUIRE_CALL_RVA 0x00094193u
+#define DGVOODOO_OUTER_RELEASE_CALL_RVA 0x0009461Bu
+#define DGVOODOO_INNER_ACQUIRE_CALL_RVA 0x0002ABFCu
+#define DGVOODOO_INNER_RELEASE_OK_CALL_RVA 0x0002AC2Eu
+#define DGVOODOO_INNER_RELEASE_FAIL_CALL_RVA 0x0002AC3Eu
+#define DGVOODOO_VEH_HANDLED_RVA 0x0002AC43u
+#define DGVOODOO_CUSTOM_ACQUIRE_RVA 0x00003E40u
+#define DGVOODOO_CUSTOM_RELEASE_RVA 0x00003E89u
+#define DGVOODOO_NESTED_ACQUIRE_RVA 0x00029908u
+#define DGVOODOO_NESTED_RELEASE_RVA 0x00029968u
+#define DGVOODOO_GLOBAL_SLOT_RVA 0x000DEAA4u
+#define DGVOODOO_MAPPER_DRAW_CALLSITE_RVA 0x000B3B1Fu
+#define DGVOODOO_D3D11_CREATE_DEVICE_CALLSITE_RVA 0x000B5990u
+#define DGVOODOO_SET_WINDOW_POS_SLOT_RVA 0x000D1200u
+#define DGVOODOO_EXPECTED_TIMESTAMP 0x6AA8559Bu
+#define DGVOODOO_EXPECTED_IMAGE_SIZE 0x001A2000u
 #define MTW_DEVICE_CREATE_PIXEL_SHADER_INDEX 15u
 
 #define MTW_LOADING_BYTES_PER_PIXEL 2u
@@ -122,10 +142,10 @@ static const unsigned char commit_expected[] = {
     0xE8, 0xC0, 0x54, 0xCF, 0xFF
 };
 static const unsigned char fallback_expected[] = {
-    0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x34
+    0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x30
 };
 static const unsigned char fallback_call_expected[] = {
-    0xE8, 0x9F, 0xD9, 0xFF, 0xFF
+    0xE8, 0xBE, 0xD9, 0xFF, 0xFF
 };
 static const unsigned char reverse_dispatcher_expected[] = {
     0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x20
@@ -143,23 +163,52 @@ static const unsigned char prebattle_resolution_return_expected[
         0x24, 0x84, 0x00, 0x00, 0x00
 };
 static const unsigned char outer_acquire_expected[] = {
-    0xE8, 0x8F, 0xF3, 0xF6, 0xFF
+    0xE8, 0xA8, 0xFC, 0xF6, 0xFF
 };
 static const unsigned char outer_release_expected[] = {
-    0xE8, 0xAF, 0xF0, 0xF6, 0xFF
+    0xE8, 0x69, 0xF8, 0xF6, 0xFF
 };
 static const unsigned char inner_acquire_expected[] = {
-    0xE8, 0xDF, 0xED, 0xFF, 0xFF
+    0xE8, 0x07, 0xED, 0xFF, 0xFF
 };
 static const unsigned char mapper_draw_expected[MTW_MAPPER_CALLSITE_SIZE] = {
-    0x8B, 0x08, 0x50, 0xFF, 0x51, 0x34
+    0x50, 0x8B, 0x00, 0xFF, 0x50, 0x34
 };
 static const unsigned char d3d11_create_device_call_expected[6] = {
-    0xFF, 0xD2, 0x85, 0xC0, 0x78, 0x48
+    0xFF, 0xD2, 0x85, 0xC0, 0x78, 0x58
 };
 static const unsigned char resolution_initialize_call_expected[5] = {
     0xE8, 0x1C, 0xF1, 0xFF, 0xFF
 };
+static const unsigned char blitter_entry_expected[5] = {
+    0xE9, 0x06, 0x5F, 0x80, 0x00
+};
+static const unsigned char blitter_body_expected[7] = {
+    0x55, 0x8B, 0xEC, 0x83, 0x7D, 0x18, 0x00
+};
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+static const unsigned char campaign_pan_target_expected[6] = {
+    0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08
+};
+typedef struct mtw_campaign_pan_callsite {
+    uintptr_t rva;
+    unsigned char expected[5];
+} mtw_campaign_pan_callsite;
+static const mtw_campaign_pan_callsite campaign_pan_callsites[] = {
+    {0x002269F2u, {0xE8, 0xD9, 0x13, 0x00, 0x00}},
+    {0x00226A15u, {0xE8, 0xB6, 0x13, 0x00, 0x00}},
+    {0x00226A31u, {0xE8, 0x9A, 0x13, 0x00, 0x00}},
+    {0x00226A54u, {0xE8, 0x77, 0x13, 0x00, 0x00}},
+    {0x00226BC1u, {0xE8, 0x0A, 0x12, 0x00, 0x00}},
+    {0x00226BD8u, {0xE8, 0xF3, 0x11, 0x00, 0x00}},
+    {0x00226BEFu, {0xE8, 0xDC, 0x11, 0x00, 0x00}},
+    {0x00226C06u, {0xE8, 0xC5, 0x11, 0x00, 0x00}},
+    {0x0022E9F0u, {0xE8, 0xDB, 0x93, 0xFF, 0xFF}},
+    {0x0022E9FFu, {0xE8, 0xCC, 0x93, 0xFF, 0xFF}},
+    {0x0022EA1Cu, {0xE8, 0xAF, 0x93, 0xFF, 0xFF}},
+    {0x0022EA2Fu, {0xE8, 0x9C, 0x93, 0xFF, 0xFF}}
+};
+#endif
 static INIT_ONCE frontend_once = INIT_ONCE_STATIC_INIT;
 static INIT_ONCE backend_tracking_once = INIT_ONCE_STATIC_INIT;
 static uintptr_t game_base;
@@ -208,6 +257,17 @@ static void *veh_handled_continue;
 static void *mapper_draw_continue;
 static void *d3d11_create_success_continue;
 static void *d3d11_create_failure_continue;
+static void *blitter_original_target;
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+typedef int (__cdecl *mtw_campaign_pan_fn)(int direction, double distance);
+static mtw_campaign_pan_fn original_campaign_pan;
+/* The campaign updates keyboard/action and edge-pan inputs independently.
+ * Each path contributes a displacement on the same frame; sharing one clock
+ * between them halves the normal 60 Hz travel. */
+static mtw_campaign_pan_state campaign_pan_states[2];
+static LARGE_INTEGER campaign_pan_frequency;
+static SRWLOCK campaign_pan_lock = SRWLOCK_INIT;
+#endif
 static SRWLOCK mapper_shader_lock = SRWLOCK_INIT;
 static SRWLOCK mapper_activation_lock = SRWLOCK_INIT;
 static ID3D11Device *mapper_shader_device;
@@ -335,6 +395,7 @@ __declspec(naked) static void constructor_return_hook_stub(void);
 __declspec(naked) static void d3d11_create_device_hook_stub(void);
 __declspec(naked) static void prebattle_entry_hook_stub(void);
 __declspec(naked) static void prebattle_resolution_return_hook_stub(void);
+__declspec(naked) static void blitter_entry_hook_stub(void);
 static int install_d3d11_create_device_hook(void);
 static int install_transition_resolution_hooks(void);
 static int diagnostic_trace_armed(void);
@@ -3507,6 +3568,69 @@ __declspec(naked) static void prebattle_resolution_return_hook_stub(void) {
     }
 }
 
+/* The original RLE routine computes a signed visible row count and enters
+ * its row decoder even when the sprite starts below the clip bottom. Avoid
+ * that invalid draw before the destination pointer is formed. The original
+ * path still handles every wholly or partly visible sprite. */
+__declspec(naked) static void blitter_entry_hook_stub(void) {
+    __asm {
+        push eax
+        mov eax, dword ptr [esp + 0x10]
+        cmp eax, dword ptr [0x00F44104]
+        jge sprite_outside_clip
+        mov eax, dword ptr [esp + 0x0c]
+        cmp eax, dword ptr [0x00F44100]
+        jge sprite_outside_clip
+        pop eax
+        jmp dword ptr [blitter_original_target]
+    sprite_outside_clip:
+        pop eax
+        ret
+    }
+}
+
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+/* Only the verified campaign direction call sites are redirected. The game
+ * already accepts an explicit double distance; zero selects a fixed 100
+ * units per call. Supply elapsed-time distance instead of changing FPS. */
+static int __cdecl campaign_pan_hook(int direction, double requested_distance) {
+    LARGE_INTEGER now;
+    double distance;
+    int should_move;
+    uintptr_t return_address = (uintptr_t)_ReturnAddress();
+    size_t callsite_index;
+    size_t input_path;
+
+    if (original_campaign_pan == NULL) return 0;
+    for (callsite_index = 0u;
+         callsite_index < sizeof(campaign_pan_callsites) /
+                              sizeof(campaign_pan_callsites[0]);
+         ++callsite_index) {
+        if (return_address == game_base +
+                              campaign_pan_callsites[callsite_index].rva + 5u) {
+            break;
+        }
+    }
+    if (callsite_index == sizeof(campaign_pan_callsites) /
+                          sizeof(campaign_pan_callsites[0])) {
+        return original_campaign_pan(direction, requested_distance);
+    }
+    if (requested_distance != 0.0 ||
+        !QueryPerformanceCounter(&now)) {
+        return original_campaign_pan(direction, requested_distance);
+    }
+    input_path = callsite_index < 8u ? 0u : 1u;
+    AcquireSRWLockExclusive(&campaign_pan_lock);
+    should_move = mtw_campaign_pan_step(
+        &campaign_pan_states[input_path], (unsigned)direction,
+        (uint64_t)now.QuadPart,
+        (uint64_t)campaign_pan_frequency.QuadPart, &distance);
+    ReleaseSRWLockExclusive(&campaign_pan_lock);
+    if (!should_move) return 1;
+    return original_campaign_pan(direction, distance);
+}
+#endif
+
 /*
  * dgVoodoo rearms PAGE_GUARD on the CPU staging allocation returned by the
  * game's full-primary LockRect path. At the first origin access during some
@@ -3588,6 +3712,7 @@ __declspec(naked) static void constructor_hook_stub(void) {
         popfd
         push ebp
         mov ebp, esp
+        push ecx
         push ecx
         mov eax, dword ptr [constructor_global_target]
         mov eax, dword ptr [eax]
@@ -3801,18 +3926,19 @@ static int bytes_match(uintptr_t address,
            memcmp((const void *)address, expected, size) == 0;
 }
 
-static void build_constructor_expected(unsigned char expected[9]) {
+static void build_constructor_expected(unsigned char expected[10]) {
     expected[0] = 0x55;
     expected[1] = 0x8B;
     expected[2] = 0xEC;
     expected[3] = 0x51;
-    expected[4] = 0xA1;
-    *(uint32_t *)&expected[5] =
+    expected[4] = 0x51;
+    expected[5] = 0xA1;
+    *(uint32_t *)&expected[6] =
         (uint32_t)(backend_base + DGVOODOO_CONSTRUCTOR_GLOBAL_RVA);
 }
 
 static int verify_all_hook_signatures(void) {
-    unsigned char constructor_expected[9];
+    unsigned char constructor_expected[10];
     mtw_reentrant_callsite_bundle reentrant_calls;
     if (game_base != 0x00400000u) return 0;
     if (backend_base == 0u) return 0;
@@ -3907,7 +4033,7 @@ static int install_d3d11_create_device_hook(void) {
     if (backend_base == 0u) return 0;
     target = backend_base + DGVOODOO_D3D11_CREATE_DEVICE_CALLSITE_RVA;
     d3d11_create_success_continue = (void *)(target + 6u);
-    d3d11_create_failure_continue = (void *)(target + 6u + 0x48u);
+    d3d11_create_failure_continue = (void *)(target + 6u + 0x58u);
     return write_rel_jump(target, d3d11_create_device_hook_stub,
                           d3d11_create_device_call_expected,
                           sizeof(d3d11_create_device_call_expected));
@@ -3962,6 +4088,72 @@ static void restore_original(uintptr_t target,
     FlushInstructionCache(GetCurrentProcess(), (void *)target, size);
     VirtualProtect((void *)target, size, old_protect, &ignored);
 }
+
+static int install_blitter_guard_hook(void) {
+    uintptr_t entry = game_base + MTW_BLITTER_ENTRY_RVA;
+    uintptr_t body = game_base + MTW_BLITTER_BODY_RVA;
+
+    if (game_base != 0x00400000u ||
+        !bytes_match(body, blitter_body_expected,
+                     sizeof(blitter_body_expected))) {
+        return 0;
+    }
+    blitter_original_target = (void *)body;
+    if (!write_rel_jump(entry, blitter_entry_hook_stub,
+                        blitter_entry_expected,
+                        sizeof(blitter_entry_expected))) {
+        blitter_original_target = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+static int install_campaign_pan_hooks(void) {
+    size_t index;
+    LARGE_INTEGER frequency;
+
+    if (game_base != 0x00400000u ||
+        !bytes_match(game_base + MTW_CAMPAIGN_PAN_TARGET_RVA,
+                     campaign_pan_target_expected,
+                     sizeof(campaign_pan_target_expected)) ||
+        !QueryPerformanceFrequency(&frequency) ||
+        frequency.QuadPart <= 0) {
+        return 0;
+    }
+    for (index = 0u;
+         index < sizeof(campaign_pan_callsites) /
+                     sizeof(campaign_pan_callsites[0]); ++index) {
+        if (!bytes_match(game_base + campaign_pan_callsites[index].rva,
+                         campaign_pan_callsites[index].expected,
+                         sizeof(campaign_pan_callsites[index].expected))) {
+            return 0;
+        }
+    }
+    campaign_pan_frequency = frequency;
+    memset(campaign_pan_states, 0, sizeof(campaign_pan_states));
+    original_campaign_pan = (mtw_campaign_pan_fn)(
+        game_base + MTW_CAMPAIGN_PAN_TARGET_RVA);
+    for (index = 0u;
+         index < sizeof(campaign_pan_callsites) /
+                     sizeof(campaign_pan_callsites[0]); ++index) {
+        if (!write_rel_call(game_base + campaign_pan_callsites[index].rva,
+                            campaign_pan_hook,
+                            campaign_pan_callsites[index].expected)) {
+            while (index > 0u) {
+                --index;
+                restore_original(
+                    game_base + campaign_pan_callsites[index].rva,
+                    campaign_pan_callsites[index].expected,
+                    sizeof(campaign_pan_callsites[index].expected));
+            }
+            original_campaign_pan = NULL;
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif
 
 static int restore_pointer_hook(void *volatile *slot,
                                 void *expected_hook,
@@ -4122,7 +4314,7 @@ fail:
 }
 
 static int install_all_hooks_transactionally(void) {
-    unsigned char constructor_expected[9];
+    unsigned char constructor_expected[10];
     uintptr_t capture_target = game_base + MTW_INITIAL_COPY_PRE_UNLOCK_RVA;
     uintptr_t restore_target = game_base + MTW_PROGRESS_POST_LOCK_RVA;
     uintptr_t commit_target = game_base + MTW_PROGRESS_PRE_UNLOCK_RVA;
@@ -4437,6 +4629,20 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         return TRUE;
     }
     if (install_all_hooks_transactionally()) {
+        if (install_blitter_guard_hook()) {
+            diagnostic_write("offscreen RLE sprite guard installed mtw001\r\n");
+        } else {
+            diagnostic_write("offscreen RLE sprite guard unavailable mtw001\r\n");
+        }
+#if MTW_ENABLE_CAMPAIGN_SCROLL_FIX
+        if (install_campaign_pan_hooks()) {
+            diagnostic_write("elapsed-time campaign pan installed scroll01\r\n");
+        } else {
+            diagnostic_write("elapsed-time campaign pan unavailable scroll01\r\n");
+        }
+#else
+        diagnostic_write("elapsed-time campaign pan disabled by installer scroll01\r\n");
+#endif
         if (install_transition_resolution_hooks()) {
             diagnostic_write(
                 "transition resize guard and monitor resolution filter installed r278\r\n");

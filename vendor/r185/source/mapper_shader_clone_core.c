@@ -5,7 +5,7 @@
 #include "mapper_single_sample_linear_bytecode.inc"
 
 static const unsigned char mapper_callsite_expected[MTW_MAPPER_CALLSITE_SIZE] = {
-    0x8B, 0x08, 0x50, 0xFF, 0x51, 0x34
+    0x50, 0x8B, 0x00, 0xFF, 0x50, 0x34
 };
 
 /*

@@ -14,11 +14,11 @@ static void expect_true(int condition, const char *message) {
 }
 
 static mtw_reentrant_callsite_bundle exact_bundle(void) {
-    static const uint8_t outer_acquire[] = {0xE8, 0x8F, 0xF3, 0xF6, 0xFF};
-    static const uint8_t outer_release[] = {0xE8, 0xAF, 0xF0, 0xF6, 0xFF};
-    static const uint8_t inner_acquire[] = {0xE8, 0xDF, 0xED, 0xFF, 0xFF};
-    static const uint8_t inner_release_ok[] = {0xE8, 0x0D, 0xEE, 0xFF, 0xFF};
-    static const uint8_t inner_release_fail[] = {0xE8, 0xFD, 0xED, 0xFF, 0xFF};
+    static const uint8_t outer_acquire[] = {0xE8, 0xA8, 0xFC, 0xF6, 0xFF};
+    static const uint8_t outer_release[] = {0xE8, 0x69, 0xF8, 0xF6, 0xFF};
+    static const uint8_t inner_acquire[] = {0xE8, 0x07, 0xED, 0xFF, 0xFF};
+    static const uint8_t inner_release_ok[] = {0xE8, 0x35, 0xED, 0xFF, 0xFF};
+    static const uint8_t inner_release_fail[] = {0xE8, 0x25, 0xED, 0xFF, 0xFF};
     mtw_reentrant_callsite_bundle bundle = {
         outer_acquire, sizeof(outer_acquire),
         outer_release, sizeof(outer_release),

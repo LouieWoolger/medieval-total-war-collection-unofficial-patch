@@ -44,6 +44,14 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
 
 
+def historical_config(name: str, expected_sha256: str) -> bytes:
+    # Exact legacy bytes are fixtures so tests also work from shallow clones
+    # and source bundles without the commits that originally carried them.
+    data = (ROOT / "tests" / "fixtures" / name).read_bytes()
+    assert hashlib.sha256(data).hexdigest().upper() == expected_sha256
+    return data
+
+
 def supported_exe_source() -> Path:
     value = os.environ.get("MTW_TEST_GAME_EXE")
     if not value:
@@ -307,19 +315,16 @@ def test_previous_fullscreen_config_upgrades_to_single_window_presentation(tmp_p
         shutil.copy2(PAYLOAD / name, game / name)
 
     config = game / "dgVoodoo.conf"
-    previous = (
-        config.read_bytes()
-        .replace(
-            b"FullscreenAttributes                 = fake\n",
-            b"FullscreenAttributes                 = \r\n",
-        )
+    previous = historical_config(
+        "dgVoodoo-legacy-fullscreen.conf",
+        "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA",
     )
     config.write_bytes(previous)
     assert sha256(config) == "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA"
 
     inspected, report = invoke("Inspect", game)
     assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
-    assert report["mode"] == "r185"
+    assert report["mode"] == "r186"
 
     upgraded, report = invoke("Install", game)
     assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)
@@ -336,7 +341,10 @@ def test_known_batched_config_upgrades_to_default_presentation(
         shutil.copy2(PAYLOAD / name, game / name)
 
     config = game / "dgVoodoo.conf"
-    previous = config.read_bytes().replace(
+    previous = historical_config(
+        "dgVoodoo-2.87.2.conf",
+        "EF8DF4EBA5AF028891678A641304D297F3D759A7EBF4FBE8FFB735B9808E5A97",
+    ).replace(
         b"PrimarySurfaceBatchedUpdate         = false\r\n",
         b"PrimarySurfaceBatchedUpdate         = true\r\n",
     )
@@ -384,12 +392,9 @@ def test_managed_known_r185_and_previous_fullscreen_config_upgrade_safely(tmp_pa
     receipt_path.write_text(json.dumps(receipt, indent=4) + "\n", encoding="utf-8")
 
     config = game / "dgVoodoo.conf"
-    previous = (
-        config.read_bytes()
-        .replace(
-            b"FullscreenAttributes                 = fake\n",
-            b"FullscreenAttributes                 = \r\n",
-        )
+    previous = historical_config(
+        "dgVoodoo-legacy-fullscreen.conf",
+        "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA",
     )
     config.write_bytes(previous)
     assert sha256(config) == "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA"

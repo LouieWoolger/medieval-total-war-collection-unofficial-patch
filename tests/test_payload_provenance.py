@@ -9,11 +9,11 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (158720, "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A"),
-    "dgVoodoo_D3D9.dll": (485888, "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6"),
-    "ddraw.dll": (258560, "81325E9B5C71F544B9A28AE4C375AF38E12535E8AC57C8F33B5456A342AE1465"),
-    "D3DImm.dll": (210432, "FBE72EF46AE87DC80F5AEB3D8FC12F97F9D9B2274C4887C70BA65651458D5BF2"),
-    "dgVoodoo.conf": (21910, "EF8DF4EBA5AF028891678A641304D297F3D759A7EBF4FBE8FFB735B9808E5A97"),
+    "D3D9.dll": (161792, "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA"),
+    "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
+    "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
+    "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
+    "dgVoodoo.conf": (21971, "8B6068BDF5404BCA6424E42CDC6E8EA91BD084503523170C7198B9F3A9C224D0"),
 }
 
 LOCKED_CONFIG = {
@@ -22,6 +22,12 @@ LOCKED_CONFIG = {
     "FullscreenAttributes": "fake",
     "FastVideoMemoryAccess": "true",
     "FPSLimit": "0",
+}
+
+OFFICIAL_DGVOODOO_2875 = {
+    "dgVoodoo_D3D9.dll": "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2",
+    "ddraw.dll": "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E",
+    "D3DImm.dll": "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E",
 }
 
 
@@ -33,7 +39,10 @@ def test_runtime_payload_is_exact_and_complete() -> None:
     manifest = json.loads((RUNTIME / "payload-manifest.json").read_text(encoding="utf-8"))
     assert manifest["component"] == "Terrain Movement Fix"
     actual_names = {path.name for path in RUNTIME.iterdir() if path.is_file()}
-    assert actual_names == set(EXPECTED_RUNTIME) | {"payload-manifest.json", "VERSION.txt"}
+    assert actual_names == set(EXPECTED_RUNTIME) | {
+        "payload-manifest.json", "payload-manifest-scroll-off.json",
+        "D3D9-scroll-off.dll", "VERSION.txt",
+    }
     assert set(manifest["files"]) == set(EXPECTED_RUNTIME)
     for name, (length, digest) in EXPECTED_RUNTIME.items():
         path = RUNTIME / name
@@ -41,6 +50,40 @@ def test_runtime_payload_is_exact_and_complete() -> None:
         assert sha256(path) == digest
         assert manifest["files"][name]["length"] == length
         assert manifest["files"][name]["sha256"] == digest
+
+
+def test_scroll_off_payload_differs_only_in_the_proxy() -> None:
+    enabled = json.loads((RUNTIME / "payload-manifest.json").read_text(encoding="utf-8"))
+    disabled = json.loads((RUNTIME / "payload-manifest-scroll-off.json").read_text(encoding="utf-8"))
+    assert enabled["scroll_fix_enabled"] is True
+    assert disabled["scroll_fix_enabled"] is False
+    assert disabled["target_executable"] == enabled["target_executable"]
+    assert disabled["locked_settings"] == enabled["locked_settings"]
+    assert disabled["dgvoodoo_version"] == enabled["dgvoodoo_version"]
+    assert set(disabled["files"]) == set(enabled["files"])
+    for name in enabled["files"]:
+        if name == "D3D9.dll":
+            proxy = RUNTIME / "D3D9-scroll-off.dll"
+            assert disabled["files"][name]["sha256"] == sha256(proxy)
+            assert disabled["files"][name]["length"] == proxy.stat().st_size
+            assert disabled["files"][name]["sha256"] != enabled["files"][name]["sha256"]
+        else:
+            assert disabled["files"][name] == enabled["files"][name]
+
+
+def test_official_dgvoodoo_2875_x86_payload_is_pinned() -> None:
+    enabled = json.loads((RUNTIME / "payload-manifest.json").read_text(encoding="utf-8"))
+    assert enabled["dgvoodoo_version"] == "2.87.5"
+    for name, digest in OFFICIAL_DGVOODOO_2875.items():
+        assert sha256(RUNTIME / name) == digest
+        assert enabled["files"][name]["sha256"] == digest
+
+
+def test_historical_dust_control_backend_is_build_only_and_pinned() -> None:
+    control = R185 / "accepted-dust-source" / "dgVoodoo_D3D9-2.87.2-control.dll"
+    assert sha256(control) == "E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6"
+    assert control.stat().st_size == 485888
+    assert control.name not in {path.name for path in RUNTIME.iterdir()}
 
 
 def test_config_has_exact_locked_values_and_is_portable() -> None:
@@ -66,6 +109,8 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "source/combined_proxy.c",
         "source/combined_proxy.def",
         "source/frontend_fix.c",
+        "source/campaign_pan_core.c",
+        "source/campaign_pan_core.h",
         "source/mapper_activation_core.c",
         "source/mapper_activation_core.h",
         "source/primary_origin_guard_core.c",
@@ -81,6 +126,7 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "accepted-dust-source/d3d9_proxy.def",
         "accepted-dust-source/dust_cadence.h",
         "accepted-dust-source/build_release.ps1",
+        "accepted-dust-source/dgVoodoo_D3D9-2.87.2-control.dll",
         "tests/smoke_loader.c",
         "tests/focus_plane_shadow_tests.c",
         "tests/primary_origin_guard_tests.c",
@@ -89,6 +135,7 @@ def test_r185_source_bundle_is_complete_and_relative() -> None:
         "tests/window_transition_guard_tests.c",
         "tests/mapper_activation_tests.c",
         "tests/mapper_shader_clone_tests.c",
+        "tests/campaign_pan_core_tests.c",
         "tests/assets/mapper-lanczos3-ps-36116AC1.bin",
     }
     actual = {

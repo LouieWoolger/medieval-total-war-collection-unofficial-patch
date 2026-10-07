@@ -28,6 +28,7 @@ $defines = [ordered]@{
     PRODUCT_COMPANY = [string]$product.company_name
     PRODUCT_COPYRIGHT = [string]$product.copyright
     PRODUCT_COMPONENT_NAME = [string]$product.component_name
+    PRODUCT_SCROLL_COMPONENT_NAME = [string]$product.scroll_component_name
     PRODUCT_DISCORD_URL = [string]$product.discord_url
     PRODUCT_KOFI_URL = [string]$product.kofi_url
 }

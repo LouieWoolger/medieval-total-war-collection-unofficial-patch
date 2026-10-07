@@ -15,10 +15,10 @@ static uint32_t fnv1a32(const unsigned char *bytes, size_t length) {
 
 int main(int argc, char **argv) {
     static const unsigned char supported_callsite[MTW_MAPPER_CALLSITE_SIZE] = {
-        0x8B, 0x08, 0x50, 0xFF, 0x51, 0x34
+        0x50, 0x8B, 0x00, 0xFF, 0x50, 0x34
     };
     unsigned char corrupt_callsite[MTW_MAPPER_CALLSITE_SIZE] = {
-        0x8B, 0x08, 0x50, 0xFF, 0x51, 0x35
+        0x50, 0x8B, 0x00, 0xFF, 0x50, 0x35
     };
     const unsigned char *bytecode;
     size_t bytecode_size = 0u;

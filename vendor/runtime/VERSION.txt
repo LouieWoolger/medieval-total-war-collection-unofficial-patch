@@ -1,7 +1,10 @@
-Unofficial Medieval: Total War Collection Patch runtime R185
+Unofficial Medieval: Total War Collection Patch runtime R186
 
-R185 D3D9 proxy SHA-256:
-CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A
+R186 D3D9 proxy SHA-256:
+AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA
+
+R186 scroll-disabled D3D9 proxy SHA-256:
+24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E
 
 Frontend mapper activation is gated by registered immutable page metadata or semantic main-menu, campaign-setup, prebattle, or Battle Results ownership.
 All 50 known frontend page families are classified from their exact metadata-row spans, so shared mode values such as LAN mode 6 cannot disarm a live frontend.
@@ -23,11 +26,13 @@ Decorated-window cursor reads, warps, and mouse messages use the same checked as
 Immediately before a decorated-window Alt+Enter transition, an out-of-client OS cursor is restored to its last valid logical game position (or the live content center when no history exists), preventing origin-driven camera corruption without changing ordinary mouse or keyboard input.
 Frontend-to-loading shrink suppression is restricted to a verified borderless popup, while exact monitor-sized decorated expansion remains rejected.
 For an explicit non-fullscreen dgVoodoo presentation, successful wrapper sizing establishes live window ownership; subsequent game logical-mode moves and smaller backend frame adjustments cannot expose transient internal dimensions while fullscreen, user-resized, stale, or unknown geometry remains fail-open.
+Fully off-clip prebattle unit icons are rejected before the game's RLE sprite row decoder; ordinary and partly visible icons continue through the original decoder.
+Campaign keyboard/action and edge camera inputs receive independent elapsed-time displacement at the verified game call sites, preserving their combined 60 Hz travel without limiting frame rate.
 
-dgVoodoo2 backend version: 2.87.2
-Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2
+dgVoodoo2 backend version: 2.87.5
+Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
-4FA57FD44C5436F68EC152BEE95CC36CB3539450916F163D0E5B7E6607E47BEC
+5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
 The runtime is gated to Medieval_TW.exe SHA-256:
 23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5

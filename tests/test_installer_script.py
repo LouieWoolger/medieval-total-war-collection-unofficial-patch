@@ -113,6 +113,20 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
     )
 
 
+def test_campaign_scroll_is_a_separate_selectable_payload() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["scroll_component_name"] == "Campaign Scrolling Fix"
+    assert 'Var ScrollCheck' in text
+    assert '${NSD_CreateCheckbox} 12 124 295 24 "${PRODUCT_SCROLL_COMPONENT_NAME}"' in text
+    assert '${NSD_GetState} $ScrollCheck' in text
+    assert '"/SCROLLFIX="' in text
+    assert 'payload-scroll-off' in text
+    assert 'payload=$EnginePayloadDirectory' in text
+    assert (ROOT / "vendor/runtime/payload-manifest-scroll-off.json").is_file()
+    assert (ROOT / "vendor/runtime/D3D9-scroll-off.dll").is_file()
+
+
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:
     text = script_text()
     assert '--request "$NativeDirectory\\request.ini"' in text

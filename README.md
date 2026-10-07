@@ -12,7 +12,8 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 
 **Recommended**:
 
-- Terrain Movement Fix - installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems.
+- Terrain Movement Fix - installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems. Its runtime also prevents the 800x600 prebattle unit-card crash.
+- Campaign Scrolling Fix - separately selectable and enabled by default. Corrects campaign map scrolling speed at high frame rates without an FPS limit. It uses the required Terrain Movement Fix runtime.
 
 ## Requirements
 

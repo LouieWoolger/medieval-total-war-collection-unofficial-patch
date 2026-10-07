@@ -93,6 +93,8 @@ Var Dialog
 Var TargetText
 Var BrowseButton
 Var CompatibilityCheck
+Var ScrollCheck
+Var ScrollSelected
 Var PreviewBitmap
 Var PreviewImage
 Var PreviewTitle
@@ -143,6 +145,19 @@ Function .onInit
         Call FailInstallation
     ${EndIf}
 
+    StrCpy $ScrollSelected "1"
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/SCROLLFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $ScrollSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $ScrollSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_scrollfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    Call SelectEnginePayload
+
     StrCpy $PageVisited "0"
     StrCpy $SavedTargetDir ""
     StrCpy $SelectedComponent "1"
@@ -179,6 +194,13 @@ Function RequireComponentPlatform
         MessageBox MB_ICONSTOP|MB_OK "Terrain Movement Fix requires Windows 7 or later. No compatible component is available on this version of Windows.$\r$\n$\r$\nThe game was not changed.$\r$\n$\r$\nDiagnostics:$\r$\n$LogDirectory" /SD IDOK
         SetErrorLevel 2
         Quit
+    ${EndIf}
+FunctionEnd
+
+Function SelectEnginePayload
+    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload"
+    ${If} $ScrollSelected == "0"
+        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-off"
     ${EndIf}
 FunctionEnd
 
@@ -467,6 +489,15 @@ compatibilityInteractive:
     Pop $CompatibilityCheck
     !insertmacro SET_TAHOMA $CompatibilityCheck $PatchPageFont
     ${NSD_Check} $CompatibilityCheck
+    ${NSD_CreateCheckbox} 12 124 295 24 "${PRODUCT_SCROLL_COMPONENT_NAME}"
+    Pop $ScrollCheck
+    !insertmacro SET_TAHOMA $ScrollCheck $PatchPageFont
+    ${If} $ScrollSelected == "1"
+        ${NSD_Check} $ScrollCheck
+    ${EndIf}
+    ${NSD_CreateLabel} 24 153 283 68 "Corrects fast campaign-map scrolling without limiting FPS. Uses the required Terrain Movement Fix runtime."
+    Pop $0
+    !insertmacro SET_TAHOMA $0 $PatchPageFont
     ${NSD_CreateGroupBox} 340 62 506 430 "Preview"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
@@ -499,6 +530,11 @@ FunctionEnd
 
 Function CompatibilityPageBack
     ${NSD_GetText} $TargetText $SavedTargetDir
+    ${NSD_GetState} $ScrollCheck $0
+    StrCpy $ScrollSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ScrollSelected "1"
+    ${EndIf}
     Call RestoreDefaultWizard
 FunctionEnd
 
@@ -510,6 +546,12 @@ Function CompatibilityPageLeave
         MessageBox MB_OK|MB_ICONEXCLAMATION "Select ${PRODUCT_COMPONENT_NAME} to continue."
         Abort
     ${EndIf}
+    ${NSD_GetState} $ScrollCheck $0
+    StrCpy $ScrollSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ScrollSelected "1"
+    ${EndIf}
+    Call SelectEnginePayload
     StrCpy $R0 "Inspect"
     StrCpy $EngineUninstaller ""
     Push $R0
@@ -610,7 +652,9 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
         Call FailInstallation
     ${EndIf}
     StrCpy $EngineUninstaller "$NativeDirectory\${PRODUCT_UNINSTALLER_FILENAME}"
-    DetailPrint "Validating and applying the Terrain Movement Fix..."
+    DetailPrint "Validating and applying the selected fixes..."
+    StrCpy $LogLine "campaign_scroll_fix_selected=$ScrollSelected"
+    Call WriteDiagnostic
     DetailPrint "Diagnostics: $LogDirectory"
     StrCpy $R0 "Install"
     Push $R0

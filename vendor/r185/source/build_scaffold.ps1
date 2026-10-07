@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'build')
+    [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'build'),
+    [switch]$AllowUnpinnedOutput
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,6 +9,7 @@ $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $r185Root = Split-Path -Parent $PSScriptRoot
 $acceptedSource = Join-Path $r185Root 'accepted-dust-source'
 $backend = Join-Path (Split-Path -Parent $r185Root) 'runtime\dgVoodoo_D3D9.dll'
+$controlBackend = Join-Path $acceptedSource 'dgVoodoo_D3D9-2.87.2-control.dll'
 $vsDevShell = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\18\BuildTools\Common7\Tools\Launch-VsDevShell.ps1'
 $clangCommand = Get-Command clang-cl.exe -ErrorAction SilentlyContinue
 $clangCl = if ($clangCommand) {
@@ -32,8 +34,10 @@ $expected = [ordered]@{
     'build_release.ps1' = '3844FAF9D400B8CCE765FCEC618EB7A01EEE7248E6AB197465922A3C79CA8257'
 }
 $expectedAcceptedProxy = '34F855A17C10B6BBCEFD844B99A5B5A7F442DECDDFFDB0D898645FA2FF0B0F0C'
-$expectedBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
-$expectedR185Proxy = 'CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A'
+$expectedBackend = '6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2'
+$expectedControlBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
+$expectedR185Proxy = 'AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA'
+$expectedScrollOffProxy = '24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -47,6 +51,11 @@ foreach ($entry in $expected.GetEnumerator()) {
 }
 if ((Get-FileHash -Algorithm SHA256 -LiteralPath $backend).Hash -ne $expectedBackend) {
     throw 'Pinned backend drift.'
+}
+if (-not (Test-Path -LiteralPath $controlBackend -PathType Leaf) -or
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $controlBackend).Hash -ne
+    $expectedControlBackend) {
+    throw 'Pinned historical accepted-control backend drift.'
 }
 foreach ($tool in @($vsDevShell, $clangCl)) {
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
@@ -84,7 +93,7 @@ $generatedText = "static const unsigned char mapper_single_sample_linear_bytecod
     $generatedShader, $generatedText,
     [System.Text.UTF8Encoding]::new($false))
 
-& (Join-Path $acceptedSource 'build_release.ps1') -OutputDirectory $control -BackendSource $backend
+& (Join-Path $acceptedSource 'build_release.ps1') -OutputDirectory $control -BackendSource $controlBackend
 if ($LASTEXITCODE -ne 0) { throw "Accepted control build failed: $LASTEXITCODE" }
 $controlHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $control 'D3D9.dll')).Hash
 if ($controlHash -ne $expectedAcceptedProxy) {
@@ -95,6 +104,8 @@ if ($controlHash -ne $expectedAcceptedProxy) {
 $acceptedObj = Join-Path $combined 'accepted_dust.obj'
 $publicObj = Join-Path $combined 'combined_proxy.obj'
 $frontendObj = Join-Path $combined 'frontend_fix.obj'
+$frontendScrollOffObj = Join-Path $combined 'frontend_fix_scroll_off.obj'
+$campaignPanObj = Join-Path $combined 'campaign_pan_core.obj'
 $frontendEpochObj = Join-Path $combined 'frontend_epoch_core.obj'
 $presentationInputObj = Join-Path $combined 'presentation_input_core.obj'
 $primaryOriginGuardObj = Join-Path $combined 'primary_origin_guard_core.obj'
@@ -108,6 +119,7 @@ $lockPatchObj = Join-Path $combined 'reentrant_lock_patch_core.obj'
 $mapperCloneObj = Join-Path $combined 'mapper_shader_clone_core.obj'
 $mapperActivationObj = Join-Path $combined 'mapper_activation_core.obj'
 $combinedDll = Join-Path $combined 'D3D9.dll'
+$scrollOffDll = Join-Path $combined 'D3D9-scroll-off.dll'
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -125,9 +137,23 @@ if ($LASTEXITCODE -ne 0) { throw "Public bridge build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=1',
     ('/Fo' + $frontendObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Inert frontend build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=0',
+    ('/Fo' + $frontendScrollOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled frontend build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    ('/Fo' + $campaignPanObj),(Join-Path $PSScriptRoot 'campaign_pan_core.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Campaign pan core build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -204,14 +230,25 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation core build failed: $LASTEXIT
 
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $combinedDll),$acceptedObj,$publicObj,$frontendObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $combinedDll),$acceptedObj,$publicObj,$frontendObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Combined inert proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $scrollOffDll),$acceptedObj,$publicObj,$frontendScrollOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled proxy link failed: $LASTEXITCODE" }
 $combinedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $combinedDll).Hash
-if ($combinedHash -ne $expectedR185Proxy) {
+$scrollOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollOffDll).Hash
+if (-not $AllowUnpinnedOutput -and $combinedHash -ne $expectedR185Proxy) {
     throw "R185 reproducible build drift: $combinedHash"
+}
+if (-not $AllowUnpinnedOutput -and $scrollOffHash -ne $expectedScrollOffProxy) {
+    throw "Scroll-disabled reproducible build drift: $scrollOffHash"
 }
 Copy-Item -LiteralPath $backend -Destination (Join-Path $combined 'dgVoodoo_D3D9.dll') -Force
 
@@ -376,11 +413,24 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation tests build failed: $LASTEXI
 & $mapperActivationTests
 if ($LASTEXITCODE -ne 0) { throw "Mapper activation tests failed: $LASTEXITCODE" }
 
+$campaignPanTests = Join-Path $combined 'campaign_pan_core_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/Fe' + $campaignPanTests),
+    (Join-Path (Split-Path -Parent $PSScriptRoot) 'tests\campaign_pan_core_tests.c'),
+    (Join-Path $PSScriptRoot 'campaign_pan_core.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Campaign pan tests build failed: $LASTEXITCODE" }
+& $campaignPanTests
+if ($LASTEXITCODE -ne 0) { throw "Campaign pan tests failed: $LASTEXITCODE" }
+
 $manifest = [ordered]@{
     schema = 'mtw.combined-proxy-r185.v1'
-    status = 'accepted_release'
+    status = if ($AllowUnpinnedOutput) { 'development_candidate' } else { 'accepted_release' }
     accepted_control_sha256 = $controlHash
     combined_inert_sha256 = $combinedHash
+    scroll_off_sha256 = $scrollOffHash
     backend_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $combined 'dgVoodoo_D3D9.dll')).Hash
     smoke_loader_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $smokeExe).Hash
     smoke_loader_exit = 0
@@ -408,6 +458,9 @@ $manifest = [ordered]@{
     mapper_shader_clone_tests_exit = 0
     mapper_activation_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $mapperActivationTests).Hash
     mapper_activation_tests_exit = 0
+    campaign_pan_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $campaignPanTests).Hash
+    campaign_pan_tests_exit = 0
+    campaign_pan_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'campaign_pan_core.c')).Hash
     frontend_fix_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_fix.c')).Hash
     frontend_epoch_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_epoch_core.c')).Hash
     presentation_input_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'presentation_input_core.c')).Hash
@@ -423,6 +476,7 @@ $manifest = [ordered]@{
     mapper_activation_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'mapper_activation_core.c')).Hash
     accepted_inputs = $expected
     accepted_source_root = 'vendor/r185/accepted-dust-source'
+    accepted_control_backend_sha256 = $expectedControlBackend
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'BUILD_MANIFEST.json') -Encoding utf8
 $manifest | ConvertTo-Json -Depth 5

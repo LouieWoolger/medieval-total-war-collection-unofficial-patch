@@ -39,10 +39,13 @@ New-Item -ItemType Directory -Path $extractRoot -ErrorAction Stop | Out-Null
 
 $engineNames = @('medieval_fix_patcher.exe')
 $runtimeNames = @('payload-manifest.json','D3D9.dll','dgVoodoo_D3D9.dll','ddraw.dll','D3DImm.dll','dgVoodoo.conf')
+$runtimeVariants = @('payload','payload-scroll-off')
 $uiNames = @('compatibility.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
 $common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
-$common += @($runtimeNames | ForEach-Object { 'payload\' + $_ })
+$common += @(foreach ($variant in $runtimeVariants) {
+    foreach ($name in $runtimeNames) { $variant + '\' + $name }
+})
 $requiredEntries = @($common + $uiNames + [string]$product.uninstaller_filename)
 $forbiddenEntries = @('medieval_tw.exe','medieval.cfg','~tmp.vrp','.vrp','.pdb','worklog','capture','.ps1','.cs','powershell','mscoree','libstdc++','libgcc','libwinpthread')
 $privateFragments = @([IO.Path]::GetFullPath($root),[Environment]::GetFolderPath('UserProfile'))
@@ -106,14 +109,21 @@ function Expand-And-Verify {
         }
         Assert-NoPrivatePaths $embedded
     }
-    foreach ($name in $runtimeNames) {
-        $embedded = Join-Path $pluginDirectory ('payload\' + $name)
-        $source = Join-Path $root ('vendor\runtime\' + $name)
-        if ((Get-FileHash -LiteralPath $embedded -Algorithm SHA256).Hash -ne
-            (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) {
-            throw "Embedded $Label runtime differs from pinned payload: $name"
+    foreach ($variant in $runtimeVariants) {
+        foreach ($name in $runtimeNames) {
+            $sourceName = $name
+            if ($variant -eq 'payload-scroll-off') {
+                if ($name -eq 'payload-manifest.json') { $sourceName = 'payload-manifest-scroll-off.json' }
+                if ($name -eq 'D3D9.dll') { $sourceName = 'D3D9-scroll-off.dll' }
+            }
+            $embedded = Join-Path $pluginDirectory ($variant + '\' + $name)
+            $source = Join-Path $root ('vendor\runtime\' + $sourceName)
+            if ((Get-FileHash -LiteralPath $embedded -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) {
+                throw "Embedded $Label runtime differs from pinned payload: $variant/$name"
+            }
+            Assert-NoPrivatePaths $embedded
         }
-        Assert-NoPrivatePaths $embedded
     }
     foreach ($name in $documentation.Keys) {
         $embedded = Join-Path $pluginDirectory $name

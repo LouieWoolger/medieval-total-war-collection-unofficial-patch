@@ -53,6 +53,7 @@ Function un.onInit
         StrCpy $InstallError "error=engine_extraction_failed"
         Call un.Fail
     ${EndIf}
+    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload"
 FunctionEnd
 
 Section "Uninstall"

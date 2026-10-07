@@ -716,7 +716,8 @@ done:
     return ok;
 }
 static inline int medieval_old_patch(const char *mode) {
-    return !strcmp(mode, "r185") || !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
+    return !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
+           !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
 }
 static inline int medieval_old_configuration(const char *hash) {
     return !strcmp(hash, "23A43425ADBA421BAF9531220E75964F59E829F67CE8577BDE1C45EFBCAD61DA") ||
@@ -747,7 +748,10 @@ static inline const char *medieval_known_d3d9_mode(const char *hash) {
                  {"B07D861994FBDEC15956BFF5FB79882A9D2E630CF72ECDA07BC3EBE7E5248875", "r185"},
                  {"516D61823F0629856199C0E6F888F4CF803B711CC569058D0D88D0D72F0C18FA", "r185"},
                  {"48ED6EF8DB1197A0E1240CB73B2217F66CA863F7A4E4568DB00ADD4E4288F6CF", "r185"},
-                 {"CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A", "r185"}};
+                 {"CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A", "r185"},
+                 {"9791F095DB66817A4CB6A6B23DF4983254950F7F1266D1CDC3040E1E9FEFDE4C", "r186"},
+                 {"AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA", "r186"},
+                 {"24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E", "r186"}};
     size_t i;
     for (i = 0; i < sizeof(known) / sizeof(*known); ++i)
         if (!strcmp(hash, known[i].hash))

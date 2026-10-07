@@ -131,20 +131,23 @@ def junit_result(path: Path) -> dict:
     return result
 
 
-def r185_result(path: Path | None, payload_hash: str) -> dict:
+def r185_result(path: Path | None, payload_hash: str, scroll_off_hash: str) -> dict:
     if path is None:
         return {"status": "not-run", "reason": "No R185 rebuild evidence was supplied."}
     evidence = load_json(path)
     tests = {name.removesuffix("_exit"): value for name, value in evidence.items()
              if name.endswith("_tests_exit")}
     reproduced = evidence.get("combined_inert_sha256", "").upper() == payload_hash.upper()
+    reproduced_scroll_off = evidence.get("scroll_off_sha256", "").upper() == scroll_off_hash.upper()
     passed = bool(tests) and all(value == 0 for value in tests.values())
     smoke = evidence.get("smoke_loader_exit") == 0
     return {
-        "status": "pass" if reproduced and passed and smoke else "fail",
+        "status": "pass" if reproduced and reproduced_scroll_off and passed and smoke else "fail",
         "report": path.name, "report_sha256": sha256(path),
         "runtime_sha256": evidence.get("combined_inert_sha256"),
         "matches_packaged_runtime": reproduced, "native_component_tests": tests,
+        "scroll_off_runtime_sha256": evidence.get("scroll_off_sha256"),
+        "scroll_off_matches_packaged_runtime": reproduced_scroll_off,
         "native_component_test_count": len(tests), "smoke_loader_exit": evidence.get("smoke_loader_exit"),
     }
 
@@ -288,6 +291,7 @@ def main() -> int:
         raise ValueError("Installer input is missing.")
     product = load_json(ROOT / "config/product.json")
     payload = load_json(ROOT / "vendor/runtime/payload-manifest.json")
+    scroll_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-off.json")
     validation = {stage: not_run("No JUnit evidence was supplied.") for stage in STAGES}
     supplied = set()
     for argument in args.test_result:
@@ -301,7 +305,11 @@ def main() -> int:
             validation[stage]["installer_sha256"] = sha256(installer)
     validation["lifecycle_fault_tests_enabled"] = args.lifecycle_fault_tests
     validation["game_tests"] = game_test_result(validation)
-    validation["r185_build"] = r185_result(args.r185_build_manifest, payload["files"]["D3D9.dll"]["sha256"])
+    validation["r185_build"] = r185_result(
+        args.r185_build_manifest,
+        payload["files"]["D3D9.dll"]["sha256"],
+        scroll_off_payload["files"]["D3D9.dll"]["sha256"],
+    )
     audit = load_json(args.audit) if args.audit else None
     if audit and (audit.get("result") != "pass" or audit.get("sha256") != sha256(installer)):
         raise ValueError("Installer audit is not a passing result for this candidate.")
@@ -334,7 +342,8 @@ def main() -> int:
         "schema": "unofficial-medieval-total-war-patch-release-v2",
         "generated_utc": datetime.now(timezone.utc).isoformat(),
         "product": {"name": product["product_name"], "version": product["version"],
-                    "company": product["company_name"], "component": product["component_name"]},
+                    "company": product["company_name"], "component": product["component_name"],
+                    "scroll_component": product["scroll_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
                       "signature": audit["authenticode"] if audit else "not-verified"},
         "uninstaller": {"filename": product["uninstaller_filename"], "location": "game-root",
@@ -345,6 +354,9 @@ def main() -> int:
         "supported_executable_sha256": payload["target_executable"]["sha256"],
         "runtime": {"identity": payload["runtime_identity"], "dgvoodoo_version": payload["dgvoodoo_version"],
                     "files": payload["files"], "locked_settings": payload["locked_settings"]},
+        "scroll_off_runtime": {"identity": scroll_off_payload["runtime_identity"],
+                               "files": scroll_off_payload["files"],
+                               "locked_settings": scroll_off_payload["locked_settings"]},
         "assets": {name: file_record(ROOT / "assets" / name) for name in ASSET_NAMES},
         "documentation": {name: file_record(args.output.parent / name) for name in documentation},
         "validation": validation,

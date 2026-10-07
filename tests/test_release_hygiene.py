@@ -74,7 +74,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R185"
+    assert manifest["runtime"]["identity"] == "R186"
     helper = manifest["native_helper_build"]
     assert helper["language"] == "C99"
     assert helper["compiler"]["role"] == "native-gcc"
@@ -128,7 +128,8 @@ def test_release_manifest_and_checksums_match_dist() -> None:
         assert sha256(ROOT / relative) == record["sha256"]
         assert (ROOT / relative).stat().st_size == record["length"]
     assert re.fullmatch(r"[0-9A-F]{64}", manifest["source"]["aggregate_sha256"])
-    assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "CBB6A16CE535640B4FDB6526F42E575EF882E4CFE232BA8CF8BAAF8735E8596A"
+    assert manifest["runtime"]["files"]["D3D9.dll"]["sha256"] == "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA"
+    assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
     parsed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums if "  " in line}
@@ -173,6 +174,12 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "payload\\ddraw.dll",
         "payload\\d3dimm.dll",
         "payload\\dgvoodoo.conf",
+        "payload-scroll-off\\payload-manifest.json",
+        "payload-scroll-off\\d3d9.dll",
+        "payload-scroll-off\\dgvoodoo_d3d9.dll",
+        "payload-scroll-off\\ddraw.dll",
+        "payload-scroll-off\\d3dimm.dll",
+        "payload-scroll-off\\dgvoodoo.conf",
         "compatibility.bmp",
     ):
         assert required in lowered

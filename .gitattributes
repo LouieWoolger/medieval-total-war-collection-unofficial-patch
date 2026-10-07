@@ -23,4 +23,6 @@
 
 # These files are packaged or rebuilt byte-for-byte.
 vendor/runtime/dgVoodoo.conf binary
+tests/fixtures/dgVoodoo-2.87.2.conf binary
+tests/fixtures/dgVoodoo-legacy-fullscreen.conf binary
 vendor/r185/accepted-dust-source/build_release.ps1 whitespace=-blank-at-eof

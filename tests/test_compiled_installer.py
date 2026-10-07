@@ -96,11 +96,14 @@ def assert_registration(game: Path) -> None:
     assert values["UninstallString"][0] == f'"{game / "Uninstall Unofficial Medieval Patch.exe"}"'
 
 
-def run_installer(game: Path) -> subprocess.CompletedProcess[str]:
+def run_installer(game: Path, *, scroll_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
     logs.mkdir(parents=True)
+    command = [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
+    if scroll_fix is not None:
+        command.append(f"/SCROLLFIX={int(scroll_fix)}")
     result = subprocess.run(
-        [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"],
+        command,
         cwd=game,
         text=True,
         capture_output=True,
@@ -110,6 +113,35 @@ def run_installer(game: Path) -> subprocess.CompletedProcess[str]:
         encoding = "utf-16" if log.name == "installer.log" else "utf-8-sig"
         result.stdout += f"\n{log}\n" + log.read_text(encoding=encoding, errors="replace")
     return result
+
+
+def test_compiled_scroll_choice_changes_only_managed_proxy_and_can_toggle(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Scroll choice")
+    before = snapshot(game)
+    enabled_proxy = expected_runtime()["D3D9.dll"]
+
+    disabled = run_installer(game, scroll_fix=False)
+    assert disabled.returncode == 0, (disabled.stdout, disabled.stderr)
+    disabled_proxy = sha256(game / "D3D9.dll")
+    assert disabled_proxy != enabled_proxy
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    disabled_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert disabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == disabled_proxy
+    for name in RUNTIME_NAMES[1:]:
+        assert sha256(game / name) == expected_runtime()[name]
+
+    enabled = run_installer(game, scroll_fix=True)
+    assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
+    assert sha256(game / "D3D9.dll") == enabled_proxy
+    enabled_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert enabled_receipt["installation_id"] == disabled_receipt["installation_id"]
+    assert enabled_receipt["files"]["D3D9.dll"]["installed_sha256"] == enabled_proxy
+
+    disabled_again = run_installer(game, scroll_fix=False)
+    assert disabled_again.returncode == 0, (disabled_again.stdout, disabled_again.stderr)
+    assert sha256(game / "D3D9.dll") == disabled_proxy
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
 
 
 def process_has_exited(pid: int) -> bool:
@@ -271,8 +303,8 @@ def test_compiled_managed_repair_replaces_modified_config(tmp_path: Path) -> Non
     assert snapshot(game) == before_install
 
 
-def test_compiled_unmanaged_r185_adoption_and_managed_repair(tmp_path: Path) -> None:
-    game = new_game(tmp_path, "Existing R185")
+def test_compiled_unmanaged_r186_adoption_and_managed_repair(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Existing R186")
     clean = snapshot(game)
     for name in RUNTIME_NAMES:
         shutil.copy2(PAYLOAD / name, game / name)

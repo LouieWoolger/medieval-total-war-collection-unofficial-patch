@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R186",
+  "runtime_identity": "R186-scroll-off",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 161792,
-      "sha256": "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA",
-      "provenance": "reproducible R186 PE32 proxy derived from accepted R185: preserves exact registered metadata identity for all 50 known frontend page families and existing presentation, input, and guarded-surface corrections; adds a signature-gated 800x600 prebattle RLE blitter guard for fully off-clip unit icons (MTW-001) and elapsed-time campaign pan distance at the verified keyboard/action and edge-input call sites (SCROLL-01), retaining both 60 Hz input contributions without an FPS cap; ported and signature-gated for dgVoodoo2 v2.87.5"
+      "length": 159232,
+      "sha256": "24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E",
+      "provenance": "Reproducible R186 PE32 proxy with MTW-001 and all shared compatibility hooks, compiled with Campaign Scrolling Fix disabled; contains no campaign-pan detours and does not limit FPS; ported and signature-gated for dgVoodoo2 v2.87.5"
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,
@@ -47,5 +47,5 @@
     "Medieval_TW.exe",
     "~tmp.vrp"
   ],
-  "scroll_fix_enabled": true
+  "scroll_fix_enabled": false
 }

@@ -30,6 +30,7 @@ Var Utf8Overflow
 Var PatcherOutput
 Var DisplayLog
 Var NativeDirectory
+Var EnginePayloadDirectory
 Var EngineOperation
 Var EngineInstaller
 Var EngineUninstaller
@@ -58,6 +59,13 @@ Var ElevatedExit
     SetOutPath "$PLUGINSDIR\payload"
     File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest.json"
     File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9.dll"
+    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
+    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
+    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
+    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
+    SetOutPath "$PLUGINSDIR\payload-scroll-off"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-off.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-off.dll"
     File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
     File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
     File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
@@ -347,7 +355,7 @@ Function ${PREFIX}WriteEngineRequest
     ; values never enter a shell or the command-line argument parser.
     FileWriteUTF16LE /BOM $RequestHandle "operation=$EngineOperation$\r$\n"
     FileWriteUTF16LE $RequestHandle "target=$INSTDIR$\r$\n"
-    FileWriteUTF16LE $RequestHandle "payload=$NativeDirectory\payload$\r$\n"
+    FileWriteUTF16LE $RequestHandle "payload=$EnginePayloadDirectory$\r$\n"
     FileWriteUTF16LE $RequestHandle "version=${PRODUCT_VERSION}$\r$\n"
     FileWriteUTF16LE $RequestHandle "installer=$EngineInstaller$\r$\n"
     FileWriteUTF16LE $RequestHandle "uninstaller=$EngineUninstaller$\r$\n"
@@ -367,7 +375,7 @@ Function ${PREFIX}WriteEngineRequest
 FunctionEnd
 
 Function ${PREFIX}InvokeEngine
-    SetOutPath "$PLUGINSDIR\payload"
+    SetOutPath "$EnginePayloadDirectory"
     StrCpy $EngineExitCode "2"
     StrCpy $ChildStatus "not-started"
     StrCpy $InstallError ""

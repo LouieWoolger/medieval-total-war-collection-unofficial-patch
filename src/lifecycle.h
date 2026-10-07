@@ -64,7 +64,7 @@ static inline int mtw_preinstall_mode(MedievalEngine *m, const char **mode, Patc
     MTW_TRY(mtw_relative_record(m, "D3D9.dll", &record, e));
     if (record.exists) {
         *mode = medieval_known_d3d9_mode(record.sha256);
-        if (!**mode) return mtw_fail(m, e, "wrapper_conflict", "D3D9.dll is not a supported stock, dust-only, R6F160, or R185 build (SHA-256 %s). No files were changed.", record.sha256);
+        if (!**mode) return mtw_fail(m, e, "wrapper_conflict", "D3D9.dll is not a supported stock, dust-only, R6F160, R185, or R186 build (SHA-256 %s). No files were changed.", record.sha256);
     }
     for (i = 0; i < 3; ++i) {
         MTW_TRY(mtw_relative_record(m, medieval_payload_names[i], &record, e));
@@ -880,7 +880,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
         if (!mtw_verify_runtime(&m, e) || (present && !receipt.legacy && !mtw_verify_installed(&m, &receipt, e))) goto done;
         result = json_new(&m.document, JSON_OBJECT, e);
         if (!result || !mtw_text(&m.document, result, "status", "ok", e) || !mtw_text(&m.document, result, "action", "verify", e) ||
-            !mtw_text(&m.document, result, "mode", "r185", e) || !mtw_text(&m.document, result, "target", m.identity.target, e) ||
+            !mtw_text(&m.document, result, "mode", "r186", e) || !mtw_text(&m.document, result, "target", m.identity.target, e) ||
             !mtw_text(&m.document, result, "target_executable_sha256", MEDIEVAL_EXECUTABLE_HASH, e)) goto done;
     } else if (mtw_is(options->operation, "Install")) {
         if (!mtw_writable(&m, mtw_is(options->fault, "space:maximum") ? UINT64_MAX : 8 * 1024 * 1024, e) ||

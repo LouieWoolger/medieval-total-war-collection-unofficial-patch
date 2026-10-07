@@ -1,7 +1,7 @@
-dgVoodoo2 v2.87.2
-Upstream: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.2
-Release archive: dgVoodoo2_87_2.zip
-Release archive SHA-256: 4FA57FD44C5436F68EC152BEE95CC36CB3539450916F163D0E5B7E6607E47BEC
+dgVoodoo2 v2.87.5
+Upstream: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
+Release archive: dgVoodoo2_87_5.zip
+Release archive SHA-256: 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
 Packaged individual files:
 - MS/x86/DDraw.dll -> vendor/runtime/ddraw.dll

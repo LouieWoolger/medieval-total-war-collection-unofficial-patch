@@ -258,6 +258,12 @@ int wmain(int argc, wchar_t **argv) {
         check(medieval_old_patch(medieval_known_d3d9_mode(
                   "A3FFCC0BCDD74044448BF0418F0FA732594F23D025DE667172AFE118CD82F9FA")),
               "older wrapper classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA")),
+              "v2.87.5 scroll-enabled proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E")),
+              "v2.87.5 scroll-disabled proxy classification");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;
