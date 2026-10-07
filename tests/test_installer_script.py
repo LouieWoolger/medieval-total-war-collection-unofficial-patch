@@ -154,16 +154,16 @@ def test_campaign_scroll_description_uses_hover_preview() -> None:
 def test_sprite_crash_fix_has_an_independent_installer_choice() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     text = script_text()
-    assert product["sprite_component_name"] == "Prebattle Screen Crash Fix"
+    assert product["sprite_component_name"] == "Pre-battle Screen Crash Fix"
     assert 'Var SpriteCheck' in text and 'Var SpriteSelected' in text
     assert '${NSD_CreateCheckbox} 12 154 295 24 "${PRODUCT_SPRITE_COMPONENT_NAME}"' in text
     assert '"/SPRITEFIX="' in text
     assert '${NSD_GetState} $SpriteCheck' in text
     assert 'payload-scroll-sprite-off' in text
-    assert 'Prebattle Screen Crash Fix requires Terrain Movement Fix' not in text
-    assert '${NSD_SetText} $PreviewText "Fixes a crash that can occur on the prebattle screen during the campaign."' in text
+    assert 'Pre-battle Screen Crash Fix requires Terrain Movement Fix' not in text
+    assert '${NSD_SetText} $PreviewText "Fixes a crash that can occur on the pre-battle screen during the campaign."' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"' in text
-    assert '${NSD_SetText} $PreviewTitle "Prebattle Screen Crash Fix"' in text
+    assert '${NSD_SetText} $PreviewTitle "Pre-battle Screen Crash Fix"' in text
     assert 'File /oname=sprite-clipping.bmp' in text
     image = (ROOT / "assets" / "sprite-clipping.bmp").read_bytes()
     assert image[:2] == b"BM"

@@ -645,8 +645,8 @@ Function SetPreview
     ${EndIf}
 
     ${If} $R0 == "sprite"
-        ${NSD_SetText} $PreviewTitle "Prebattle Screen Crash Fix"
-        ${NSD_SetText} $PreviewText "Fixes a crash that can occur on the prebattle screen during the campaign."
+        ${NSD_SetText} $PreviewTitle "Pre-battle Screen Crash Fix"
+        ${NSD_SetText} $PreviewText "Fixes a crash that can occur on the pre-battle screen during the campaign."
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\sprite-clipping.bmp"

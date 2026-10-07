@@ -10,7 +10,7 @@
   "copyright": "Copyright 2026 Louie Woolger",
   "component_name": "Terrain Movement Fix",
   "scroll_component_name": "Campaign Map Scroll Fix",
-  "sprite_component_name": "Prebattle Screen Crash Fix",
+  "sprite_component_name": "Pre-battle Screen Crash Fix",
   "discord_url": "https://discord.gg/zKbDADqWRC",
   "kofi_url": "https://ko-fi.com/louiewoolger"
 }
