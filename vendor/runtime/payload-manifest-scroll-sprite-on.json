@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R186",
+  "runtime_identity": "R195-scroll-sprite-on",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 161792,
-      "sha256": "AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA",
-      "provenance": "reproducible R186 PE32 proxy derived from accepted R185: preserves exact registered metadata identity for all 50 known frontend page families and existing presentation, input, and guarded-surface corrections; adds a signature-gated 800x600 prebattle RLE blitter guard for fully off-clip unit icons (MTW-001) and elapsed-time campaign pan distance at the verified keyboard/action and edge-input call sites (SCROLL-01), retaining both 60 Hz input contributions without an FPS cap; ported and signature-gated for dgVoodoo2 v2.87.5"
+      "length": 200704,
+      "sha256": "BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848",
+      "provenance": "Source-built R195 PE32 proxy for dgVoodoo2 2.87.5 and the four exact supported game executable identities. The RGB565 dust bridge scans every billboard center in a validated game dust batch at direct DrawIndexedPrimitiveUP return RVA B3FDC7. Mixed black/white-led batches containing brown dust are corrected; nonbrown batches retain the original target. Native-work child movement and size normalization, deferred D3D11 dust completion, frontend focus, movie backing and guarded final credits composition, input and selected Scroll/Sprite hooks are retained from R189; no frame cap or dust-opacity reduction is added. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

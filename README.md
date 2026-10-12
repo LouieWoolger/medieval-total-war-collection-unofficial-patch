@@ -16,6 +16,10 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 - Campaign Map Scroll Fix - Fixes campaign-map scrolling speed at high frame rates.
 - Pre-battle Screen Crash Fix - Fixes a crash that can occur on the pre-battle screen during the campaign.
 
+**Optional**:
+
+- Fast Computer Moves Option - Adds an option to the campaign tray. When turned off, AI turns play at reduced speed so you can follow where the AI has moved.
+
 ## Requirements
 
 - Windows XP through Windows 11

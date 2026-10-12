@@ -42,6 +42,10 @@ def platform_exe(tmp_path_factory):
     assert built.returncode == 0, built.stdout + built.stderr
     assert not built.stderr
     nm = bindir / "i686-w64-mingw32-nm.exe"
+    if not nm.is_file():
+        # MSYS2's i686 MinGW distribution installs the target's nm as nm.exe.
+        nm = bindir / "nm.exe"
+    assert nm.is_file(), f"No i686 nm alongside {cc}"
     symbols = subprocess.check_output([str(nm), "-C", str(output)], text=True)
     (directory / "symbols.txt").write_text(symbols, encoding="utf-8")
     assert not re.search(r"__cxa_|__gxx_|_Unwind_|std::|operator new|operator delete", symbols)

@@ -270,6 +270,90 @@ int wmain(int argc, wchar_t **argv) {
         check(medieval_old_patch(medieval_known_d3d9_mode(
                   "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1")),
               "v2.87.5 scroll-and-sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "7249A0118DAE0DAB81E2E72538F75555E09B1B72EFA6F2AFFF4E6E56812E97A8"), "r187"),
+              "R187 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "9E19B39293D61D1B4A513F1EB1EDC958A5153123741F37D28B126337CD7C59A4"), "r187"),
+              "R187 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "FE750F1D73D8FD4D9BA6BFB17B3B9F22ABB817DD1610C17EF2860DA7BF8BCE08"), "r187"),
+              "R187 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "064C234EB46ABDC690F42C5AFE0BFBC61F2D388DE63F9F28D23A27E064E0D6A7"), "r187"),
+              "R187 scroll-and-sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "BFCE156546CF8624BD48170D56DA7AF8760E3BCFDB7944DE6888959BA87E91EA"), "r188"),
+              "R188 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "037FDF75724D5698A0C2A41DE66508C8288B470E464D5FF721ABA77CDAFBC7BC"), "r188"),
+              "R188 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "A57B63E4402124304B02A45305739D2606AAE7585C7395ED7F8FE77E209F78F0"), "r188"),
+              "R188 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "850861A4C92211099656ED76B06B8C443CEF162FEDD23AB6DE70DD7181704EDB"), "r188"),
+              "R188 scroll-and-sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "D9C4A7D44A8DA738A25B85F4D485AE6A3E6BE2CF10D455734A2216E320F36DFC"), "r189"),
+              "R189 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "11169906D379219A80B3D3076A679656951B0E2A91FCD29D2AF53DD4DDA6814B"), "r189"),
+              "R189 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "30A915109049D7083EEA6E066A92AE327BC1A0C50186DB7F476393A3D26570E9"), "r189"),
+              "R189 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "09333B64AB577BD0DBFAFC5ACC26A8E19AFA82556FED3C414D3433B22315A243"), "r189"),
+              "R189 scroll-and-sprite-disabled proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "09333B64AB577BD0DBFAFC5ACC26A8E19AFA82556FED3C414D3433B22315A243")),
+              "R189 proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "A9CB1122929A57447719875EEF697719616003BF6B2A4E57B633B6DBF006F21E"), "r191"),
+              "R191 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "8D035A927079E8555672258C614C18876F669861A9A03859E7394A54DF41D0E9"), "r191"),
+              "R191 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "74813C992BDA3C877FB929168B2E65DFAA87C12EC1C7CAFD81A3343D93666074"), "r191"),
+              "R191 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "F8883FDECB59BD0A57B0C1B6D446A3A096F9ACF89097B784A1189F51210CE551"), "r191"),
+              "R191 scroll-and-sprite-disabled proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "F8883FDECB59BD0A57B0C1B6D446A3A096F9ACF89097B784A1189F51210CE551")),
+              "R191 proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "F5F89A35D8504CC2157A5158AFBE5E85ACFCD98A992F6538C38BDE40D0CE60FE"), "r194"),
+              "R194 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "8E02E01E38E649DD2B3A9F14E59C6D76958F08884DD43099A703BBC0A74DB8A5"), "r194"),
+              "R194 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "C10D1AC084C7469BBF18B92C3B7A96274971A39505524D0E30DB86CAAB616EFA"), "r194"),
+              "R194 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "2E0680889E855FB2E5931DC7D0971B875196E8E05231E926BF0DDA42C8FAF7FE"), "r194"),
+              "R194 scroll-and-sprite-disabled proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "2E0680889E855FB2E5931DC7D0971B875196E8E05231E926BF0DDA42C8FAF7FE")),
+              "R194 proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848"), "r195"),
+              "R195 scroll-and-sprite-enabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A"), "r195"),
+              "R195 scroll-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232"), "r195"),
+              "R195 sprite-disabled proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9"), "r195"),
+              "R195 scroll-and-sprite-disabled proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(
+                  "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9")),
+              "R195 proxy cannot become a clean original baseline");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;

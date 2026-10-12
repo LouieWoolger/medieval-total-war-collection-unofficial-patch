@@ -27,7 +27,11 @@ def build_c_engine(output: Path, *, isolated=False, source_name=None):
     prefix = compiler.parent.parent / "libexec/gcc/i686-w64-mingw32" / version
     env = dict(os.environ, PATH=str(compiler.parent) + os.pathsep + os.environ["PATH"])
     resource = output.with_suffix(".o")
-    rc_command = [str(compiler.with_name("i686-w64-mingw32-windres.exe")), "--target=pe-i386",
+    windres = compiler.with_name("i686-w64-mingw32-windres.exe")
+    if not windres.is_file():
+        windres = compiler.with_name("windres.exe")
+    assert windres.is_file(), f"No i686 windres alongside {compiler}"
+    rc_command = [str(windres), "--target=pe-i386",
                   "--preprocessor=" + str(compiler), "--preprocessor-arg=-E", "--preprocessor-arg=-xc",
                   "--preprocessor-arg=-DRC_INVOKED", "--preprocessor-arg=-B", "--preprocessor-arg=" + str(prefix) + os.sep,
                   "medieval_fix_patcher.rc", "-O", "coff", "-o", str(resource)]
@@ -470,11 +474,15 @@ def test_real_c_helper_is_pe32_without_cpp_or_newer_static_imports(c_engine, tmp
         symbols_source = Path(supplied)
         stripped_copy = tmp_path / "stripped-helper.exe"
         strip = Path(os.environ["MTW_CC"]).with_name("i686-w64-mingw32-strip.exe")
+        if not strip.is_file():
+            strip = strip.with_name("strip.exe")
         result = subprocess.run([str(strip), "-p", "-s", "-o", str(stripped_copy), str(symbols_source)],
                                 capture_output=True, text=True, timeout=30)
         assert result.returncode == 0 and not result.stdout and not result.stderr
         assert digest(stripped_copy) == digest(c_engine), "Symbols must belong to the exact packaged C helper"
     nm = Path(os.environ["MTW_CC"]).with_name("i686-w64-mingw32-nm.exe")
+    if not nm.is_file():
+        nm = nm.with_name("nm.exe")
     result = subprocess.run([str(nm), str(symbols_source)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0 and not result.stderr
     symbols = result.stdout

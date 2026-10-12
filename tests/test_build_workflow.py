@@ -104,12 +104,16 @@ def test_game_validation_requires_exact_sprite_and_both_suites_without_skips(
     assert module.game_test_result(validation)["status"] == expected
 
 
-def test_runtime_build_gate_requires_the_solo_sprite_disabled_proxy(tmp_path: Path) -> None:
+def test_runtime_build_gate_requires_each_installable_proxy(tmp_path: Path) -> None:
     spec = importlib.util.spec_from_file_location("manifest_workflow", ROOT / "tools/build-release-manifest.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    expected = {"D3D9-scroll-sprite-off.dll": "D3D9-scroll-sprite-off.dll"}
-    fields = ("scroll_sprite_off_sha256",)
+    expected = {
+        "D3D9-scroll-sprite-off.dll": "base",
+        "D3D9-scroll-sprite-off-fast.dll": "combined-fast",
+        "D3D9-fast-only.dll": "fast-only",
+    }
+    fields = ("scroll_sprite_off_sha256", "scroll_sprite_off_fast_sha256", "fast_only_sha256")
     report = tmp_path / "r185.json"
     evidence = dict(zip(fields, expected.values()))
     evidence.update(smoke_loader_exit=0, campaign_pan_tests_exit=0)

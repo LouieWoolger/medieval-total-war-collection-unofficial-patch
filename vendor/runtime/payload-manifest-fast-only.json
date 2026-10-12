@@ -1,0 +1,26 @@
+{
+  "schema": "unofficial-medieval-total-war-patch-payload-v1",
+  "component": "Fast Computer Moves Option",
+  "runtime_identity": "R196-fast-moves-only-candidate",
+  "dgvoodoo_version": "none",
+  "target_executable": {
+    "name": "Medieval_TW.exe",
+    "sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+  },
+  "files": {
+    "D3D9.dll": {
+      "length": 109056,
+      "sha256": "5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2",
+      "provenance": "Source-built x86 D3D9 system forwarder with only guarded Fast computer moves game hooks. No dgVoodoo2 backend."
+    }
+  },
+  "locked_settings": null,
+  "forbidden_runtime_files": [
+    "D3D8.dll",
+    "Medieval.Cfg",
+    "Medieval_TW.exe",
+    "~tmp.vrp"
+  ],
+  "scroll_fix_enabled": false,
+  "sprite_fix_enabled": false
+}

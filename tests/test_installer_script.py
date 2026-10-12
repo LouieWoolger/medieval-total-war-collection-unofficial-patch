@@ -171,6 +171,24 @@ def test_sprite_crash_fix_has_an_independent_installer_choice() -> None:
     assert int.from_bytes(image[22:26], "little") == 270
 
 
+def test_fast_computer_moves_is_an_independent_optional_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["fast_component_name"] == "Fast Computer Moves Option"
+    assert 'StrCpy $FastSelected "0"' in text
+    assert '${NSD_CreateCheckbox} 12 370 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"' in text
+    assert '"/FASTMOVESFIX="' in text
+    assert '${NSD_GetState} $FastCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"' in text
+    assert '${NSD_SetText} $PreviewTitle "Fast Computer Moves Option"' in text
+    assert ('${NSD_SetText} $PreviewText "Adds an option to the campaign tray. '
+            'When turned off, AI turns play at reduced speed so you can follow '
+            'where the AI has moved."') in text
+    assert 'payload-fast-only' in text and 'payload-scroll-sprite-off-fast' in text
+    assert 'fast_moves_fix=$FastSelected' in text
+    assert 'File /oname=fast-computer-moves.bmp' in text
+
+
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:
     text = script_text()
     assert '--request "$NativeDirectory\\request.ini"' in text

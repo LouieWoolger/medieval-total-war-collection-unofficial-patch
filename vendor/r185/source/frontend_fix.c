@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #define COBJMACROS
+#include <d3d9.h>
 #include <d3d11.h>
 
 #include <stdint.h>
@@ -8,14 +9,20 @@
 #include <intrin.h>
 
 #include "frontend_fix.h"
+#include "battle_icon_atlas_core.h"
 #include "campaign_pan_core.h"
 #include "frontend_epoch_core.h"
 #include "focus_plane_shadow_core.h"
 #include "focus_span_core.h"
 #include "guarded_memory_copy.h"
+#include "intro_backing_repair_core.h"
+#include "intro_morph_guard_core.h"
 #include "loading_shadow_core.h"
 #include "mapper_activation_core.h"
 #include "mapper_shader_clone_core.h"
+#include "menu_focus_conversion_core.h"
+#include "menu_focus_shader_bytecode.h"
+#include "menu_focus_shader_marker.h"
 #include "presentation_input_core.h"
 #include "primary_origin_guard_core.h"
 #include "reentrant_lock_patch_core.h"
@@ -23,6 +30,7 @@
 #include "window_transition_guard_core.h"
 
 extern IMAGE_DOS_HEADER __ImageBase;
+extern int mtw_dust_simulation_hook_installed(void);
 
 #if !defined(_M_IX86)
 #error This loading fix is valid only for the verified PE32 game.
@@ -40,6 +48,12 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #if MTW_ENABLE_SPRITE_CLIP_FIX != 0 && MTW_ENABLE_SPRITE_CLIP_FIX != 1
 #error MTW_ENABLE_SPRITE_CLIP_FIX must be 0 or 1.
 #endif
+#ifndef MTW_ENABLE_MOVIE_FIX
+#define MTW_ENABLE_MOVIE_FIX 1
+#endif
+#if MTW_ENABLE_MOVIE_FIX != 0 && MTW_ENABLE_MOVIE_FIX != 1
+#error MTW_ENABLE_MOVIE_FIX must be 0 or 1.
+#endif
 
 #define MTW_INITIAL_COPY_PRE_UNLOCK_RVA 0x0000BF60u
 #define MTW_PROGRESS_POST_LOCK_RVA 0x0031CBC8u
@@ -48,6 +62,14 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_BACKING_HEIGHT_RVA 0x004D01B8u
 #define MTW_BACKING_PITCH_RVA 0x004D0244u
 #define MTW_BACKING_BITS_RVA 0x004D0248u
+#define MTW_INTRO_BACKING_OWNER_RVA 0x004DCE48u
+#define MTW_INTRO_CREDITS_MORPH_FIRST_RVA 0x002BE874u
+#define MTW_INTRO_CREDITS_MORPH_SECOND_RVA 0x002BE892u
+#define MTW_INTRO_CREDITS_MORPH_TARGET_RVA 0x00018690u
+#define MTW_INTRO_MESSAGE_PUMP_RVA 0x0001F1F0u
+#define MTW_INTRO_DDRAW_LOST_RVA 0x00B44064u
+#define MTW_INTRO_DDRAW_SURFACE_RVA 0x00B44094u
+#define MTW_GAME_SHUTDOWN_RVA 0x004DCA5Cu
 #define MTW_PRIMARY_SURFACE_UNLOCK_RVA 0x000122D0u
 #define MTW_DISPATCH_MESSAGE_IAT_RVA 0x0038428Cu
 #define MTW_SET_CURSOR_POS_IAT_RVA 0x003842D4u
@@ -87,6 +109,13 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define MTW_PREBATTLE_RESOLUTION_RETURN_RVA 0x0024BFAEu
 #define MTW_TOP_LEVEL_MODE_CAMPAIGN 1u
 #define MTW_TOP_LEVEL_MODE_QUICK_BATTLE 12u
+#define MTW_MENU_UPDATE_SURFACE_CALLSITE_RVA 0x00B3E8FCu
+#define MTW_BATTLE_ICON_ATLAS_INIT_CALL_RVA 0x00023E20u
+#define MTW_BATTLE_ICON_ATLAS_INIT_TARGET_RVA 0x000DA2A0u
+#define MTW_BATTLE_ICON_CACHE_FIRST_RVA 0x003B9354u
+#define MTW_BATTLE_ICON_SURFACE_RECORD_RVA 0x00743678u
+#define MTW_BATTLE_HUD_SCENE_RVA 0x0074275Cu
+#define MTW_BATTLE_HUD_DIRTY_OFFSET 0x94Cu
 
 /* These sites belong to the pinned Medieval_TW.exe SHA-256 in the accepted
  * proxy. They are kept separate from the frontend/presentation hook group. */
@@ -117,6 +146,7 @@ extern IMAGE_DOS_HEADER __ImageBase;
 #define DGVOODOO_NESTED_RELEASE_RVA 0x00029968u
 #define DGVOODOO_GLOBAL_SLOT_RVA 0x000DEAA4u
 #define DGVOODOO_MAPPER_DRAW_CALLSITE_RVA 0x000B3B1Fu
+#define DGVOODOO_MENU_CONVERSION_DRAW_CALLSITE_RVA 0x00074627u
 #define DGVOODOO_D3D11_CREATE_DEVICE_CALLSITE_RVA 0x000B5990u
 #define DGVOODOO_SET_WINDOW_POS_SLOT_RVA 0x000D1200u
 #define DGVOODOO_EXPECTED_TIMESTAMP 0x6AA8559Bu
@@ -186,6 +216,13 @@ static const unsigned char d3d11_create_device_call_expected[6] = {
 static const unsigned char resolution_initialize_call_expected[5] = {
     0xE8, 0x1C, 0xF1, 0xFF, 0xFF
 };
+static const unsigned char battle_icon_atlas_init_call_expected[5] = {
+    0xE8, 0x7B, 0x64, 0x0B, 0x00
+};
+static const unsigned char battle_icon_atlas_init_target_expected[11] = {
+    0xA1, 0x1C, 0xF5, 0xB8, 0x00, 0xC7,
+    0x05, 0x54, 0x93, 0x7B, 0x00
+};
 #if MTW_ENABLE_SPRITE_CLIP_FIX
 static const unsigned char blitter_entry_expected[5] = {
     0xE9, 0x06, 0x5F, 0x80, 0x00
@@ -221,6 +258,23 @@ static INIT_ONCE frontend_once = INIT_ONCE_STATIC_INIT;
 static INIT_ONCE backend_tracking_once = INIT_ONCE_STATIC_INIT;
 static uintptr_t game_base;
 static uintptr_t backend_base;
+#if MTW_ENABLE_MOVIE_FIX
+typedef void *(__cdecl *mtw_intro_allocator_fn)(uint32_t size);
+typedef void (__cdecl *mtw_intro_deallocator_fn)(void *pointer);
+typedef void (__cdecl *mtw_intro_morph_fn)(uint32_t, uint32_t,
+                                           uint32_t, uint32_t);
+typedef void (__cdecl *mtw_intro_message_pump_fn)(void);
+static mtw_intro_allocator_fn intro_original_allocator;
+static mtw_intro_deallocator_fn intro_original_deallocator;
+static mtw_intro_morph_fn intro_original_morph;
+static mtw_intro_message_pump_fn intro_original_message_pump;
+static SRWLOCK intro_backing_lock = SRWLOCK_INIT;
+static mtw_intro_backing_tracker intro_backing_tracker;
+static volatile LONG intro_pitch_corrections;
+static volatile LONG intro_capacity_replacements;
+static volatile LONG intro_capacity_allocation_failures;
+static volatile LONG intro_deferred_morphs;
+#endif
 static loading_shadow_state loading_shadow;
 static CRITICAL_SECTION loading_shadow_lock;
 static volatile LONG loading_shadow_operation_active;
@@ -255,6 +309,9 @@ static void *reverse_dispatcher_continue;
 static void *primary_surface_unlock_continue;
 static void *prebattle_entry_original_target;
 static void *prebattle_resolution_return_continue;
+typedef int (__cdecl *mtw_battle_icon_atlas_init_fn)(void);
+static mtw_battle_icon_atlas_init_fn original_battle_icon_atlas_init;
+static volatile LONG battle_icon_atlas_rebuild_events;
 static void *primary_origin_guard_failure_continue;
 static void *primary_origin_guard_success_continue;
 static void *constructor_global_target;
@@ -263,6 +320,8 @@ static void *custom_release_target;
 static void *nested_acquire_target;
 static void *veh_handled_continue;
 static void *mapper_draw_continue;
+static void *menu_update_surface_continue;
+static void *menu_conversion_draw_continue;
 static void *d3d11_create_success_continue;
 static void *d3d11_create_failure_continue;
 #if MTW_ENABLE_SPRITE_CLIP_FIX
@@ -285,6 +344,12 @@ static ID3D11Device *mapper_tracking_device;
 static ID3D11PixelShader *mapper_shader_clone;
 static ID3D11PixelShader *mapper_shader_original;
 static ID3D11SamplerState *mapper_linear_sampler;
+static SRWLOCK menu_shader_lock = SRWLOCK_INIT;
+static ID3D11Device *menu_shader_device;
+static ID3D11VertexShader *menu_pixel_aligned_vs;
+static __declspec(thread) unsigned menu_update_surface_active;
+static __declspec(thread) unsigned menu_update_surface_draw_index;
+static volatile LONG menu_conversion_corrections;
 static volatile LONG mapper_shader_active_logged;
 static volatile LONG mapper_sampler_active_logged;
 static volatile LONG mapper_shader_target_logged;
@@ -470,6 +535,72 @@ static int write_current_process_memory_exact(uintptr_t address,
                GetCurrentProcess(), (void *)address,
                source, size, &transferred) != 0 &&
            transferred == size;
+}
+
+static int sample_battle_icon_atlas_state(
+    mtw_battle_icon_atlas_state *state) {
+    uintptr_t scene = 0u;
+    uintptr_t surface_record = 0u;
+
+    if (state == NULL || game_base == 0u) return 0;
+    memset(state, 0, sizeof(*state));
+    if (!read_current_process_memory_exact(
+            game_base + MTW_TOP_LEVEL_GAME_MODE_RVA,
+            &state->mode, sizeof(state->mode)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_RENDER_INPUT_ROOT_RVA,
+            &state->render_root, sizeof(state->render_root)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_BATTLE_HUD_SCENE_RVA,
+            &scene, sizeof(scene)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_BATTLE_ICON_CACHE_FIRST_RVA,
+            &state->cache_first, sizeof(state->cache_first)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_BATTLE_ICON_SURFACE_RECORD_RVA,
+            &surface_record, sizeof(surface_record))) {
+        return 0;
+    }
+    state->scene = (uint32_t)scene;
+    if (surface_record != 0u &&
+        !read_current_process_memory_exact(
+            surface_record, &state->surface, sizeof(state->surface))) {
+        return 0;
+    }
+    if (scene != 0u &&
+        !read_current_process_memory_exact(
+            scene + MTW_BATTLE_HUD_DIRTY_OFFSET,
+            &state->dirty, sizeof(state->dirty))) {
+        return 0;
+    }
+    return 1;
+}
+
+/* The graphics reset clears the atlas cache, then fills the replacement
+ * surface from that now-empty list. The battle HUD only rebuilds its live
+ * icon list when its ordinary update flag is set. Schedule that update after
+ * a successful reset while the same battle object is still active. */
+static int __cdecl battle_icon_atlas_init_hook(void) {
+    mtw_battle_icon_atlas_state before;
+    mtw_battle_icon_atlas_state after;
+    int have_before;
+    int result;
+    const uint8_t dirty = 1u;
+
+    if (original_battle_icon_atlas_init == NULL) return 0;
+    have_before = sample_battle_icon_atlas_state(&before);
+    result = original_battle_icon_atlas_init();
+    if (have_before && sample_battle_icon_atlas_state(&after) &&
+        mtw_battle_icon_atlas_should_mark_dirty(
+            &before, &after, result) &&
+        write_current_process_memory_exact(
+            (uintptr_t)after.scene + MTW_BATTLE_HUD_DIRTY_OFFSET,
+            &dirty, sizeof(dirty))) {
+        if (InterlockedIncrement(&battle_icon_atlas_rebuild_events) <= 8) {
+            diagnostic_write("battle unit-icon atlas live rebuild queued r195\r\n");
+        }
+    }
+    return result;
 }
 
 static HWND query_game_window(void) {
@@ -2021,6 +2152,44 @@ static uint32_t mapper_shader_fingerprint(const void *bytecode,
     return value;
 }
 
+static void menu_track_problem_pixel_shader(ID3D11PixelShader *shader,
+                                             const void *bytecode,
+                                             size_t bytecode_size) {
+    if (shader == NULL ||
+        !mtw_menu_problem_pixel_shader_matches(bytecode, bytecode_size)) {
+        return;
+    }
+    if (mtw_menu_mark_problem_pixel_shader(shader)) {
+        diagnostic_write("menu exact UpdateSurface shader marked r280\r\n");
+    } else {
+        diagnostic_write("menu exact UpdateSurface shader marker unavailable r280\r\n");
+    }
+}
+
+static int menu_create_pixel_aligned_vertex_shader(ID3D11Device *device) {
+    ID3D11VertexShader *replacement = NULL;
+    ID3D11VertexShader *old_shader;
+    ID3D11Device *old_device;
+    HRESULT result;
+    if (device == NULL) return 0;
+    result = ID3D11Device_CreateVertexShader(
+        device, mtw_menu_pixel_aligned_vertex_shader_dxbc,
+        sizeof(mtw_menu_pixel_aligned_vertex_shader_dxbc), NULL,
+        &replacement);
+    if (FAILED(result) || replacement == NULL) return 0;
+    ID3D11Device_AddRef(device);
+    AcquireSRWLockExclusive(&menu_shader_lock);
+    old_shader = menu_pixel_aligned_vs;
+    old_device = menu_shader_device;
+    menu_pixel_aligned_vs = replacement;
+    menu_shader_device = device;
+    ReleaseSRWLockExclusive(&menu_shader_lock);
+    if (old_shader != NULL) ID3D11VertexShader_Release(old_shader);
+    if (old_device != NULL) ID3D11Device_Release(old_device);
+    diagnostic_write("menu pixel-aligned UpdateSurface shader ready r280\r\n");
+    return 1;
+}
+
 static HRESULT STDMETHODCALLTYPE mapper_create_pixel_shader_hook(
     ID3D11Device *device,
     const void *bytecode,
@@ -2048,6 +2217,10 @@ static HRESULT STDMETHODCALLTYPE mapper_create_pixel_shader_hook(
     if (mapper_original_create_pixel_shader == NULL) return E_FAIL;
     result = mapper_original_create_pixel_shader(
         device, bytecode, bytecode_size, class_linkage, pixel_shader);
+    if (SUCCEEDED(result) && pixel_shader != NULL && *pixel_shader != NULL) {
+        menu_track_problem_pixel_shader(
+            *pixel_shader, bytecode, (size_t)bytecode_size);
+    }
     if (SUCCEEDED(result) && pixel_shader != NULL && *pixel_shader != NULL) {
         exact = mtw_mapper_problem_pixel_shader_matches(
             bytecode, (size_t)bytecode_size);
@@ -2200,6 +2373,15 @@ static HRESULT WINAPI mapper_d3d11_create_device_hook(
         immediate_context);
     if (SUCCEEDED(result) && device != NULL && *device != NULL) {
         (void)mapper_install_device_shader_hook(*device);
+        (void)menu_create_pixel_aligned_vertex_shader(*device);
+        if (immediate_context != NULL && *immediate_context != NULL) {
+            extern int mtw_dust_simulation_hook_installed(void);
+            extern int mtw_dust_graphics_register_d3d11(
+                ID3D11Device *, ID3D11DeviceContext *);
+            if (mtw_dust_simulation_hook_installed())
+                (void)mtw_dust_graphics_register_d3d11(
+                    *device, *immediate_context);
+        }
     }
     return result;
 }
@@ -3480,6 +3662,211 @@ static void mapper_log_draw_identity(ID3D11DeviceContext *context,
     if (context_device != NULL) ID3D11Device_Release(context_device);
 }
 
+typedef HRESULT (STDMETHODCALLTYPE *mtw_menu_update_surface_fn)(
+    IDirect3DDevice9 *device, IDirect3DSurface9 *source,
+    const RECT *source_rect, IDirect3DSurface9 *target,
+    const POINT *target_point);
+
+static int menu_exact_update_surface(
+    IDirect3DSurface9 *source, const RECT *source_rect,
+    IDirect3DSurface9 *target, const POINT *target_point) {
+    D3DSURFACE_DESC source_desc;
+    D3DSURFACE_DESC target_desc;
+    if (source == NULL || target == NULL || source_rect != NULL ||
+        target_point != NULL ||
+        InterlockedCompareExchange(&mapper_frontend_mode, 0, 0) == 0 ||
+        FAILED(IDirect3DSurface9_GetDesc(source, &source_desc)) ||
+        FAILED(IDirect3DSurface9_GetDesc(target, &target_desc))) {
+        return 0;
+    }
+    return source_desc.Width == MTW_FRONTEND_WIDTH &&
+           source_desc.Height == MTW_FRONTEND_HEIGHT &&
+           source_desc.Format == D3DFMT_R5G6B5 &&
+           source_desc.Usage == 0u &&
+           source_desc.Pool == D3DPOOL_SYSTEMMEM &&
+           source_desc.MultiSampleType == D3DMULTISAMPLE_NONE &&
+           source_desc.MultiSampleQuality == 0u &&
+           target_desc.Width == MTW_FRONTEND_WIDTH &&
+           target_desc.Height == MTW_FRONTEND_HEIGHT &&
+           target_desc.Format == D3DFMT_R5G6B5 &&
+           target_desc.Usage == D3DUSAGE_RENDERTARGET &&
+           target_desc.Pool == D3DPOOL_DEFAULT &&
+           target_desc.MultiSampleType == D3DMULTISAMPLE_NONE &&
+           target_desc.MultiSampleQuality == 0u;
+}
+
+__declspec(noinline) static HRESULT __stdcall menu_update_surface_call(
+    mtw_menu_update_surface_fn original, IDirect3DDevice9 *device,
+    IDirect3DSurface9 *source, const RECT *source_rect,
+    IDirect3DSurface9 *target, const POINT *target_point) {
+    unsigned previous_active = menu_update_surface_active;
+    unsigned previous_index = menu_update_surface_draw_index;
+    HRESULT result;
+    if (original == NULL) return D3DERR_INVALIDCALL;
+    menu_update_surface_active = menu_exact_update_surface(
+        source, source_rect, target, target_point) ? 1u : 0u;
+    menu_update_surface_draw_index = 0u;
+    result = original(device, source, source_rect, target, target_point);
+    menu_update_surface_active = previous_active;
+    menu_update_surface_draw_index = previous_index;
+    return result;
+}
+
+static int menu_texture_desc(ID3D11Resource *resource,
+                             D3D11_TEXTURE2D_DESC *description) {
+    D3D11_RESOURCE_DIMENSION dimension;
+    if (resource == NULL || description == NULL) return 0;
+    ID3D11Resource_GetType(resource, &dimension);
+    if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D) return 0;
+    ID3D11Texture2D_GetDesc((ID3D11Texture2D *)resource, description);
+    return description->MipLevels == 1u &&
+           description->ArraySize == 1u &&
+           description->SampleDesc.Count == 1u;
+}
+
+static int menu_observe_conversion(
+    ID3D11DeviceContext *context, UINT vertex_count,
+    mtw_menu_conversion_observation *observation) {
+    ID3D11PixelShader *bound_pixel_shader = NULL;
+    ID3D11ShaderResourceView *source_view = NULL;
+    ID3D11RenderTargetView *target_views[8] = {0};
+    ID3D11Resource *source = NULL;
+    ID3D11Resource *target = NULL;
+    D3D11_TEXTURE2D_DESC source_desc;
+    D3D11_TEXTURE2D_DESC target_desc;
+    unsigned target_count = 0u;
+    unsigned index;
+    int source_ok = 0;
+    int target_ok = 0;
+    int accepted;
+
+    if (context == NULL || observation == NULL) return 0;
+    memset(observation, 0, sizeof(*observation));
+    observation->frontend_active = (unsigned)(
+        InterlockedCompareExchange(&mapper_frontend_mode, 0, 0) != 0);
+    observation->game_update_surface_active = menu_update_surface_active;
+    observation->nested_draw_index = menu_update_surface_draw_index;
+    observation->vertex_count = vertex_count;
+    ID3D11DeviceContext_PSGetShader(
+        context, &bound_pixel_shader, NULL, NULL);
+    observation->pixel_shader_matches = (unsigned)
+        mtw_menu_problem_pixel_shader_is_marked(bound_pixel_shader);
+    ID3D11DeviceContext_PSGetShaderResources(
+        context, 0u, 1u, &source_view);
+    ID3D11DeviceContext_OMGetRenderTargets(
+        context, 8u, target_views, NULL);
+    for (index = 0u; index < 8u; ++index) {
+        if (target_views[index] != NULL) ++target_count;
+    }
+    observation->render_target_count = target_count;
+    if (source_view != NULL) {
+        ID3D11ShaderResourceView_GetResource(source_view, &source);
+        source_ok = menu_texture_desc(source, &source_desc);
+    }
+    if (target_views[0] != NULL) {
+        ID3D11RenderTargetView_GetResource(target_views[0], &target);
+        target_ok = menu_texture_desc(target, &target_desc);
+    }
+    if (source_ok) {
+        observation->source_width = source_desc.Width;
+        observation->source_height = source_desc.Height;
+        observation->source_format = (unsigned)source_desc.Format;
+    }
+    if (target_ok) {
+        observation->target_width = target_desc.Width;
+        observation->target_height = target_desc.Height;
+        observation->target_format = (unsigned)target_desc.Format;
+    }
+    accepted = mtw_menu_conversion_should_correct(observation);
+    if (source != NULL) ID3D11Resource_Release(source);
+    if (target != NULL) ID3D11Resource_Release(target);
+    if (source_view != NULL) ID3D11ShaderResourceView_Release(source_view);
+    if (bound_pixel_shader != NULL)
+        ID3D11PixelShader_Release(bound_pixel_shader);
+    for (index = 0u; index < 8u; ++index) {
+        if (target_views[index] != NULL)
+            ID3D11RenderTargetView_Release(target_views[index]);
+    }
+    return accepted;
+}
+
+__declspec(noinline) static void __stdcall menu_conversion_draw(
+    ID3D11DeviceContext *context, UINT vertex_count, UINT start_vertex) {
+    ID3D11Device *context_device = NULL;
+    ID3D11VertexShader *replacement = NULL;
+    ID3D11VertexShader *original = NULL;
+    mtw_menu_conversion_observation observation;
+    UINT class_count = 0u;
+    LONG event;
+
+    if (context == NULL) return;
+    if (menu_update_surface_active == 0u) {
+        ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
+        return;
+    }
+    ++menu_update_surface_draw_index;
+    if (menu_update_surface_draw_index != 3u || vertex_count != 4u) {
+        ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
+        return;
+    }
+    ID3D11DeviceContext_GetDevice(context, &context_device);
+    AcquireSRWLockShared(&menu_shader_lock);
+    if (context_device != NULL && context_device == menu_shader_device &&
+        menu_pixel_aligned_vs != NULL) {
+        replacement = menu_pixel_aligned_vs;
+        ID3D11VertexShader_AddRef(replacement);
+    }
+    ReleaseSRWLockShared(&menu_shader_lock);
+    if (context_device != NULL) ID3D11Device_Release(context_device);
+    if (replacement == NULL ||
+        !menu_observe_conversion(context, vertex_count, &observation)) {
+        ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
+        goto done;
+    }
+    ID3D11DeviceContext_VSGetShader(
+        context, &original, NULL, &class_count);
+    if (original == NULL || class_count != 0u) {
+        ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
+        goto done;
+    }
+    ID3D11DeviceContext_VSSetShader(context, replacement, NULL, 0u);
+    ID3D11DeviceContext_Draw(context, vertex_count, start_vertex);
+    ID3D11DeviceContext_VSSetShader(context, original, NULL, 0u);
+    event = InterlockedIncrement(&menu_conversion_corrections);
+    if (event == 1) {
+        diagnostic_write("menu exact UpdateSurface UV corrected r280\r\n");
+    }
+done:
+    if (original != NULL) ID3D11VertexShader_Release(original);
+    if (replacement != NULL) ID3D11VertexShader_Release(replacement);
+}
+
+__declspec(naked) static void menu_update_surface_hook_stub(void) {
+    __asm {
+        mov eax, dword ptr [ecx + 0x78]
+        push dword ptr [esp + 16]
+        push dword ptr [esp + 16]
+        push dword ptr [esp + 16]
+        push dword ptr [esp + 16]
+        push dword ptr [esp + 16]
+        push eax
+        call menu_update_surface_call
+        add esp, 20
+        jmp dword ptr [menu_update_surface_continue]
+    }
+}
+
+__declspec(naked) static void menu_conversion_draw_hook_stub(void) {
+    __asm {
+        push dword ptr [esp]
+        push 4
+        push ecx
+        call menu_conversion_draw
+        add esp, 4
+        jmp dword ptr [menu_conversion_draw_continue]
+    }
+}
+
 __declspec(noinline) static void __stdcall mapper_draw_with_exact_clone(
     ID3D11DeviceContext *context, UINT vertex_count, UINT start_vertex) {
     ID3D11PixelShader *replacement;
@@ -3642,6 +4029,199 @@ static int __cdecl campaign_pan_hook(int direction, double requested_distance) {
     ReleaseSRWLockExclusive(&campaign_pan_lock);
     if (!should_move) return 1;
     return original_campaign_pan(direction, distance);
+}
+#endif
+
+#if MTW_ENABLE_MOVIE_FIX
+/* Both credits image morphs must finish after the real game window returns.
+ * When dgVoodoo's movie surface is lost, drawing a morph while away discards
+ * background rows that the subsequent menu mode change cannot reconstruct. */
+static mtw_intro_morph_state intro_morph_snapshot(HWND game_window) {
+    mtw_intro_morph_state state;
+    state.surface_lost =
+        *(volatile uint32_t *)(game_base + MTW_INTRO_DDRAW_LOST_RVA) != 0u;
+    state.surface_present =
+        *(void *volatile *)(game_base + MTW_INTRO_DDRAW_SURFACE_RVA) != NULL;
+    state.owner_present =
+        *(void *volatile *)(game_base + MTW_INTRO_BACKING_OWNER_RVA) != NULL;
+    state.window_valid = game_window != NULL && IsWindow(game_window);
+    state.window_foreground = GetForegroundWindow() == game_window;
+    state.window_iconic = state.window_valid && IsIconic(game_window);
+    state.pump_available = intro_original_message_pump != NULL;
+    state.shutdown =
+        *(volatile unsigned char *)(game_base + MTW_GAME_SHUTDOWN_RVA) != 0u;
+    return state;
+}
+
+static void __cdecl intro_credits_final_morph_hook(
+    uint32_t from, uint32_t to, uint32_t x, uint32_t y) {
+    HWND game_window = *(HWND volatile *)(game_base + MTW_GAME_WINDOW_RVA);
+    DWORD previous_error = GetLastError();
+    mtw_intro_morph_state state;
+    LONG event = 0;
+
+    if (intro_original_morph == NULL) return;
+    state = intro_morph_snapshot(game_window);
+    if (mtw_intro_morph_should_defer(&state)) {
+        event = InterlockedIncrement(&intro_deferred_morphs);
+        if (event <= 4) diagnostic_write(
+            "intro final morph deferred during lost movie surface\r\n");
+        while (mtw_intro_morph_should_wait(&state)) {
+            intro_original_message_pump();
+            Sleep(10);
+            state = intro_morph_snapshot(game_window);
+        }
+        if (event <= 4) {
+            diagnostic_write(
+                state.surface_lost ?
+                "intro final morph resumed with surface still lost\r\n" :
+                "intro final morph resumed with surface ready\r\n");
+        }
+        if (!state.window_valid || state.shutdown) {
+            SetLastError(previous_error);
+            return;
+        }
+    }
+    SetLastError(previous_error);
+    intro_original_morph(from, to, x, y);
+}
+
+/* The game's failed-Lock fallback owns one allocation at 008DCE48. It
+ * allocates width*height*2 only when that pointer is null, so a 640x480
+ * fallback can be reused after the movie closes into an 800x600 surface.
+ * The two return sites are after Lock/recovery but before callers load the
+ * active pointer and draw. Observe the exact allocation calls rather than
+ * guessing capacity from whatever dimensions happen to be current later. */
+static mtw_intro_backing_snapshot intro_backing_snapshot(void) {
+    mtw_intro_backing_snapshot surface;
+    surface.backing = *(volatile uintptr_t *)(
+        game_base + MTW_INTRO_BACKING_OWNER_RVA);
+    surface.active = *(volatile uintptr_t *)(
+        game_base + MTW_BACKING_BITS_RVA);
+    surface.width = *(volatile uint32_t *)(
+        game_base + MTW_BACKING_WIDTH_RVA);
+    surface.height = *(volatile uint32_t *)(
+        game_base + MTW_BACKING_HEIGHT_RVA);
+    surface.pitch = *(volatile uint32_t *)(
+        game_base + MTW_BACKING_PITCH_RVA);
+    return surface;
+}
+
+static void * __cdecl intro_backing_allocate_hook(uint32_t size) {
+    void *pointer = intro_original_allocator == NULL ? NULL :
+        intro_original_allocator(size);
+    DWORD previous_error = GetLastError();
+    AcquireSRWLockExclusive(&intro_backing_lock);
+    mtw_intro_backing_record_allocation(
+        &intro_backing_tracker, (uintptr_t)pointer, size);
+    ReleaseSRWLockExclusive(&intro_backing_lock);
+    SetLastError(previous_error);
+    return pointer;
+}
+
+__declspec(noinline) static void __cdecl intro_backing_after_lock(void) {
+    DWORD previous_error = GetLastError();
+    mtw_intro_backing_snapshot surface;
+    mtw_intro_backing_snapshot current;
+    mtw_intro_backing_plan plan;
+    mtw_intro_backing_plan current_plan;
+    mtw_intro_backing_tracker tracked;
+    void *replacement;
+    uintptr_t old_pointer = 0u;
+    int committed = 0;
+    int pitch_normalized = 0;
+    LONG event;
+
+    if (intro_original_allocator == NULL ||
+        intro_original_deallocator == NULL) goto finished;
+    surface = intro_backing_snapshot();
+    AcquireSRWLockExclusive(&intro_backing_lock);
+    mtw_intro_backing_reconcile(&intro_backing_tracker, surface.backing);
+    if (!mtw_intro_backing_make_plan(
+            &intro_backing_tracker, &surface, &plan)) {
+        ReleaseSRWLockExclusive(&intro_backing_lock);
+        goto finished;
+    }
+    if (!plan.grow) {
+        if (plan.fix_pitch) {
+            current = intro_backing_snapshot();
+            if (current.backing == surface.backing &&
+                current.active == surface.active &&
+                current.width == surface.width &&
+                current.height == surface.height &&
+                current.pitch == surface.pitch) {
+                *(volatile uint32_t *)(game_base + MTW_BACKING_PITCH_RVA) =
+                    plan.row_bytes;
+                pitch_normalized = 1;
+            }
+        }
+        ReleaseSRWLockExclusive(&intro_backing_lock);
+        if (pitch_normalized) {
+            event = InterlockedIncrement(&intro_pitch_corrections);
+            if (event <= 4) diagnostic_write(
+                "intro fallback row pitch normalized r283\r\n");
+        }
+        goto finished;
+    }
+    tracked = intro_backing_tracker;
+    ReleaseSRWLockExclusive(&intro_backing_lock);
+
+    /* Allocate first. If allocation or revalidation fails, the game still
+     * owns its original pointer and we make no change to it. */
+    replacement = intro_original_allocator(plan.required_bytes);
+    if (replacement == NULL) {
+        event = InterlockedIncrement(&intro_capacity_allocation_failures);
+        if (event <= 4) diagnostic_write(
+            "intro backing growth allocation unavailable r283\r\n");
+        goto finished;
+    }
+    AcquireSRWLockExclusive(&intro_backing_lock);
+    current = intro_backing_snapshot();
+    if (intro_backing_tracker.pointer == tracked.pointer &&
+        intro_backing_tracker.capacity_bytes == tracked.capacity_bytes &&
+        current.backing == surface.backing &&
+        current.active == surface.active &&
+        current.width == surface.width &&
+        current.height == surface.height &&
+        current.pitch == surface.pitch &&
+        mtw_intro_backing_make_plan(
+            &intro_backing_tracker, &current, &current_plan) &&
+        current_plan.required_bytes == plan.required_bytes &&
+        mtw_intro_backing_commit_growth(
+            &intro_backing_tracker, &current,
+            (uintptr_t)replacement, &old_pointer)) {
+        *(volatile uintptr_t *)(game_base + MTW_INTRO_BACKING_OWNER_RVA) =
+            current.backing;
+        *(volatile uintptr_t *)(game_base + MTW_BACKING_BITS_RVA) =
+            current.active;
+        *(volatile uint32_t *)(game_base + MTW_BACKING_PITCH_RVA) =
+            current.pitch;
+        committed = 1;
+    }
+    ReleaseSRWLockExclusive(&intro_backing_lock);
+    if (committed) {
+        intro_original_deallocator((void *)old_pointer);
+        event = InterlockedIncrement(&intro_capacity_replacements);
+        if (event <= 4) diagnostic_write(
+            "intro stale backing replaced at resize r283\r\n");
+    } else if ((uintptr_t)replacement != tracked.pointer) {
+        intro_original_deallocator(replacement);
+    }
+finished:
+    SetLastError(previous_error);
+}
+
+__declspec(naked) static void intro_backing_return_hook_stub(void) {
+    __asm {
+        pushfd
+        pushad
+        call intro_backing_after_lock
+        popad
+        popfd
+        pop ebx
+        add esp, 0x7C
+        ret
+    }
 }
 #endif
 
@@ -4089,6 +4669,27 @@ static int write_rel_call(uintptr_t target,
     return bytes_match(target, patch, sizeof(patch));
 }
 
+static int install_battle_icon_atlas_hook(void) {
+    uintptr_t callsite = game_base + MTW_BATTLE_ICON_ATLAS_INIT_CALL_RVA;
+    uintptr_t original = game_base + MTW_BATTLE_ICON_ATLAS_INIT_TARGET_RVA;
+
+    if (game_base == 0u || !mtw_dust_simulation_hook_installed() ||
+        !bytes_match(original, battle_icon_atlas_init_target_expected,
+                     sizeof(battle_icon_atlas_init_target_expected)) ||
+        !bytes_match(callsite, battle_icon_atlas_init_call_expected,
+                     sizeof(battle_icon_atlas_init_call_expected))) {
+        return 0;
+    }
+    original_battle_icon_atlas_init =
+        (mtw_battle_icon_atlas_init_fn)original;
+    if (!write_rel_call(callsite, battle_icon_atlas_init_hook,
+                        battle_icon_atlas_init_call_expected)) {
+        original_battle_icon_atlas_init = NULL;
+        return 0;
+    }
+    return 1;
+}
+
 static void restore_original(uintptr_t target,
                              const unsigned char *original,
                              size_t size) {
@@ -4101,6 +4702,170 @@ static void restore_original(uintptr_t target,
     memcpy((void *)target, original, size);
     FlushInstructionCache(GetCurrentProcess(), (void *)target, size);
     VirtualProtect((void *)target, size, old_protect, &ignored);
+}
+
+#if MTW_ENABLE_MOVIE_FIX
+static int install_intro_backing_repair(void) {
+    static const unsigned char morph_first_expected[5] = {
+        0xE8u, 0x17u, 0x9Eu, 0xD5u, 0xFFu
+    };
+    static const unsigned char morph_second_expected[5] = {
+        0xE8u, 0xF9u, 0x9Du, 0xD5u, 0xFFu
+    };
+    static const unsigned char movie_pump_expected[6] = {
+        0xA0u, 0xF0u, 0xF5u, 0xE6u, 0x00u, 0x53u
+    };
+    uintptr_t alloc_first = game_base + MTW_INTRO_ALLOC_FIRST_RVA;
+    uintptr_t alloc_second = game_base + MTW_INTRO_ALLOC_SECOND_RVA;
+    uintptr_t return_first = game_base + MTW_INTRO_RETURN_FIRST_RVA;
+    uintptr_t return_second = game_base + MTW_INTRO_RETURN_SECOND_RVA;
+    uintptr_t morph_first = game_base + MTW_INTRO_CREDITS_MORPH_FIRST_RVA;
+    uintptr_t morph_second = game_base + MTW_INTRO_CREDITS_MORPH_SECOND_RVA;
+
+    /* This predicate verifies the supported EXE and pinned dgVoodoo files by
+     * full SHA-256 before any hard-coded game instruction is altered. The
+     * game allocator/free and all four call/return sites are checked again
+     * against their exact loaded bytes. */
+    if (game_base != 0x00400000u || backend_base == 0u ||
+        !mtw_dust_simulation_hook_installed() ||
+        !backend_image_is_supported((HMODULE)backend_base) ||
+        !bytes_match(alloc_first, mtw_intro_alloc_first_expected,
+                     sizeof(mtw_intro_alloc_first_expected)) ||
+        !bytes_match(alloc_second, mtw_intro_alloc_second_expected,
+                     sizeof(mtw_intro_alloc_second_expected)) ||
+        !bytes_match(return_first, mtw_intro_return_expected,
+                     sizeof(mtw_intro_return_expected)) ||
+        !bytes_match(return_second, mtw_intro_return_expected,
+                     sizeof(mtw_intro_return_expected)) ||
+        !bytes_match(game_base + MTW_INTRO_ALLOCATOR_RVA,
+                     mtw_intro_allocator_expected,
+                     sizeof(mtw_intro_allocator_expected)) ||
+        !bytes_match(game_base + MTW_INTRO_DEALLOCATOR_RVA,
+                     mtw_intro_deallocator_expected,
+                     sizeof(mtw_intro_deallocator_expected)) ||
+        !bytes_match(game_base + MTW_INTRO_FIRST_PITCH_RVA,
+                     mtw_intro_first_pitch_expected,
+                     sizeof(mtw_intro_first_pitch_expected)) ||
+        !bytes_match(game_base + MTW_INTRO_SECOND_PITCH_RVA,
+                     mtw_intro_second_pitch_expected,
+                     sizeof(mtw_intro_second_pitch_expected)) ||
+        !bytes_match(morph_first, morph_first_expected,
+                     sizeof(morph_first_expected)) ||
+        !bytes_match(morph_second, morph_second_expected,
+                     sizeof(morph_second_expected)) ||
+        !bytes_match(game_base + MTW_INTRO_MESSAGE_PUMP_RVA,
+                     movie_pump_expected, sizeof(movie_pump_expected))) {
+        return 0;
+    }
+    intro_original_allocator = (mtw_intro_allocator_fn)(
+        game_base + MTW_INTRO_ALLOCATOR_RVA);
+    intro_original_deallocator = (mtw_intro_deallocator_fn)(
+        game_base + MTW_INTRO_DEALLOCATOR_RVA);
+    intro_original_morph = (mtw_intro_morph_fn)(
+        game_base + MTW_INTRO_CREDITS_MORPH_TARGET_RVA);
+    intro_original_message_pump = (mtw_intro_message_pump_fn)(
+        game_base + MTW_INTRO_MESSAGE_PUMP_RVA);
+
+    if (!write_rel_call(alloc_first, intro_backing_allocate_hook,
+                        mtw_intro_alloc_first_expected)) return 0;
+    if (!write_rel_call(alloc_second, intro_backing_allocate_hook,
+                        mtw_intro_alloc_second_expected)) {
+        restore_original(alloc_first, mtw_intro_alloc_first_expected,
+                         sizeof(mtw_intro_alloc_first_expected));
+        return 0;
+    }
+    if (!write_rel_jump(return_first, intro_backing_return_hook_stub,
+                        mtw_intro_return_expected,
+                        sizeof(mtw_intro_return_expected))) {
+        restore_original(alloc_second, mtw_intro_alloc_second_expected,
+                         sizeof(mtw_intro_alloc_second_expected));
+        restore_original(alloc_first, mtw_intro_alloc_first_expected,
+                         sizeof(mtw_intro_alloc_first_expected));
+        return 0;
+    }
+    if (!write_rel_jump(return_second, intro_backing_return_hook_stub,
+                        mtw_intro_return_expected,
+                        sizeof(mtw_intro_return_expected))) {
+        restore_original(return_first, mtw_intro_return_expected,
+                         sizeof(mtw_intro_return_expected));
+        restore_original(alloc_second, mtw_intro_alloc_second_expected,
+                         sizeof(mtw_intro_alloc_second_expected));
+        restore_original(alloc_first, mtw_intro_alloc_first_expected,
+                         sizeof(mtw_intro_alloc_first_expected));
+        return 0;
+    }
+    if (!write_rel_call(morph_first, intro_credits_final_morph_hook,
+                        morph_first_expected)) {
+        restore_original(return_second, mtw_intro_return_expected,
+                         sizeof(mtw_intro_return_expected));
+        restore_original(return_first, mtw_intro_return_expected,
+                         sizeof(mtw_intro_return_expected));
+        restore_original(alloc_second, mtw_intro_alloc_second_expected,
+                         sizeof(mtw_intro_alloc_second_expected));
+        restore_original(alloc_first, mtw_intro_alloc_first_expected,
+                         sizeof(mtw_intro_alloc_first_expected));
+        return 0;
+    }
+    if (!write_rel_call(morph_second, intro_credits_final_morph_hook,
+                        morph_second_expected)) {
+        restore_original(morph_first, morph_first_expected,
+                         sizeof(morph_first_expected));
+        restore_original(return_second, mtw_intro_return_expected,
+                         sizeof(mtw_intro_return_expected));
+        restore_original(return_first, mtw_intro_return_expected,
+                         sizeof(mtw_intro_return_expected));
+        restore_original(alloc_second, mtw_intro_alloc_second_expected,
+                         sizeof(mtw_intro_alloc_second_expected));
+        restore_original(alloc_first, mtw_intro_alloc_first_expected,
+                         sizeof(mtw_intro_alloc_first_expected));
+        return 0;
+    }
+    return 1;
+}
+#endif
+
+static int install_menu_conversion_hooks(void) {
+    static const unsigned char game_expected[MTW_MENU_GAME_CALLSITE_SIZE] = {
+        0x8B, 0x41, 0x78, 0xFF, 0xD0
+    };
+    static const unsigned char backend_expected[
+        MTW_MENU_BACKEND_CALLSITE_SIZE] = {
+        0x6A, 0x04, 0x51, 0xFF, 0x50, 0x34
+    };
+    uintptr_t game_target;
+    uintptr_t backend_target;
+
+    if (game_base != 0x00400000u || backend_base == 0u ||
+        !mtw_dust_simulation_hook_installed() ||
+        !backend_image_is_supported((HMODULE)backend_base)) {
+        return 0;
+    }
+    game_target = game_base + MTW_MENU_UPDATE_SURFACE_CALLSITE_RVA;
+    backend_target = backend_base +
+                     DGVOODOO_MENU_CONVERSION_DRAW_CALLSITE_RVA;
+    if (!mtw_menu_game_callsite_supported(
+            (const unsigned char *)game_target,
+            MTW_MENU_GAME_CALLSITE_SIZE) ||
+        !mtw_menu_backend_callsite_supported(
+            (const unsigned char *)backend_target,
+            MTW_MENU_BACKEND_CALLSITE_SIZE)) {
+        return 0;
+    }
+    menu_update_surface_continue = (void *)(
+        game_target + MTW_MENU_GAME_CALLSITE_SIZE);
+    menu_conversion_draw_continue = (void *)(
+        backend_target + MTW_MENU_BACKEND_CALLSITE_SIZE);
+    if (!write_rel_jump(game_target, menu_update_surface_hook_stub,
+                        game_expected, sizeof(game_expected))) {
+        return 0;
+    }
+    if (!write_rel_jump(backend_target, menu_conversion_draw_hook_stub,
+                        backend_expected, sizeof(backend_expected))) {
+        restore_original(game_target, game_expected,
+                         sizeof(game_expected));
+        return 0;
+    }
+    return 1;
 }
 
 #if MTW_ENABLE_SPRITE_CLIP_FIX
@@ -4602,6 +5367,13 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
     diagnostic_open();
     game_base = (uintptr_t)GetModuleHandleW(NULL);
     backend_base = (uintptr_t)GetModuleHandleW(L"dgVoodoo_D3D9.dll");
+#if MTW_ENABLE_MOVIE_FIX
+    if (install_intro_backing_repair()) {
+        diagnostic_write("intro fallback capacity and row pitch guarded r283\r\n");
+    } else {
+        diagnostic_write("intro fallback capacity and row pitch unavailable r283\r\n");
+    }
+#endif
     InitializeCriticalSection(&loading_shadow_lock);
     InitializeCriticalSection(&focus_span_lock);
     InitializeCriticalSection(&constructor_return_lock);
@@ -4645,6 +5417,11 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         return TRUE;
     }
     if (install_all_hooks_transactionally()) {
+        if (install_battle_icon_atlas_hook()) {
+            diagnostic_write("battle unit-icon atlas live rebuild armed r195\r\n");
+        } else {
+            diagnostic_write("battle unit-icon atlas rebuild unavailable r195\r\n");
+        }
 #if MTW_ENABLE_SPRITE_CLIP_FIX
         if (install_blitter_guard_hook()) {
             diagnostic_write("offscreen RLE sprite guard installed mtw001\r\n");
@@ -4674,6 +5451,11 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
             diagnostic_write("mapper shader clone hook installed r154\r\n");
         } else {
             diagnostic_write("mapper shader clone hook unavailable r154\r\n");
+        }
+        if (install_menu_conversion_hooks()) {
+            diagnostic_write("menu UpdateSurface conversion hooks installed r280\r\n");
+        } else {
+            diagnostic_write("menu UpdateSurface conversion hooks unavailable r280\r\n");
         }
         diagnostic_write("focus-group reverse authority active r6f160\r\n");
         diagnostic_write("outer-owned guard diversion active r6f160\r\n");

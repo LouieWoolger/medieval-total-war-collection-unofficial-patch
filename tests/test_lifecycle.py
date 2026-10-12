@@ -18,6 +18,7 @@ import winreg
 import pytest
 from native_helper import helper_path
 from registry_isolation import read_registration, registration_name, remove_test_registration
+from game_fixture_assets import copy_campaign_text
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = helper_path()
@@ -64,6 +65,7 @@ def games(tmp_path: Path):
         game = tmp_path / name
         game.mkdir()
         shutil.copy2(source, game / "Medieval_TW.exe")
+        copy_campaign_text(Path(source), game)
         (game / "SaveGames").mkdir()
         (game / "SaveGames/personal.cpg").write_bytes(b"untouched personal save\x00\xff")
         (game / "unrelated-mod.txt").write_bytes(b"unrelated mod")

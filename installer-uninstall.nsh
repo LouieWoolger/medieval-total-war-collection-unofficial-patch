@@ -37,6 +37,7 @@ Function un.onInit
     StrCpy $TerrainSelected "1"
     StrCpy $ScrollSelected "0"
     StrCpy $SpriteSelected "1"
+    StrCpy $FastSelected "0"
     StrCpy $OperationName "removal"
     StrCpy $ChildStatus "not-started"
     StrCpy $RemovalRestored "0"

@@ -1,0 +1,4 @@
+LIBRARY D3D9.dll
+EXPORTS
+    Direct3DCreate9 @16
+    MtwMovieFixStatus

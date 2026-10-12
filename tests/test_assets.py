@@ -22,6 +22,10 @@ EXPECTED_ASSETS = {
         388854,
         "945FF6E4CAF7974B4CF67875930152470ED1E93B8EAF47C927D68FC30626FA81",
     ),
+    "fast-computer-moves.bmp": (
+        388854,
+        "223B10F33D0033FC91E395DD1D0E06397942F1C28A7CE32424EF68CAFDB679DE",
+    ),
     "discord-badge-hover.bmp": (
         11702,
         "73BCF5C4A9D130C40EE1AD1D0DE818137B27C18738D64DF46F65C33E318C252D",
@@ -75,6 +79,7 @@ def test_nsis_bitmaps_have_exact_dimensions_and_format() -> None:
         "compatibility.bmp": (480, 270),
         "campaign-scrolling.bmp": (480, 270),
         "sprite-clipping.bmp": (480, 270),
+        "fast-computer-moves.bmp": (480, 270),
         "discord-badge.bmp": (138, 28),
         "discord-badge-hover.bmp": (138, 28),
         "kofi-badge.bmp": (138, 28),

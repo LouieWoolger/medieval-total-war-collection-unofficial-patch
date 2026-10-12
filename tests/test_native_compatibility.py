@@ -202,6 +202,8 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     shutil.copy2(state / "originals/Medieval_TW.exe", game / "Medieval_TW.exe")
     receipt["schema"] = "unofficial-medieval-total-war-patch-install-v1"
     receipt["files"].pop("Medieval_TW.exe")
+    receipt["files"].pop("Loc/Eng/CHANGES.TXT")
+    receipt.pop("fast_moves_fix_enabled", None)
     receipt["preinstall_mode"] = "r185"
     receipt["files"]["ddraw.dll"].update(existed=True, original_sha256=hashlib.sha256(original).hexdigest().upper(),
                                            original_length=len(original), snapshot_relative="originals/ddraw.dll",

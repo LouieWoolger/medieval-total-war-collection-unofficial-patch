@@ -16,6 +16,7 @@ import sys
 import pytest
 from registry_isolation import (LEGACY_NAMES, read_registration, registration_name,
                                 remove_test_registration, assert_empty_registration)
+from game_fixture_assets import copy_campaign_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,9 @@ SCROLL_EXE_HASH = "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF
 SPRITE_EXE_HASH = "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0"
 COMBINED_EXE_HASH = "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"
 RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf")
+LOCALE_NAME = "Loc/Eng/CHANGES.TXT"
+STOCK_LOCALE_HASH = "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC"
+FAST_LOCALE_HASH = "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B"
 
 
 pytestmark = pytest.mark.skipif(
@@ -71,13 +75,15 @@ def isolated_uninstall_registration(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 def new_game(root: Path, name: str) -> Path:
     game = root / name
     game.mkdir(parents=True)
-    shutil.copy2(supported_exe_source(), game / "Medieval_TW.exe")
+    source = supported_exe_source()
+    shutil.copy2(source, game / "Medieval_TW.exe")
+    copy_campaign_text(source, game)
     shutil.copy2(DIST_INSTALLER, game / DIST_INSTALLER.name)
     return game
 
 
 def snapshot(game: Path) -> dict[str, str | None]:
-    names = ["Medieval_TW.exe", *RUNTIME_NAMES, "D3D8.dll"]
+    names = ["Medieval_TW.exe", LOCALE_NAME, *RUNTIME_NAMES, "D3D8.dll"]
     names += [f"{name}.unofficial-patch.bak" for name in RUNTIME_NAMES]
     return {name: sha256(game / name) if (game / name).is_file() else None for name in names}
 
@@ -100,7 +106,8 @@ def assert_registration(game: Path) -> None:
 
 
 def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bool | None = None,
-                  sprite_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
+                  sprite_fix: bool | None = None,
+                  fast_moves_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
     logs.mkdir(parents=True)
     command = [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
@@ -110,6 +117,8 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
         command.append(f"/SCROLLFIX={int(scroll_fix)}")
     if sprite_fix is not None:
         command.append(f"/SPRITEFIX={int(sprite_fix)}")
+    if fast_moves_fix is not None:
+        command.append(f"/FASTMOVESFIX={int(fast_moves_fix)}")
     result = subprocess.run(
         command,
         cwd=game,
@@ -182,12 +191,68 @@ def test_compiled_all_seven_independent_fix_combinations(tmp_path: Path) -> None
         assert receipt["scroll_fix_enabled"] is scroll
         assert receipt["sprite_fix_enabled"] is sprite
         assert receipt["sprite_delivery"] == "direct-exe"
-        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v4"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v5"
         if installation_id is None:
             installation_id = receipt["installation_id"]
         assert receipt["installation_id"] == installation_id
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before
+
+
+def test_compiled_fast_computer_moves_is_independent_reversible_and_combines_with_terrain(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Fast computer moves combinations")
+    before = snapshot(game)
+    base_manifest = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
+    variants = (
+        (False, True, "payload-manifest-fast-only.json"),
+        (True, True, "payload-manifest-scroll-sprite-off-fast.json"),
+        (True, False, "payload-manifest-scroll-sprite-off.json"),
+    )
+    installation_id = None
+    for terrain, fast, manifest_name in variants:
+        result = run_installer(game, terrain_fix=terrain, scroll_fix=False,
+                               sprite_fix=False, fast_moves_fix=fast)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        receipt = json.loads((game / ".unofficial-medieval-total-war-patch" / "install-manifest.json")
+                             .read_text(encoding="utf-8-sig"))
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v5"
+        assert receipt["fast_moves_fix_enabled"] is fast
+        assert receipt["terrain_fix_enabled"] is terrain
+        if installation_id is None:
+            installation_id = receipt["installation_id"]
+        assert receipt["installation_id"] == installation_id
+        expected_proxy = (json.loads((PAYLOAD / manifest_name).read_text(encoding="utf-8"))
+                          ["files"]["D3D9.dll"]["sha256"] if manifest_name else None)
+        assert receipt["files"]["D3D9.dll"]["installed_sha256"] == expected_proxy
+        assert (sha256(game / "D3D9.dll") if expected_proxy else None) == expected_proxy
+        if not expected_proxy:
+            assert not (game / "D3D9.dll").exists()
+        if terrain:
+            for name in RUNTIME_NAMES[1:]:
+                assert sha256(game / name) == base_manifest["files"][name]["sha256"]
+        else:
+            for name in RUNTIME_NAMES[1:]:
+                assert not (game / name).exists()
+        assert sha256(game / LOCALE_NAME) == (FAST_LOCALE_HASH if fast else STOCK_LOCALE_HASH)
+        assert receipt["files"][LOCALE_NAME]["installed_sha256"] == (
+            FAST_LOCALE_HASH if fast else STOCK_LOCALE_HASH)
+        assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_fast_computer_moves_rejects_unsupported_locale_without_game_mutation(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Unsupported fast campaign text")
+    locale = game / LOCALE_NAME
+    altered = bytearray(locale.read_bytes())
+    altered[100] ^= 1
+    locale.write_bytes(altered)
+    before = snapshot(game)
+    result = run_installer(game, terrain_fix=False, scroll_fix=False,
+                           sprite_fix=False, fast_moves_fix=True)
+    assert result.returncode != 0
+    assert snapshot(game) == before
+    assert not (game / ".unofficial-medieval-total-war-patch").exists()
 
 
 def test_compiled_repairs_stock_exe_restored_by_storefront_verification(tmp_path: Path) -> None:

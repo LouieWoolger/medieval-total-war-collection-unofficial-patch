@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_NAMES = (
     "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp",
-    "sprite-clipping.bmp",
+    "sprite-clipping.bmp", "fast-computer-moves.bmp",
     "discord-badge.bmp", "discord-badge-hover.bmp", "kofi-badge.bmp",
     "kofi-badge-hover.bmp",
 )
@@ -35,12 +35,13 @@ XP_HELPER_IMPORTS = {
         GetFileAttributesW GetFileInformationByHandle GetFullPathNameW GetLastError
         GetLongPathNameW GetModuleHandleA GetModuleHandleW GetProcAddress GetStdHandle
         GetSystemDirectoryW GetSystemTime GetSystemTimeAsFileTime GetTickCount GetVersionExW
-        InitializeCriticalSection LCMapStringW LeaveCriticalSection LoadLibraryW LocalFree
+        InitializeCriticalSection LCMapStringW LeaveCriticalSection LoadLibraryA LoadLibraryW LocalFree
         MultiByteToWideChar OpenProcess Process32FirstW Process32NextW QueryDosDeviceW
         ReadFile ReleaseMutex SetDllDirectoryW SetErrorMode SetFilePointerEx SetLastError
         SetUnhandledExceptionFilter Sleep TerminateProcess TlsGetValue VirtualProtect
         VirtualQuery WaitForSingleObject WideCharToMultiByte WriteFile""".split()),
-    "msvcrt.dll": set("""__p__iob __lc_codepage __p___mb_cur_max __p___winitenv
+    "msvcrt.dll": set("""_XcptFilter __fpecode __pxcptinfoptrs _exit
+        __p__iob __lc_codepage __p___mb_cur_max __p___winitenv
         __p__commode __p__fmode __set_app_type __setusermatherr __wgetmainargs _amsg_exit
         _cexit _errno _initterm _snwprintf _strnicmp _wcsicmp atexit abort calloc exit
         fflush fprintf fputc free localeconv malloc memchr memcmp memcpy setvbuf signal
@@ -140,6 +141,8 @@ def r185_result(path: Path | None, variant_hashes: dict[str, str]) -> dict:
              if name.endswith("_tests_exit")}
     fields = {
         "D3D9-scroll-sprite-off.dll": "scroll_sprite_off_sha256",
+        "D3D9-scroll-sprite-off-fast.dll": "scroll_sprite_off_fast_sha256",
+        "D3D9-fast-only.dll": "fast_only_sha256",
     }
     variants = {name: {"sha256": evidence.get(field),
                        "matches_packaged_runtime": evidence.get(field, "").upper() == variant_hashes[name].upper()}
@@ -295,6 +298,8 @@ def main() -> int:
         raise ValueError("Installer input is missing.")
     product = load_json(ROOT / "config/product.json")
     scroll_sprite_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off.json")
+    scroll_sprite_off_fast_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off-fast.json")
+    fast_only_payload = load_json(ROOT / "vendor/runtime/payload-manifest-fast-only.json")
     payload = scroll_sprite_off_payload
     validation = {stage: not_run("No JUnit evidence was supplied.") for stage in STAGES}
     supplied = set()
@@ -313,6 +318,8 @@ def main() -> int:
         args.r185_build_manifest,
         {name: variant["files"]["D3D9.dll"]["sha256"] for name, variant in (
             ("D3D9-scroll-sprite-off.dll", scroll_sprite_off_payload),
+            ("D3D9-scroll-sprite-off-fast.dll", scroll_sprite_off_fast_payload),
+            ("D3D9-fast-only.dll", fast_only_payload),
         )},
     )
     audit = load_json(args.audit) if args.audit else None
@@ -349,7 +356,8 @@ def main() -> int:
         "product": {"name": product["product_name"], "version": product["version"],
                     "company": product["company_name"], "component": product["component_name"],
                     "scroll_component": product["scroll_component_name"],
-                    "sprite_component": product["sprite_component_name"]},
+                     "sprite_component": product["sprite_component_name"],
+                     "fast_component": product["fast_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
                       "signature": audit["authenticode"] if audit else "not-verified"},
         "uninstaller": {"filename": product["uninstaller_filename"], "location": "game-root",
@@ -360,6 +368,16 @@ def main() -> int:
         "supported_executable_sha256": payload["target_executable"]["sha256"],
         "runtime": {"identity": payload["runtime_identity"], "dgvoodoo_version": payload["dgvoodoo_version"],
                     "files": payload["files"], "locked_settings": payload["locked_settings"]},
+        "fast_computer_moves": {
+            "optional": True,
+            "default_installer_selection": False,
+            "in_game_default_fast": True,
+            "terrain_proxy": scroll_sprite_off_fast_payload["files"]["D3D9.dll"],
+            "standalone_proxy": fast_only_payload["files"]["D3D9.dll"],
+            "stock_english_sha256": "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
+            "enabled_english_sha256": "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B",
+            "shipped_game_text_file": False,
+        },
         "direct_scroll_executable": {"stock_sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
                                      "patched_sha256": "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B",
                                      "shipped_game_executable": False},

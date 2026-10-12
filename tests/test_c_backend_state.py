@@ -284,6 +284,34 @@ def test_c_receipt_preserves_v1_v2_and_earliest_originals(state_exe,tmp_path,rec
     (game/STATE/"originals"/"D3D9.dll").write_bytes(b"changed")
     result=invoke(state_exe,["--receipt",game,path,"originals"]);assert result.returncode==2 and b"receipt_invalid" in result.stdout
 
+def test_c_v4_direct_sprite_receipt_accepts_known_disabled_proxies(state_exe,tmp_path,receipt_fixture):
+    game,receipt,_=receipt_fixture
+    receipt["schema"]="unofficial-medieval-total-war-patch-install-v4"
+    receipt["terrain_fix_enabled"]=True
+    receipt["scroll_fix_enabled"]=True
+    receipt["sprite_fix_enabled"]=True
+    receipt["sprite_delivery"]="direct-exe"
+    receipt["files"]["Medieval_TW.exe"]={
+        "existed":True,"original_sha256":EXE_HASH,"original_length":5140480,
+        "snapshot_relative":"originals/Medieval_TW.exe",
+        "installed_sha256":"982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
+        "installed_length":5152768,"sidecar_relative":None,"sidecar_created":False,
+    }
+    path=tmp_path/"known-proxy-receipt.json"
+    for proxy_hash,accepted in (
+        ("300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1",True),
+        ("064C234EB46ABDC690F42C5AFE0BFBC61F2D388DE63F9F28D23A27E064E0D6A7",True),
+        ("850861A4C92211099656ED76B06B8C443CEF162FEDD23AB6DE70DD7181704EDB",True),
+        ("09333B64AB577BD0DBFAFC5ACC26A8E19AFA82556FED3C414D3433B22315A243",True),
+        ("9791F095DB66817A4CB6A6B23DF4983254950F7F1266D1CDC3040E1E9FEFDE4C",False),
+        ("7249A0118DAE0DAB81E2E72538F75555E09B1B72EFA6F2AFFF4E6E56812E97A8",False),
+        ("F"*64,False),
+    ):
+        receipt["files"]["D3D9.dll"]["installed_sha256"]=proxy_hash
+        path.write_bytes(canonical(seal(receipt)))
+        result=invoke(state_exe,["--receipt",game,path])
+        assert (result.returncode==0)==accepted,(proxy_hash,result.stdout,result.stderr)
+
 @pytest.mark.parametrize("field,value,code",[("owner_sid","S-1-5-999","wrong_account"),
     ("directory_identity","00000000:0000000000000001","installation_moved"),
     ("target_directory","F:\\Other","installation_moved"),("registration_key","Other","receipt_invalid"),
@@ -352,7 +380,7 @@ def test_c_genuine_saved_cpp_journals_and_receipts(state_exe,tmp_path):
 
 def test_c_migration_classification_and_wire_file_identity(state_exe):
     result=invoke(state_exe,["--migration-suite"]);assert result.returncode==0,result.stdout
-    assert b"RESULT passed=11 failed=0" in result.stdout
+    assert b"RESULT passed=39 failed=0" in result.stdout
 
 def test_c_receipt_draft_repair_preserves_guid_baseline_and_member_order(state_exe,tmp_path,receipt_fixture):
     game,receipt,_=receipt_fixture;path=tmp_path/"receipt.json";path.write_bytes(canonical(receipt))

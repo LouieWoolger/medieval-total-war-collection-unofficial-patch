@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'build'),
-    [switch]$AllowUnpinnedOutput
+    [switch]$AllowUnpinnedOutput,
+    [switch]$DiagnosticDepthState
 )
 
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $r185Root = Split-Path -Parent $PSScriptRoot
+$repositoryTests = Join-Path (Split-Path -Parent (Split-Path -Parent $r185Root)) 'tests'
 $acceptedSource = Join-Path $r185Root 'accepted-dust-source'
+$dustFidelitySource = Join-Path (Split-Path -Parent $r185Root) 'dust-fidelity'
 $backend = Join-Path (Split-Path -Parent $r185Root) 'runtime\dgVoodoo_D3D9.dll'
 $controlBackend = Join-Path $acceptedSource 'dgVoodoo_D3D9-2.87.2-control.dll'
 $vsDevShell = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\18\BuildTools\Common7\Tools\Launch-VsDevShell.ps1'
@@ -36,10 +39,10 @@ $expected = [ordered]@{
 $expectedAcceptedProxy = '34F855A17C10B6BBCEFD844B99A5B5A7F442DECDDFFDB0D898645FA2FF0B0F0C'
 $expectedBackend = '6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2'
 $expectedControlBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
-$expectedR185Proxy = 'AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA'
-$expectedScrollOffProxy = '24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E'
-$expectedSpriteOffProxy = '5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C'
-$expectedScrollSpriteOffProxy = '300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1'
+$expectedR185Proxy = 'BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848'
+$expectedScrollOffProxy = 'DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A'
+$expectedSpriteOffProxy = '397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232'
+$expectedScrollSpriteOffProxy = 'B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -104,7 +107,15 @@ if ($controlHash -ne $expectedAcceptedProxy) {
 
 & $vsDevShell -Arch x86 -HostArch amd64 -SkipAutomaticLocation
 $acceptedObj = Join-Path $combined 'accepted_dust.obj'
+$dustBridgeObj = Join-Path $combined 'dust_565_bridge.obj'
+$minhookBufferObj = Join-Path $combined 'minhook_buffer.obj'
+$minhookHookObj = Join-Path $combined 'minhook_hook.obj'
+$minhookTrampolineObj = Join-Path $combined 'minhook_trampoline.obj'
+$minhookHdeObj = Join-Path $combined 'minhook_hde32.obj'
 $publicObj = Join-Path $combined 'combined_proxy.obj'
+$fastPublicObj = Join-Path $combined 'combined_proxy_fast.obj'
+$fastOnlyPublicObj = Join-Path $combined 'campaign_fast_moves_proxy.obj'
+$fastMovesObj = Join-Path $combined 'campaign_fast_moves.obj'
 $frontendObj = Join-Path $combined 'frontend_fix.obj'
 $frontendScrollOffObj = Join-Path $combined 'frontend_fix_scroll_off.obj'
 $frontendSpriteOffObj = Join-Path $combined 'frontend_fix_sprite_off.obj'
@@ -126,20 +137,68 @@ $combinedDll = Join-Path $combined 'D3D9.dll'
 $scrollOffDll = Join-Path $combined 'D3D9-scroll-off.dll'
 $spriteOffDll = Join-Path $combined 'D3D9-sprite-off.dll'
 $scrollSpriteOffDll = Join-Path $combined 'D3D9-scroll-sprite-off.dll'
+$fastOnlyDll = Join-Path $combined 'D3D9-fast-only.dll'
+$scrollSpriteOffFastDll = Join-Path $combined 'D3D9-scroll-sprite-off-fast.dll'
 
-& $clangCl @(
+$dustCompileDefinitions = @('/DMTW_DUST_CHILD_DELTA=1')
+$dustArgs = @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
-    '/DMTW_RELEASE_BUILD=1','/DMTW_RELEASE_DENSE_HZ=15','/DMTW_RELEASE_VIRTUAL_MANAGER_FPS=19',
-    '/DDirect3DCreate9=mtw_accepted_dust_direct3dcreate9',
-    ('/Fo' + $acceptedObj),(Join-Path $acceptedSource 'd3d9_proxy.c')
+    '/DDirect3DCreate9=mtw_accepted_dust_direct3dcreate9'
+) + $dustCompileDefinitions + @(
+    ('/Fo' + $acceptedObj),(Join-Path $dustFidelitySource 'd3d9_proxy.c')
 )
-if ($LASTEXITCODE -ne 0) { throw "Accepted object build failed: $LASTEXITCODE" }
+Write-Output ('dust compilation: ' + ($dustArgs -join ' '))
+& $clangCl @dustArgs
+if ($LASTEXITCODE -ne 0) { throw "Dust simulation object build failed: $LASTEXITCODE" }
+
+$bridgeCompileDefinitions = @('/DMTW_DUST_DEFERRED_TAIL=1')
+if ($DiagnosticDepthState) {
+    $bridgeCompileDefinitions += '/DMTW_DIAGNOSTIC_DEPTH_STATE=1'
+}
+$bridgeArgs = @(
+    '/nologo','/TP','--target=i686-pc-windows-msvc','/EHsc','/std:c++17',
+    '/O2','/W4','/WX','/c'
+) + $bridgeCompileDefinitions + @(
+    ('/Fo' + $dustBridgeObj),(Join-Path $dustFidelitySource 'dust_565_bridge.cpp')
+)
+& $clangCl @bridgeArgs
+if ($LASTEXITCODE -ne 0) { throw "Dust render bridge object build failed: $LASTEXITCODE" }
+
+foreach ($entry in @(
+    @('src\buffer.c', $minhookBufferObj),
+    @('src\hook.c', $minhookHookObj),
+    @('src\trampoline.c', $minhookTrampolineObj),
+    @('src\hde\hde32.c', $minhookHdeObj)
+)) {
+    & $clangCl @(
+        '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W3','/c',
+        ('/Fo' + $entry[1]),(Join-Path $dustFidelitySource ('minhook\' + $entry[0]))
+    )
+    if ($LASTEXITCODE -ne 0) { throw "MinHook x86 build failed: $($entry[0])" }
+}
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
     ('/Fo' + $publicObj),(Join-Path $PSScriptRoot 'combined_proxy.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Public bridge build failed: $LASTEXITCODE" }
+
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_FAST_MOVES=1',
+    ('/Fo' + $fastPublicObj),(Join-Path $PSScriptRoot 'combined_proxy.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast combined bridge build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    ('/Fo' + $fastOnlyPublicObj),(Join-Path $PSScriptRoot 'campaign_fast_moves_proxy.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast feature-only bridge build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    ('/Fo' + $fastMovesObj),(Join-Path $PSScriptRoot 'campaign_fast_moves.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast campaign runtime build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -254,36 +313,53 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation core build failed: $LASTEXIT
 
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $combinedDll),$acceptedObj,$publicObj,$frontendObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $combinedDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Combined inert proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $scrollOffDll),$acceptedObj,$publicObj,$frontendScrollOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $scrollOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $spriteOffDll),$acceptedObj,$publicObj,$frontendSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $spriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $scrollSpriteOffDll),$acceptedObj,$publicObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $scrollSpriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib'
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $fastOnlyDll),$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,
+    $fastOnlyPublicObj,$fastMovesObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','advapi32.lib','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast feature-only proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $scrollSpriteOffFastDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastPublicObj,$fastMovesObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','advapi32.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast combined proxy link failed: $LASTEXITCODE" }
 $combinedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $combinedDll).Hash
 $scrollOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollOffDll).Hash
 $spriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $spriteOffDll).Hash
 $scrollSpriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffDll).Hash
+$fastOnlyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fastOnlyDll).Hash
+$scrollSpriteOffFastHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffFastDll).Hash
 if (-not $AllowUnpinnedOutput -and $combinedHash -ne $expectedR185Proxy) {
     throw "R185 reproducible build drift: $combinedHash"
 }
@@ -459,6 +535,78 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation tests build failed: $LASTEXI
 & $mapperActivationTests
 if ($LASTEXITCODE -ne 0) { throw "Mapper activation tests failed: $LASTEXITCODE" }
 
+$menuFocusConversionTests = Join-Path $combined 'menu_focus_conversion_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $PSScriptRoot),
+    ('/Fe' + $menuFocusConversionTests),
+    (Join-Path $repositoryTests 'native_menu_focus_conversion.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Menu focus conversion tests build failed: $LASTEXITCODE" }
+& $menuFocusConversionTests
+if ($LASTEXITCODE -ne 0) { throw "Menu focus conversion tests failed: $LASTEXITCODE" }
+
+$menuShaderMarkerTests = Join-Path $combined 'menu_shader_marker_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $PSScriptRoot),
+    ('/Fe' + $menuShaderMarkerTests),
+    (Join-Path $repositoryTests 'native_menu_shader_marker.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','d3d11.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Menu shader marker tests build failed: $LASTEXITCODE" }
+& $menuShaderMarkerTests
+if ($LASTEXITCODE -ne 0) { throw "Menu shader marker tests failed: $LASTEXITCODE" }
+
+$introBackingTests = Join-Path $combined 'intro_backing_repair_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $PSScriptRoot),
+    ('/Fe' + $introBackingTests),
+    (Join-Path $repositoryTests 'native_intro_backing_repair.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Intro backing repair tests build failed: $LASTEXITCODE" }
+& $introBackingTests
+if ($LASTEXITCODE -ne 0) { throw "Intro backing repair tests failed: $LASTEXITCODE" }
+
+$introMorphTests = Join-Path $combined 'intro_morph_guard_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $PSScriptRoot),
+    ('/Fe' + $introMorphTests),
+    (Join-Path $repositoryTests 'native_intro_morph_guard.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Intro morph guard tests build failed: $LASTEXITCODE" }
+& $introMorphTests
+if ($LASTEXITCODE -ne 0) { throw "Intro morph guard tests failed: $LASTEXITCODE" }
+
+$dustIdentityTests = Join-Path $combined 'dust_draw_identity_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $dustFidelitySource),
+    ('/Fe' + $dustIdentityTests),
+    (Join-Path $repositoryTests 'native_dust_draw_identity.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Dust draw identity tests build failed: $LASTEXITCODE" }
+& $dustIdentityTests
+if ($LASTEXITCODE -ne 0) { throw "Dust draw identity tests failed: $LASTEXITCODE" }
+
+$battleIconAtlasTests = Join-Path $combined 'battle_icon_atlas_tests.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/I' + $PSScriptRoot),
+    ('/Fe' + $battleIconAtlasTests),
+    (Join-Path $repositoryTests 'native_battle_icon_atlas.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Battle icon atlas tests build failed: $LASTEXITCODE" }
+& $battleIconAtlasTests
+if ($LASTEXITCODE -ne 0) { throw "Battle icon atlas tests failed: $LASTEXITCODE" }
+
 $campaignPanTests = Join-Path $combined 'campaign_pan_core_tests.exe'
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
@@ -471,6 +619,17 @@ if ($LASTEXITCODE -ne 0) { throw "Campaign pan tests build failed: $LASTEXITCODE
 & $campaignPanTests
 if ($LASTEXITCODE -ne 0) { throw "Campaign pan tests failed: $LASTEXITCODE" }
 
+$fastMovesTests = Join-Path $combined 'native_fast_computer_moves.exe'
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX',
+    ('/Fe' + $fastMovesTests),
+    (Join-Path $repositoryTests 'native_fast_computer_moves.c'),
+    '/link','/MACHINE:X86','/BREPRO','/INCREMENTAL:NO'
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast computer moves tests build failed: $LASTEXITCODE" }
+& $fastMovesTests
+if ($LASTEXITCODE -ne 0) { throw "Fast computer moves tests failed: $LASTEXITCODE" }
+
 $manifest = [ordered]@{
     schema = 'mtw.combined-proxy-r185.v1'
     status = if ($AllowUnpinnedOutput) { 'development_candidate' } else { 'accepted_release' }
@@ -479,6 +638,8 @@ $manifest = [ordered]@{
     scroll_off_sha256 = $scrollOffHash
     sprite_off_sha256 = $spriteOffHash
     scroll_sprite_off_sha256 = $scrollSpriteOffHash
+    fast_only_sha256 = $fastOnlyHash
+    scroll_sprite_off_fast_sha256 = $scrollSpriteOffFastHash
     backend_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $combined 'dgVoodoo_D3D9.dll')).Hash
     smoke_loader_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $smokeExe).Hash
     smoke_loader_exit = 0
@@ -506,10 +667,27 @@ $manifest = [ordered]@{
     mapper_shader_clone_tests_exit = 0
     mapper_activation_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $mapperActivationTests).Hash
     mapper_activation_tests_exit = 0
+    menu_focus_conversion_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $menuFocusConversionTests).Hash
+    menu_focus_conversion_tests_exit = 0
+    menu_shader_marker_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $menuShaderMarkerTests).Hash
+    menu_shader_marker_tests_exit = 0
+    intro_backing_repair_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $introBackingTests).Hash
+    intro_backing_repair_tests_exit = 0
+    intro_morph_guard_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $introMorphTests).Hash
+    intro_morph_guard_tests_exit = 0
+    dust_draw_identity_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $dustIdentityTests).Hash
+    dust_draw_identity_tests_exit = 0
+    battle_icon_atlas_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $battleIconAtlasTests).Hash
+    battle_icon_atlas_tests_exit = 0
     campaign_pan_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $campaignPanTests).Hash
     campaign_pan_tests_exit = 0
+    fast_computer_moves_tests_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $fastMovesTests).Hash
+    fast_computer_moves_tests_exit = 0
+    fast_computer_moves_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'campaign_fast_moves.c')).Hash
+    fast_computer_moves_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'campaign_fast_moves_core.h')).Hash
     campaign_pan_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'campaign_pan_core.c')).Hash
     frontend_fix_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_fix.c')).Hash
+    battle_icon_atlas_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'battle_icon_atlas_core.h')).Hash
     frontend_epoch_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_epoch_core.c')).Hash
     presentation_input_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'presentation_input_core.c')).Hash
     primary_origin_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'primary_origin_guard_core.c')).Hash
@@ -522,6 +700,13 @@ $manifest = [ordered]@{
     reentrant_lock_patch_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'reentrant_lock_patch_core.c')).Hash
     mapper_shader_clone_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'mapper_shader_clone_core.c')).Hash
     mapper_activation_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'mapper_activation_core.c')).Hash
+    menu_focus_conversion_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'menu_focus_conversion_core.h')).Hash
+    menu_focus_shader_bytecode_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'menu_focus_shader_bytecode.h')).Hash
+    menu_focus_shader_marker_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'menu_focus_shader_marker.h')).Hash
+    intro_backing_repair_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'intro_backing_repair_core.h')).Hash
+    intro_morph_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'intro_morph_guard_core.h')).Hash
+    menu_focus_pixel_aligned_vs_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'menu_focus_pixel_aligned_vs.hlsl')).Hash
+    dust_draw_identity_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dustFidelitySource 'dust_draw_identity.h')).Hash
     accepted_inputs = $expected
     accepted_source_root = 'vendor/r185/accepted-dust-source'
     accepted_control_backend_sha256 = $expectedControlBackend

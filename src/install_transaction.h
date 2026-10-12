@@ -18,7 +18,7 @@
 typedef struct {
     const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
-    int terrain_fix, scroll_fix, sprite_fix, selection_provided;
+    int terrain_fix, scroll_fix, sprite_fix, fast_moves_fix, selection_provided;
 } MedievalOptions;
 typedef struct {
     JsonDocument document;
@@ -214,8 +214,13 @@ static inline int mtw_observe(MedievalEngine *m, PatchError *e) {
     for (kind = 0; kind < 3; ++kind) for (i = 0; i < MEDIEVAL_FILE_COUNT; ++i) {
         MedievalObservation *o = &m->observations[m->observation_count++];
         if (!kind) snprintf(relative, sizeof relative, "%s", medieval_payload_names[i]);
-        else if (kind == 1) snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
-        else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
+        else if (kind == 1) {
+            if (i == 6u) strcpy(relative, "CHANGES.TXT.unofficial-patch.bak");
+            else snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
+        } else {
+            if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
+            else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
+        }
         o->path = mtw_live(m, relative, e);
         MTW_TRY(mtw_record(m, o->path, &o->record, e));
     }
@@ -381,7 +386,7 @@ static inline int mtw_transaction_add_registry(MedievalEngine *m, MedievalTransa
 static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *actual,
                                    const MedievalReceipt *retained, const char *status, PatchError *e) {
     size_t k;
-    if (actual->old_v3 != retained->old_v3 ||
+    if (actual->old_v3 != retained->old_v3 || actual->old_v4 != retained->old_v4 ||
         medieval_receipt_file_count(actual) != medieval_receipt_file_count(retained) ||
         strcmp(actual->installation_id, retained->installation_id) || strcmp(actual->status, status) ||
         strcmp(actual->uninstaller_sha256, retained->uninstaller_sha256) ||
@@ -402,6 +407,11 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
             if (a != b || strcmp(mtw_s(actual->json, "sprite_delivery"), "direct-exe") ||
                 strcmp(mtw_s(retained->json, "sprite_delivery"), "direct-exe"))
                 return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained Sprite selection or delivery.");
+        }
+        if (!actual->old_v3 && !actual->old_v4) {
+            if (!medieval_boolean(actual->json, "fast_moves_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "fast_moves_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained Fast computer moves selection.");
         }
     }
     for (k = 0; k < medieval_receipt_file_count(actual); ++k) {

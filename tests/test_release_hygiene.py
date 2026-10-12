@@ -73,10 +73,11 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     assert manifest["product"]["version"] == product["version"] == "1.0.0"
     assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
+    assert manifest["product"]["fast_component"] == product["fast_component_name"]
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R186-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R195-scroll-sprite-off"
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["sprite_delivery"] == "direct-exe"
@@ -141,6 +142,15 @@ def test_release_manifest_and_checksums_match_dist() -> None:
         expected = json.loads((ROOT / "vendor" / "runtime" / payload_name).read_text(encoding="utf-8"))
         assert manifest[section]["files"]["D3D9.dll"] == expected["files"]["D3D9.dll"]
         assert manifest["validation"]["r185_build"]["runtime_variants"][binary]["matches_packaged_runtime"] is True
+    for key, binary, payload_name in (
+        ("terrain_proxy", "D3D9-scroll-sprite-off-fast.dll", "payload-manifest-scroll-sprite-off-fast.json"),
+        ("standalone_proxy", "D3D9-fast-only.dll", "payload-manifest-fast-only.json"),
+    ):
+        expected = json.loads((ROOT / "vendor" / "runtime" / payload_name).read_text(encoding="utf-8"))
+        assert manifest["fast_computer_moves"][key] == expected["files"]["D3D9.dll"]
+        assert manifest["validation"]["r185_build"]["runtime_variants"][binary]["matches_packaged_runtime"] is True
+    assert manifest["fast_computer_moves"]["optional"] is True
+    assert manifest["fast_computer_moves"]["shipped_game_text_file"] is False
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
@@ -186,9 +196,12 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "payload-scroll-sprite-off\\ddraw.dll",
         "payload-scroll-sprite-off\\d3dimm.dll",
         "payload-scroll-sprite-off\\dgvoodoo.conf",
+        "payload-scroll-sprite-off-fast\\d3d9.dll",
+        "payload-fast-only\\d3d9.dll",
         "compatibility.bmp",
         "campaign-scrolling.bmp",
         "sprite-clipping.bmp",
+        "fast-computer-moves.bmp",
     ):
         assert required in lowered
     assert "payload-scroll-off\\" not in lowered

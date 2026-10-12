@@ -10,6 +10,7 @@ import sys
 import pytest
 from native_helper import helper_path
 from registry_isolation import LEGACY_NAMES, read_registration, registration_name, remove_test_registration
+from game_fixture_assets import copy_campaign_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,9 @@ def supported_exe_source() -> Path:
 def new_game(root: Path, name: str = "Game Folder") -> Path:
     game = root / name
     game.mkdir(parents=True)
-    shutil.copy2(supported_exe_source(), game / "Medieval_TW.exe")
+    source = supported_exe_source()
+    shutil.copy2(source, game / "Medieval_TW.exe")
+    copy_campaign_text(source, game)
     return game
 
 
@@ -324,7 +327,7 @@ def test_previous_fullscreen_config_upgrades_to_single_window_presentation(tmp_p
 
     inspected, report = invoke("Inspect", game)
     assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
-    assert report["mode"] == "r186"
+    assert report["mode"] == "r195"
 
     upgraded, report = invoke("Install", game)
     assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)

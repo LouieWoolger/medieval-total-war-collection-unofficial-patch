@@ -1,16 +1,33 @@
-Unofficial Medieval: Total War Collection Patch runtime R186
+Unofficial Medieval: Total War Collection Patch core runtime R195
 
-R186 D3D9 proxy SHA-256:
-AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA
+Optional R196 Fast computer moves variants are source-built extensions of
+this core runtime. The fast-only variant forwards to system D3D9 and does not
+load dgVoodoo2; the combined variant retains the R195 Terrain runtime.
 
-R186 scroll-disabled D3D9 proxy SHA-256:
-24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E
+R196 fast-only D3D9 proxy SHA-256:
+5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2
 
-R186 sprite-disabled D3D9 proxy SHA-256:
-5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C
+R196 combined Terrain and Fast D3D9 proxy SHA-256:
+3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159
 
-R186 scroll-and-sprite-disabled D3D9 proxy SHA-256:
-300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1
+R195 D3D9 proxy SHA-256:
+BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848
+
+R195 scroll-disabled D3D9 proxy SHA-256:
+DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A
+
+R195 sprite-disabled D3D9 proxy SHA-256:
+397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232
+
+R195 scroll-and-sprite-disabled D3D9 proxy SHA-256:
+B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9
+
+Battlefield dust child movement and size deltas are normalized to measured native workload timing without a frame cap.
+The D3D11 RGB565 bridge scans all billboard centers at the exact game DrawIndexedPrimitiveUP return RVA B3FDC7, covering mixed black/white-led batches containing brown dust as well as the observed gray phase; pure nonbrown batches retain their original target.
+The main-menu UpdateSurface third conversion pass uses pixel-aligned sampling after focus return.
+The failed DirectDraw Lock recovery uses a width*2 row stride and ensures its owned fallback buffer fits the current video dimensions.
+When the wrapped movie surface is lost while the real game window is away, both final credits image transitions wait for focus return before the game's original composition runs. This preserves the complete animated menu background through the movie-to-menu handoff.
+The previous producer cadence and movement eligibility mitigation is not active in R191.
 
 Frontend mapper activation is gated by registered immutable page metadata or semantic main-menu, campaign-setup, prebattle, or Battle Results ownership.
 All 50 known frontend page families are classified from their exact metadata-row spans, so shared mode values such as LAN mode 6 cannot disarm a live frontend.
@@ -34,12 +51,16 @@ Frontend-to-loading shrink suppression is restricted to a verified borderless po
 For an explicit non-fullscreen dgVoodoo presentation, successful wrapper sizing establishes live window ownership; subsequent game logical-mode moves and smaller backend frame adjustments cannot expose transient internal dimensions while fullscreen, user-resized, stale, or unknown geometry remains fail-open.
 When Sprite-Clipping Crash Fix is selected, fully off-clip prebattle unit icons are rejected before the game's RLE sprite row decoder; ordinary and partly visible icons continue through the original decoder.
 When Campaign Scrolling Fix is selected, campaign keyboard/action and edge camera inputs receive independent elapsed-time displacement at the verified game call sites, preserving their combined 60 Hz travel without limiting frame rate.
-The two optional hooks are compiled independently; the shared Terrain Movement Fix runtime is present in all four installer choices.
+The battle unit-icon atlas is rebuilt from live cards after graphics reset, retaining the bottom HUD portraits on Alt+Tab.
+The Campaign Scrolling and Sprite-Clipping hooks are compiled independently in the Terrain runtime. The Fast computer moves hook is available in both a system-D3D9 forwarder and a combined Terrain runtime, so the feature can be installed without dgVoodoo2.
 
 dgVoodoo2 backend version: 2.87.5
 Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
-The runtime is gated to Medieval_TW.exe SHA-256:
+The runtime is gated to these exact Medieval_TW.exe SHA-256 identities (stock, scroll-only, sprite-only, both installer options):
 23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5
+50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B
+72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0
+982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627

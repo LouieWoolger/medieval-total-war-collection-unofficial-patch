@@ -45,9 +45,9 @@ done:
     patch_context_close(&c);
     return ok;
 }
-static inline int mtw_verify_runtime(MedievalEngine *m, PatchError *e) {
+static inline int mtw_verify_runtime(MedievalEngine *m, size_t file_count, PatchError *e) {
     size_t i;
-    for (i = 0; i < MEDIEVAL_FILE_COUNT; ++i) {
+    for (i = 0; i < file_count; ++i) {
         PatchFileRecord actual;
         MTW_TRY(mtw_relative_record(m, medieval_payload_names[i], &actual, e));
         if (!patch_record_equal(&actual, &m->payload_records[i]))
@@ -65,7 +65,7 @@ static inline int mtw_preinstall_mode(MedievalEngine *m, const char **mode, Patc
     MTW_TRY(mtw_relative_record(m, "D3D9.dll", &record, e));
     if (record.exists) {
         *mode = medieval_known_d3d9_mode(record.sha256);
-        if (!**mode) return mtw_fail(m, e, "wrapper_conflict", "D3D9.dll is not a supported stock, dust-only, R6F160, R185, or R186 build (SHA-256 %s). No files were changed.", record.sha256);
+        if (!**mode) return mtw_fail(m, e, "wrapper_conflict", "D3D9.dll is not a supported stock, dust-only, R6F160, R185, R186, R187, R188, R189, R191, or R194 build (SHA-256 %s). No files were changed.", record.sha256);
     }
     for (i = 0; i < 3; ++i) {
         MTW_TRY(mtw_relative_record(m, medieval_payload_names[i], &record, e));
@@ -275,11 +275,12 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     int retire_originals[MEDIEVAL_FILE_COUNT] = {0}, retire_legacy = 0, repair = previous != NULL;
     const char *mode;
     char id[37], utc[32], relative[192], name[160];
-    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 4, 2, 1, 3, 0};
+    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 6, 4, 2, 1, 3, 0};
     MTW_TRY(mtw_observe(m, e));
     if (repair && !m->options.terrain_fix)
         for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i)
-            m->payload_records[i] = previous->files[i].original;
+            if (i != 4u || !m->options.fast_moves_fix)
+                m->payload_records[i] = previous->files[i].original;
     if (!m->options.uninstaller || !*m->options.uninstaller)
         return mtw_fail(m, e, "invalid_payload", "The installer did not supply its generated removal program. No runtime files were changed.");
     MTW_TRY(mtw_external_record(m->options.uninstaller, &remover, e));
@@ -297,6 +298,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     MTW_TRY(mtw_boolean(d, receipt, "terrain_fix_enabled", m->options.terrain_fix, e) &&
             mtw_boolean(d, receipt, "scroll_fix_enabled", m->options.scroll_fix, e) &&
             mtw_boolean(d, receipt, "sprite_fix_enabled", m->options.sprite_fix, e) &&
+            mtw_boolean(d, receipt, "fast_moves_fix_enabled", m->options.fast_moves_fix, e) &&
             mtw_text(d, receipt, "sprite_delivery", "direct-exe", e));
     MTW_TRY(mtw_registry_snapshot(m, "CurrentUser", "Registry32", m->identity.registration_key, &registry, e) &&
             medieval_registry_ownership(&m->identity, &registry, mtw_s(receipt, "installation_id"), e));
@@ -422,6 +424,49 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         MTW_TRY(mtw_text(d, exe_rec, "installed_sha256", m->payload_records[5].sha256, e) &&
                 mtw_number(d, exe_rec, "installed_length", (int64_t)m->payload_records[5].length, e));
     }
+    {
+        PatchFileRecord current_locale, original_locale, reserved;
+        JsonValue *locale_rec = json_get(files, medieval_payload_names[6]);
+        wchar_t *locale_path = mtw_live(m, medieval_payload_names[6], e);
+        MTW_TRY(locale_path && mtw_record(m, locale_path, &current_locale, e));
+        if (!current_locale.exists)
+            return mtw_fail(m, e, "unsupported_locale", "The English campaign text file is missing.");
+        if (repair && !previous->legacy && !previous->old_v2 &&
+            !previous->old_v3 && !previous->old_v4) {
+            const MedievalFileState *prior = &previous->files[6];
+            if (!patch_record_equal(&current_locale, &prior->installed) &&
+                !patch_record_equal(&current_locale, &prior->original))
+                return mtw_fail(m, e, "unsupported_locale", "The managed campaign text changed outside its supported states; it was preserved.");
+            original_locale = prior->original;
+        } else {
+            original_locale = current_locale;
+            locale_rec = json_new(d, JSON_OBJECT, e);
+            MTW_TRY(locale_rec && mtw_boolean(d, locale_rec, "existed", 1, e) &&
+                    mtw_text(d, locale_rec, "original_sha256", original_locale.sha256, e) &&
+                    mtw_number(d, locale_rec, "original_length", (int64_t)original_locale.length, e) &&
+                    mtw_text(d, locale_rec, "snapshot_relative", "originals/CHANGES.TXT", e) &&
+                    json_set(d, locale_rec, "sidecar_relative", json_new(d, JSON_NULL, e), e) &&
+                    mtw_boolean(d, locale_rec, "sidecar_created", 0, e) &&
+                    mtw_text(d, locale_rec, "baseline_kind", "preserved-campaign-text", e) &&
+                    json_set(d, files, medieval_payload_names[6], locale_rec, e));
+            original_sources[6] = locale_path;
+            MTW_TRY(mtw_relative_record(m, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT", &reserved, e));
+            if (reserved.exists)
+                MTW_TRY(mtw_archive_source(m, sources, &count, "previous-state-CHANGES.TXT",
+                                           MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT", e));
+        }
+        if (m->options.fast_moves_fix &&
+            (strcmp(original_locale.sha256, MTW_CAMPAIGN_LOCALE_STOCK_SHA256) ||
+             original_locale.length != MTW_CAMPAIGN_LOCALE_STOCK_SIZE))
+            return mtw_fail(m, e, "unsupported_locale", "Fast computer moves requires the exact supported English campaign text.");
+        m->payload_records[6] = original_locale;
+        if (m->options.fast_moves_fix) {
+            m->payload_records[6].length = MTW_CAMPAIGN_LOCALE_FAST_SIZE;
+            memcpy(m->payload_records[6].sha256, MTW_CAMPAIGN_LOCALE_FAST_SHA256, 65);
+        }
+        MTW_TRY(mtw_text(d, locale_rec, "installed_sha256", m->payload_records[6].sha256, e) &&
+                mtw_number(d, locale_rec, "installed_length", (int64_t)m->payload_records[6].length, e));
+    }
     MTW_TRY(mtw_archive(m, sources, count, "Installation migration or changed managed files", e) && mtw_fault(m, "after-preservation", e));
     mtw_utc(utc);
     MTW_TRY(mtw_text(d, receipt, "completed_utc", utc, e) && mtw_text(d, receipt, "recovery_archive", m->recovery_archive ? m->recovery_archive : "", e) &&
@@ -431,7 +476,8 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     for (k = 0; k < MEDIEVAL_FILE_COUNT; ++k) {
         i = original_order[k];
         if (!original_sources[i]) continue;
-        snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
+        if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
+        else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
         MTW_INSTALL(mtw_transaction_add_file(m, &t, relative, original_sources[i], e));
     }
     for (i = 0; i < 5; ++i) {
@@ -439,11 +485,11 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
             MTW_INSTALL(mtw_transaction_add_file(m, &t, relative, original_sources[i], e));
         }
-        payload_source = m->options.terrain_fix ?
+        payload_source = (m->options.terrain_fix || (i == 4u && m->options.fast_moves_fix)) ?
             mtw_path(m, m->payload_guard.canonical, medieval_payload_names[i], e) :
             (typed.files[i].original.exists ?
              mtw_path(m, m->state, typed.files[i].snapshot_relative, e) : NULL);
-        MTW_INSTALL((!m->options.terrain_fix || payload_source) &&
+        MTW_INSTALL((!(m->options.terrain_fix || (i == 4u && m->options.fast_moves_fix)) || payload_source) &&
                     mtw_transaction_add_file(m, &t, medieval_payload_names[i], payload_source, e));
         raw = json_get(t.json, "actions")->last;
         {
@@ -478,6 +524,37 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         patch_context_free(&m->memory, before_bytes);
         patch_context_free(&m->memory, next_bytes);
     }
+    {
+        PatchFileRecord staged;
+        wchar_t *source = NULL;
+        if (m->options.fast_moves_fix) {
+            char *before = NULL;
+            unsigned char *next = NULL;
+            size_t before_length = 0, next_length = 0;
+            wchar_t *live = mtw_live(m, medieval_payload_names[6], e);
+            wchar_t *staged_path = mtw_path(m, t.directory, "next-campaign-text.bin", e);
+            MTW_INSTALL(live && staged_path &&
+                        patch_file_read(&m->guard, live, MTW_CAMPAIGN_LOCALE_FAST_SIZE,
+                                        &m->memory, &before, &before_length, e) &&
+                        mtw_campaign_locale_transform(&m->memory, (const unsigned char *)before,
+                                                      before_length, 1, &next, &next_length, e) &&
+                        patch_file_write_new(&m->guard, staged_path, next, next_length, e));
+            source = staged_path;
+            patch_context_free(&m->memory, before);
+            patch_context_free(&m->memory, next);
+        } else if (repair && !previous->legacy && !previous->old_v2 &&
+                   !previous->old_v3 && !previous->old_v4) {
+            source = mtw_path(m, m->state, previous->files[6].snapshot_relative, e);
+        } else source = original_sources[6];
+        MTW_INSTALL(source && mtw_transaction_add_file(m, &t, medieval_payload_names[6], source, e));
+        raw = json_get(json_get(t.json, "actions")->last, "after");
+        MTW_INSTALL(medieval_file_record(raw, &staged, e) &&
+                    patch_record_equal(&staged, &typed.files[6].installed));
+        if (m->options.fast_moves_fix) {
+            MTW_INSTALL(mtw_record(m, source, &staged, e) &&
+                        patch_file_remove(&m->guard, source, &staged, e));
+        }
+    }
     MTW_INSTALL(mtw_fault(m, "before-stage-uninstaller", e) && mtw_transaction_add_file(m, &t, MEDIEVAL_UNINSTALL_NAME, m->options.uninstaller, e));
     raw = json_get(json_get(t.json, "actions")->last, "after");
     if (strcmp(mtw_s(raw, "sha256"), typed.uninstaller_sha256)) {
@@ -499,7 +576,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     }
     if (legacy) for (raw = legacy->child; raw; raw = raw->next)
         MTW_INSTALL(mtw_transaction_add_registry(m, &t, mtw_s(raw, "hive"), mtw_s(raw, "view"), mtw_s(raw, "name"), json_get(raw, "before"), json_get(raw, "after"), e));
-    MTW_INSTALL(mtw_transaction_publish(m, &t, e) && mtw_transaction_commit(m, &t, e) && mtw_verify_runtime(m, e) &&
+    MTW_INSTALL(mtw_transaction_publish(m, &t, e) && mtw_transaction_commit(m, &t, e) && mtw_verify_runtime(m, MEDIEVAL_FILE_COUNT, e) &&
                 mtw_verify_installed(m, &typed, e) && mtw_transaction_final(m, &t, e) && mtw_transaction_clear(m, &t, e));
     *result = json_new(d, JSON_OBJECT, e);
     MTW_TRY(*result && mtw_text(d, *result, "status", "ok", e) && mtw_text(d, *result, "action", repair ? "repair" : "install", e) &&
@@ -680,7 +757,9 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
         MTW_TRY(mtw_relative_record(m, f->name, &current, e));
         if (current.exists && strcmp(current.sha256, f->installed.sha256) &&
             (!f->original.exists || strcmp(current.sha256, f->original.sha256)))
-            MTW_TRY(mtw_archive_source(m, sources, &count, f->name, f->name, e));
+            MTW_TRY(mtw_archive_source(m, sources, &count,
+                                       i == 6u ? "changed-CHANGES.TXT" : f->name,
+                                       f->name, e));
     }
     uninstaller = mtw_live(m, MEDIEVAL_UNINSTALL_NAME, e);
     MTW_TRY(mtw_record(m, uninstaller, &current, e));
@@ -874,7 +953,8 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
     }
     if (strcmp(mtw_s(json_get(m->payload, "target_executable"), "sha256"), MEDIEVAL_EXECUTABLE_HASH))
         return mtw_fail(m, e, "invalid_payload", "The payload targets an unexpected game executable.");
-    for (i = 0; i < MEDIEVAL_RUNTIME_COUNT && m->options.terrain_fix; ++i) {
+    for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i) {
+        if (!m->options.terrain_fix && !(m->options.fast_moves_fix && i == 4u)) continue;
         const JsonValue *raw = json_get(json_get(m->payload, "files"), medieval_payload_names[i]);
         const JsonValue *length = json_get(raw, "length");
         const char *hash = medieval_string(raw, "sha256", 0, e);
@@ -952,7 +1032,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
         mtw_fail(&m, e, "invalid_request", "A valid operation, target, payload and patch version are required."); goto done;
     }
     if (mtw_is(options->operation, "Install") && !m.options.terrain_fix &&
-        !m.options.scroll_fix && !m.options.sprite_fix) {
+        !m.options.scroll_fix && !m.options.sprite_fix && !m.options.fast_moves_fix) {
         mtw_fail(&m, e, "invalid_selection", "Select at least one fix before installing."); goto done;
     }
     m.warnings = json_new(&m.document, JSON_ARRAY, e);
@@ -989,10 +1069,11 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
             if (!receipt.old_v2 &&
                 !medieval_boolean(receipt.json, "terrain_fix_enabled", &m.options.terrain_fix, e)) goto done;
         }
-        if (!mtw_verify_runtime(&m, e) || (present && !receipt.legacy && !mtw_verify_installed(&m, &receipt, e))) goto done;
+        if (!mtw_verify_runtime(&m, present ? medieval_receipt_file_count(&receipt) : MEDIEVAL_FILE_COUNT, e) ||
+            (present && !receipt.legacy && !mtw_verify_installed(&m, &receipt, e))) goto done;
         result = json_new(&m.document, JSON_OBJECT, e);
         if (!result || !mtw_text(&m.document, result, "status", "ok", e) || !mtw_text(&m.document, result, "action", "verify", e) ||
-            !mtw_text(&m.document, result, "mode", "r186", e) || !mtw_text(&m.document, result, "target", m.identity.target, e) ||
+            !mtw_text(&m.document, result, "mode", "r194", e) || !mtw_text(&m.document, result, "target", m.identity.target, e) ||
             !mtw_text(&m.document, result, "target_executable_sha256", MEDIEVAL_EXECUTABLE_HASH, e)) goto done;
     } else if (mtw_is(options->operation, "Install")) {
         if (!mtw_writable(&m, mtw_is(options->fault, "space:maximum") ? UINT64_MAX : 16 * 1024 * 1024, e) ||

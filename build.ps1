@@ -140,6 +140,8 @@ else {
 if (-not (Test-Path -LiteralPath $windres -PathType Leaf)) { throw 'Supply -WindresPath with the MinGW resource compiler.' }
 $payloadVariants = [ordered]@{
     'D3D9-scroll-sprite-off.dll' = 'payload-manifest-scroll-sprite-off.json'
+    'D3D9-scroll-sprite-off-fast.dll' = 'payload-manifest-scroll-sprite-off-fast.json'
+    'D3D9-fast-only.dll' = 'payload-manifest-fast-only.json'
 }
 New-Item -ItemType Directory -Path $OutputDirectory,$ArtifactDirectory,$BuildDirectory,$TestDirectory -Force | Out-Null
 $tempDirectory = Join-Path $BuildDirectory ('temp-' + $runId)
@@ -233,7 +235,10 @@ try {
 
     $reports['project_contracts'] = Invoke-PytestStage 'project_contracts' @(
         'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_installer_script.py','tests/test_package_audit.py',
-        'tests/test_build_workflow.py','tests/test_installer_elevation.py')
+        'tests/test_build_workflow.py','tests/test_installer_elevation.py',
+        'tests/test_dust_flicker_status.py','tests/test_dust_gpu_target_guard.py',
+        'tests/test_dust_draw_identity.py','tests/test_dust_rgb565_operation_gate.py',
+        'tests/test_menu_focus_shader_provenance.py')
     $selection = Get-GameTestSelection
     $reports['native_guard'] = Invoke-PytestStage 'native_guard' $selection.native_guard
     $toolIdentities = @(

@@ -39,12 +39,16 @@ New-Item -ItemType Directory -Path $extractRoot -ErrorAction Stop | Out-Null
 
 $engineNames = @('medieval_fix_patcher.exe')
 $runtimeNames = @('payload-manifest.json','D3D9.dll','dgVoodoo_D3D9.dll','ddraw.dll','D3DImm.dll','dgVoodoo.conf')
-$runtimeVariants = @('payload-scroll-sprite-off')
-$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','sprite-clipping.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
+$runtimeVariants = [ordered]@{
+    'payload-scroll-sprite-off' = $runtimeNames
+    'payload-scroll-sprite-off-fast' = $runtimeNames
+    'payload-fast-only' = @('payload-manifest.json','D3D9.dll')
+}
+$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','sprite-clipping.bmp','fast-computer-moves.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
 $common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
-$common += @(foreach ($variant in $runtimeVariants) {
-    foreach ($name in $runtimeNames) { $variant + '\' + $name }
+$common += @(foreach ($variant in $runtimeVariants.Keys) {
+    foreach ($name in $runtimeVariants[$variant]) { $variant + '\' + $name }
 })
 $requiredEntries = @($common + $uiNames + [string]$product.uninstaller_filename)
 $forbiddenEntries = @('medieval_tw.exe','medieval.cfg','~tmp.vrp','.vrp','.pdb','worklog','capture','.ps1','.cs','powershell','mscoree','libstdc++','libgcc','libwinpthread')
@@ -109,9 +113,9 @@ function Expand-And-Verify {
         }
         Assert-NoPrivatePaths $embedded
     }
-    foreach ($variant in $runtimeVariants) {
+    foreach ($variant in $runtimeVariants.Keys) {
         $variantSuffix = $variant.Substring('payload'.Length)
-        foreach ($name in $runtimeNames) {
+        foreach ($name in $runtimeVariants[$variant]) {
             $sourceName = $name
             if ($variantSuffix) {
                 if ($name -eq 'payload-manifest.json') { $sourceName = 'payload-manifest' + $variantSuffix + '.json' }

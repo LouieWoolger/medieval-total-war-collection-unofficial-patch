@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R186-sprite-off",
+  "runtime_identity": "R195-sprite-off",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 161792,
-      "sha256": "5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C",
-      "provenance": "Reproducible R186 PE32 proxy with the Campaign Scrolling Fix enabled and the MTW-001 sprite-clipping guard disabled; all shared Terrain Movement Fix runtime hooks remain active, with no FPS cap; ported and signature-gated for dgVoodoo2 v2.87.5"
+      "length": 200192,
+      "sha256": "397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232",
+      "provenance": "Source-built R195 PE32 proxy for dgVoodoo2 2.87.5 and the four exact supported game executable identities. The RGB565 dust bridge scans every billboard center in a validated game dust batch at direct DrawIndexedPrimitiveUP return RVA B3FDC7. Mixed black/white-led batches containing brown dust are corrected; nonbrown batches retain the original target. Native-work child movement and size normalization, deferred D3D11 dust completion, frontend focus, movie backing and guarded final credits composition, input and selected Scroll/Sprite hooks are retained from R189; no frame cap or dust-opacity reduction is added. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

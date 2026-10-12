@@ -6,20 +6,33 @@
 #include "patch_files.h"
 #include "patch_registry.h"
 #include "direct_exe_patch.h"
+#include "campaign_locale_patch.h"
 
 #define MEDIEVAL_STATE_NAME ".unofficial-medieval-total-war-patch"
 #define MEDIEVAL_RECEIPT_NAME "install-manifest.json"
-#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v4"
+#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v5"
+#define MEDIEVAL_RECEIPT_SCHEMA_V4 "unofficial-medieval-total-war-patch-install-v4"
 #define MEDIEVAL_RECEIPT_SCHEMA_V3 "unofficial-medieval-total-war-patch-install-v3"
 #define MEDIEVAL_RECEIPT_SCHEMA_V2 "unofficial-medieval-total-war-patch-install-v2"
 #define MEDIEVAL_LEGACY_SCHEMA "unofficial-medieval-total-war-patch-install-v1"
 #define MEDIEVAL_JOURNAL_SCHEMA "unofficial-medieval-patch-transaction-v2"
 #define MEDIEVAL_EXECUTABLE_HASH "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
-#define MEDIEVAL_SPRITE_DISABLED_PROXY_HASH "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"
+#define MEDIEVAL_SPRITE_DISABLED_PROXY_HASH "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9"
+#define MEDIEVAL_FAST_ONLY_PROXY_HASH "5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2"
+#define MEDIEVAL_TERRAIN_FAST_PROXY_HASH "3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159"
+#define MEDIEVAL_PREVIOUS_FAST_ONLY_PROXY_HASH "BFC72CFE443CF4AABD9B07ADB7B26145CCEACD2EEF7D150B6A0C6B3E65396049"
+#define MEDIEVAL_PREVIOUS_TERRAIN_FAST_PROXY_HASH "28888291DC1057235B8D41A4A6A78B4C7BF3A3716F0387F6536482E734A342AA"
+#define MEDIEVAL_R194_SPRITE_DISABLED_PROXY_HASH "2E0680889E855FB2E5931DC7D0971B875196E8E05231E926BF0DDA42C8FAF7FE"
+#define MEDIEVAL_R191_SPRITE_DISABLED_PROXY_HASH "F8883FDECB59BD0A57B0C1B6D446A3A096F9ACF89097B784A1189F51210CE551"
+#define MEDIEVAL_R189_SPRITE_DISABLED_PROXY_HASH "09333B64AB577BD0DBFAFC5ACC26A8E19AFA82556FED3C414D3433B22315A243"
+#define MEDIEVAL_R188_SPRITE_DISABLED_PROXY_HASH "850861A4C92211099656ED76B06B8C443CEF162FEDD23AB6DE70DD7181704EDB"
+#define MEDIEVAL_R187_SPRITE_DISABLED_PROXY_HASH "064C234EB46ABDC690F42C5AFE0BFBC61F2D388DE63F9F28D23A27E064E0D6A7"
+#define MEDIEVAL_R186_SPRITE_DISABLED_PROXY_HASH "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"
 #define MEDIEVAL_RUNTIME_COUNT 5u
-#define MEDIEVAL_FILE_COUNT 6u
+#define MEDIEVAL_FILE_COUNT 7u
 static const char *const medieval_payload_names[] = {"dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll",
-                                                     "dgVoodoo.conf", "D3D9.dll", "Medieval_TW.exe"};
+                                                     "dgVoodoo.conf", "D3D9.dll", "Medieval_TW.exe",
+                                                     "Loc/Eng/CHANGES.TXT"};
 
 typedef struct {
     PatchContext context;
@@ -39,6 +52,7 @@ typedef struct {
     int legacy;
     int old_v2;
     int old_v3;
+    int old_v4;
     const JsonValue *json;
     const char *installation_id, *status, *target_directory, *installer_version, *preinstall_mode,
         *uninstaller_sha256;
@@ -46,7 +60,8 @@ typedef struct {
 } MedievalReceipt;
 
 static inline size_t medieval_receipt_file_count(const MedievalReceipt *r) {
-    return r->legacy || r->old_v2 ? MEDIEVAL_RUNTIME_COUNT : MEDIEVAL_FILE_COUNT;
+    return r->legacy || r->old_v2 ? MEDIEVAL_RUNTIME_COUNT :
+           r->old_v3 || r->old_v4 ? 6u : MEDIEVAL_FILE_COUNT;
 }
 typedef struct {
     int is_registry;
@@ -205,8 +220,9 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
     r.legacy = !strcmp(schema, MEDIEVAL_LEGACY_SCHEMA);
     r.old_v2 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V2);
     r.old_v3 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V3);
+    r.old_v4 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V4);
     if (strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA) &&
-        !(allow_legacy && (r.legacy || r.old_v2 || r.old_v3)))
+        !(allow_legacy && (r.legacy || r.old_v2 || r.old_v3 || r.old_v4)))
         return json_invalid(e, "Unsupported installation receipt schema.");
     if (!r.legacy && !medieval_integrity_valid(owner, value, e))
         return 0;
@@ -273,11 +289,13 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         if (!original || !snapshot || !sidecar || !legacy_hash ||
             !medieval_integer(rec, "original_length", 1, &length, e))
             return 0;
-        snprintf(expected, sizeof(expected), "originals/%s", f->name);
+        if (i == 6u) strcpy(expected, "originals/CHANGES.TXT");
+        else snprintf(expected, sizeof(expected), "originals/%s", f->name);
         if ((existed && (strcmp(snapshot, expected) || !medieval_hash_valid(original) || length < 0)) ||
             (!existed && (*snapshot || *original || length)))
             return json_invalid(e, "Unsafe or invalid original record.");
-        snprintf(expected, sizeof(expected), "%s.unofficial-patch.bak", f->name);
+        if (i == 6u) strcpy(expected, "CHANGES.TXT.unofficial-patch.bak");
+        else snprintf(expected, sizeof(expected), "%s.unofficial-patch.bak", f->name);
         if ((*sidecar && strcmp(sidecar, expected)) || (created && (!existed || !*sidecar)) ||
             (*legacy_hash && !medieval_hash_valid(legacy_hash)))
             return json_invalid(e, "Unsafe or inconsistent sidecar record.");
@@ -292,7 +310,7 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         f->json = rec;
     }
     if (!r.legacy && !r.old_v2) {
-        int terrain, scroll, sprite = 0;
+        int terrain, scroll, sprite = 0, fast = 0, previous_fast_locale = 0;
         const char *delivery = NULL;
         if (!medieval_boolean(value, "terrain_fix_enabled", &terrain, e) ||
             !medieval_boolean(value, "scroll_fix_enabled", &scroll, e))
@@ -303,12 +321,31 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                 !medieval_boolean(value, "sprite_fix_enabled", &sprite, e))
                 return json_invalid(e, "Invalid direct Sprite delivery metadata.");
         }
+        if (!r.old_v3 && !r.old_v4 &&
+            !medieval_boolean(value, "fast_moves_fix_enabled", &fast, e)) return 0;
+        if (!r.old_v3 && !r.old_v4 && fast)
+            previous_fast_locale = r.files[6].installed.length == MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SIZE &&
+                                   !strcmp(r.files[6].installed.sha256, MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SHA256);
         for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i)
             if (terrain ? !r.files[i].installed.exists :
-                !patch_record_equal(&r.files[i].installed, &r.files[i].original))
+                (fast && i == 4u ? !r.files[i].installed.exists :
+                 !patch_record_equal(&r.files[i].installed, &r.files[i].original)))
                 return json_invalid(e, "Inconsistent Terrain runtime selection.");
-        if (!r.old_v3 && terrain &&
-            strcmp(r.files[4].installed.sha256, MEDIEVAL_SPRITE_DISABLED_PROXY_HASH))
+        if (!r.old_v3 && !r.old_v4 && fast &&
+            strcmp(r.files[4].installed.sha256,
+                   terrain ? (previous_fast_locale ? MEDIEVAL_PREVIOUS_TERRAIN_FAST_PROXY_HASH :
+                                                    MEDIEVAL_TERRAIN_FAST_PROXY_HASH) :
+                             (previous_fast_locale ? MEDIEVAL_PREVIOUS_FAST_ONLY_PROXY_HASH :
+                                                    MEDIEVAL_FAST_ONLY_PROXY_HASH)))
+            return json_invalid(e, "Inconsistent Fast computer moves proxy selection.");
+        if (!r.old_v3 && !fast && terrain &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R194_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R191_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R189_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R188_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R187_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R186_SPRITE_DISABLED_PROXY_HASH))
             return json_invalid(e, "A direct Sprite receipt cannot retain an active proxy Sprite hook.");
         if (!r.files[5].original.exists ||
             strcmp(r.files[5].original.sha256, MEDIEVAL_EXECUTABLE_HASH) ||
@@ -322,6 +359,17 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                 (scroll ? (sprite ? MTW_SCROLL_SPRITE_SIZE : MTW_SCROLL_PATCHED_SIZE) :
                           (sprite ? MTW_SPRITE_ONLY_SIZE : MTW_SCROLL_STOCK_SIZE)))
             return json_invalid(e, "Inconsistent direct EXE fix selection.");
+        if (!r.old_v3 && !r.old_v4 &&
+            (!r.files[6].original.exists ||
+             (fast ? strcmp(r.files[6].original.sha256, MTW_CAMPAIGN_LOCALE_STOCK_SHA256) ||
+                     r.files[6].original.length != MTW_CAMPAIGN_LOCALE_STOCK_SIZE ||
+                     !r.files[6].installed.exists ||
+                     strcmp(r.files[6].installed.sha256, previous_fast_locale ?
+                            MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SHA256 : MTW_CAMPAIGN_LOCALE_FAST_SHA256) ||
+                     r.files[6].installed.length != (previous_fast_locale ?
+                            MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SIZE : MTW_CAMPAIGN_LOCALE_FAST_SIZE) :
+                     !patch_record_equal(&r.files[6].installed, &r.files[6].original))))
+            return json_invalid(e, "Inconsistent Fast computer moves localization selection.");
     }
     r.json = value;
     r.target_directory = target;
@@ -511,6 +559,11 @@ static inline int medieval_path_role(const char *relative, size_t *file_index) {
         *file_index = i;
         if (!strcmp(relative, medieval_payload_names[i]))
             return 1;
+        if (i == 6u) {
+            if (!strcmp(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT")) return 3;
+            if (!strcmp(relative, "CHANGES.TXT.unofficial-patch.bak")) return 2;
+            continue;
+        }
         snprintf(path, sizeof(path), "%s.unofficial-patch.bak", medieval_payload_names[i]);
         if (!strcmp(relative, path))
             return 2;
@@ -625,7 +678,7 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
                     restore ? &j.receipt.files[index].original : &j.receipt.files[index].installed;
                 if (!patch_record_equal(&action->after_file, expected))
                     return json_invalid(e, "Runtime recovery differs from retained receipt.");
-                required |= 1U << index;
+                required |= index == 6u ? 512U : 1U << index;
             } else if (role == 6) {
                 if (!action->after_file.exists ||
                     strcmp(action->after_file.sha256, j.receipt.uninstaller_sha256) ||
@@ -719,7 +772,8 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
         } else
             return json_invalid(e, "Unknown transaction action.");
     }
-    if (required != (j.receipt.old_v2 || j.receipt.legacy ? 479U : 511U))
+    if (required != (j.receipt.old_v2 || j.receipt.legacy ? 479U :
+                     j.receipt.old_v3 || j.receipt.old_v4 ? 511U : 1023U))
         return json_invalid(e, "Recovery omits a required runtime, receipt, uninstaller or registration.");
     j.json = value;
     j.count = actions->count;
@@ -765,7 +819,7 @@ done:
     return ok;
 }
 static inline int medieval_old_patch(const char *mode) {
-    return !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
+    return !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
            !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
 }
 static inline int medieval_old_configuration(const char *hash) {
@@ -802,7 +856,31 @@ static inline const char *medieval_known_d3d9_mode(const char *hash) {
                  {"AD7E922E1F160C045325E75107E507E54807F426BFD8102A1808E969AD67CFCA", "r186"},
                  {"24E0C23B0C1424F77201A83D449D22165694D6D3535D187BC9FD3247DC2A8F0E", "r186"},
                  {"5E0E398BB5D10F2855928844A374E966FCDC71D28EAAA0D70BA17FA7ADE8838C", "r186"},
-                 {"300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1", "r186"}};
+                 {"300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1", "r186"},
+                 {"7249A0118DAE0DAB81E2E72538F75555E09B1B72EFA6F2AFFF4E6E56812E97A8", "r187"},
+                 {"9E19B39293D61D1B4A513F1EB1EDC958A5153123741F37D28B126337CD7C59A4", "r187"},
+                 {"FE750F1D73D8FD4D9BA6BFB17B3B9F22ABB817DD1610C17EF2860DA7BF8BCE08", "r187"},
+                 {"064C234EB46ABDC690F42C5AFE0BFBC61F2D388DE63F9F28D23A27E064E0D6A7", "r187"},
+                 {"BFCE156546CF8624BD48170D56DA7AF8760E3BCFDB7944DE6888959BA87E91EA", "r188"},
+                 {"037FDF75724D5698A0C2A41DE66508C8288B470E464D5FF721ABA77CDAFBC7BC", "r188"},
+                 {"A57B63E4402124304B02A45305739D2606AAE7585C7395ED7F8FE77E209F78F0", "r188"},
+                 {"850861A4C92211099656ED76B06B8C443CEF162FEDD23AB6DE70DD7181704EDB", "r188"},
+                 {"D9C4A7D44A8DA738A25B85F4D485AE6A3E6BE2CF10D455734A2216E320F36DFC", "r189"},
+                 {"11169906D379219A80B3D3076A679656951B0E2A91FCD29D2AF53DD4DDA6814B", "r189"},
+                 {"30A915109049D7083EEA6E066A92AE327BC1A0C50186DB7F476393A3D26570E9", "r189"},
+                 {"09333B64AB577BD0DBFAFC5ACC26A8E19AFA82556FED3C414D3433B22315A243", "r189"},
+                 {"A9CB1122929A57447719875EEF697719616003BF6B2A4E57B633B6DBF006F21E", "r191"},
+                 {"8D035A927079E8555672258C614C18876F669861A9A03859E7394A54DF41D0E9", "r191"},
+                 {"74813C992BDA3C877FB929168B2E65DFAA87C12EC1C7CAFD81A3343D93666074", "r191"},
+                 {"F8883FDECB59BD0A57B0C1B6D446A3A096F9ACF89097B784A1189F51210CE551", "r191"},
+                 {"F5F89A35D8504CC2157A5158AFBE5E85ACFCD98A992F6538C38BDE40D0CE60FE", "r194"},
+                 {"8E02E01E38E649DD2B3A9F14E59C6D76958F08884DD43099A703BBC0A74DB8A5", "r194"},
+                 {"C10D1AC084C7469BBF18B92C3B7A96274971A39505524D0E30DB86CAAB616EFA", "r194"},
+                 {"2E0680889E855FB2E5931DC7D0971B875196E8E05231E926BF0DDA42C8FAF7FE", "r194"},
+                 {"BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848", "r195"},
+                 {"DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A", "r195"},
+                 {"397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232", "r195"},
+                 {"B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9", "r195"}};
     size_t i;
     for (i = 0; i < sizeof(known) / sizeof(*known); ++i)
         if (!strcmp(hash, known[i].hash))

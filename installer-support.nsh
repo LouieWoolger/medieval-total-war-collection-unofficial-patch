@@ -65,6 +65,16 @@ Var ElevatedExit
     File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
     ; This is the sole newly installable Terrain runtime. Both EXE fixes are
     ; disabled in its proxy, even when selected in the installer.
+    SetOutPath "$PLUGINSDIR\payload-scroll-sprite-off-fast"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-sprite-off-fast.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-sprite-off-fast.dll"
+    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
+    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
+    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
+    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
+    SetOutPath "$PLUGINSDIR\payload-fast-only"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-fast-only.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-fast-only.dll"
     ${EndIf}
 !macroend
 ; Shared installer/uninstaller diagnostics and native process runner.
@@ -357,6 +367,7 @@ Function ${PREFIX}WriteEngineRequest
     FileWriteUTF16LE $RequestHandle "terrain_fix=$TerrainSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "scroll_fix=$ScrollSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "sprite_fix=$SpriteSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "fast_moves_fix=$FastSelected$\r$\n"
     ${If} ${Errors}
         StrCpy $RequestWriteFailed "1"
     ${EndIf}

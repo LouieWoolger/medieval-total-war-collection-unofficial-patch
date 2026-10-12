@@ -117,6 +117,8 @@ Var ScrollCheck
 Var ScrollSelected
 Var SpriteCheck
 Var SpriteSelected
+Var FastCheck
+Var FastSelected
 Var PreviewBitmap
 Var PreviewImage
 Var PreviewTitle
@@ -153,6 +155,7 @@ Function .onInit
     File /oname=compatibility.bmp "${SOURCE_DIR}\assets\compatibility.bmp"
     File /oname=campaign-scrolling.bmp "${SOURCE_DIR}\assets\campaign-scrolling.bmp"
     File /oname=sprite-clipping.bmp "${SOURCE_DIR}\assets\sprite-clipping.bmp"
+    File /oname=fast-computer-moves.bmp "${SOURCE_DIR}\assets\fast-computer-moves.bmp"
     File /oname=discord-badge.bmp "${SOURCE_DIR}\assets\discord-badge.bmp"
     File /oname=discord-badge-hover.bmp "${SOURCE_DIR}\assets\discord-badge-hover.bmp"
     File /oname=kofi-badge.bmp "${SOURCE_DIR}\assets\kofi-badge.bmp"
@@ -173,6 +176,7 @@ Function .onInit
     StrCpy $TerrainSelected "1"
     StrCpy $ScrollSelected "1"
     StrCpy $SpriteSelected "1"
+    StrCpy $FastSelected "0"
     StrCpy $0 ""
     ${GetOptions} $CommandOptions "/TERRAINFIX=" $0
     ${If} $0 == "0"
@@ -201,6 +205,16 @@ Function .onInit
         StrCpy $SpriteSelected "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_spritefix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/FASTMOVESFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $FastSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $FastSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_fastmovesfix_option value=$0"
         Call FailInstallation
     ${EndIf}
     Call SelectEnginePayload
@@ -247,7 +261,15 @@ Function RequireComponentPlatform
 FunctionEnd
 
 Function SelectEnginePayload
-    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
+    ${If} $FastSelected == "1"
+        ${If} $TerrainSelected == "1"
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off-fast"
+        ${Else}
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-fast-only"
+        ${EndIf}
+    ${Else}
+        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
+    ${EndIf}
 FunctionEnd
 
 Function DetectGamePath
@@ -552,6 +574,16 @@ compatibilityInteractive:
         ${NSD_Check} $SpriteCheck
     ${EndIf}
     ${NSD_OnClick} $SpriteCheck PreviewSprite
+    ${NSD_CreateGroupBox} 0 338 320 154 "Optional"
+    Pop $0
+    !insertmacro SET_TAHOMA $0 $PatchPageFont
+    ${NSD_CreateCheckbox} 12 370 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"
+    Pop $FastCheck
+    !insertmacro SET_TAHOMA $FastCheck $PatchPageFont
+    ${If} $FastSelected == "1"
+        ${NSD_Check} $FastCheck
+    ${EndIf}
+    ${NSD_OnClick} $FastCheck PreviewFast
     ${NSD_CreateGroupBox} 340 62 506 430 "Preview"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
@@ -603,6 +635,12 @@ Function PreviewSprite
     Call SetPreview
 FunctionEnd
 
+Function PreviewFast
+    Pop $0
+    StrCpy $R0 "fast"
+    Call SetPreview
+FunctionEnd
+
 Function PreviewHoverTimer
     Call PreviewFromCursor
 FunctionEnd
@@ -631,6 +669,7 @@ Function PreviewFromCursor
     !insertmacro CHECK_PREVIEW_HOVER $CompatibilityCheck "terrain"
     !insertmacro CHECK_PREVIEW_HOVER $ScrollCheck "scrolling"
     !insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"
+    !insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"
 FunctionEnd
 
 Function SetPreview
@@ -644,7 +683,13 @@ Function SetPreview
         StrCpy $PreviewImage ""
     ${EndIf}
 
-    ${If} $R0 == "sprite"
+    ${If} $R0 == "fast"
+        ${NSD_SetText} $PreviewTitle "Fast Computer Moves Option"
+        ${NSD_SetText} $PreviewText "Adds an option to the campaign tray. When turned off, AI turns play at reduced speed so you can follow where the AI has moved."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\fast-computer-moves.bmp"
+    ${ElseIf} $R0 == "sprite"
         ${NSD_SetText} $PreviewTitle "Pre-battle Screen Crash Fix"
         ${NSD_SetText} $PreviewText "Fixes a crash that can occur on the pre-battle screen during the campaign."
         ${NSD_SetText} $PreviewWarningText ""
@@ -694,6 +739,11 @@ Function CompatibilityPageBack
     ${If} $0 == ${BST_CHECKED}
         StrCpy $SpriteSelected "1"
     ${EndIf}
+    ${NSD_GetState} $FastCheck $0
+    StrCpy $FastSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $FastSelected "1"
+    ${EndIf}
     Call RestoreDefaultWizard
 FunctionEnd
 
@@ -715,9 +765,15 @@ Function CompatibilityPageLeave
     ${If} $0 == ${BST_CHECKED}
         StrCpy $SpriteSelected "1"
     ${EndIf}
+    ${NSD_GetState} $FastCheck $0
+    StrCpy $FastSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $FastSelected "1"
+    ${EndIf}
     ${If} $TerrainSelected != "1"
     ${AndIf} $ScrollSelected != "1"
     ${AndIf} $SpriteSelected != "1"
+    ${AndIf} $FastSelected != "1"
         MessageBox MB_OK|MB_ICONEXCLAMATION "Select at least one fix to continue."
         Abort
     ${EndIf}
@@ -827,6 +883,8 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $LogLine "campaign_scroll_fix_selected=$ScrollSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "sprite_clipping_fix_selected=$SpriteSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "fast_computer_moves_option_selected=$FastSelected"
     Call WriteDiagnostic
     DetailPrint "Diagnostics: $LogDirectory"
     StrCpy $R0 "Install"

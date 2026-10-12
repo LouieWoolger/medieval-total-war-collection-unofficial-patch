@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (159232, "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"),
+    "D3D9.dll": (197632, "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -43,8 +43,10 @@ def test_runtime_payload_is_exact_and_complete() -> None:
         "payload-manifest.json", "payload-manifest-scroll-off.json",
         "payload-manifest-sprite-off.json", "payload-manifest-scroll-sprite-off.json",
         "payload-manifest-scroll-sprite-on.json",
+        "payload-manifest-scroll-sprite-off-fast.json", "payload-manifest-fast-only.json",
         "D3D9-scroll-off.dll", "D3D9-sprite-off.dll",
-        "D3D9-scroll-sprite-off.dll", "D3D9-scroll-sprite-on.dll", "VERSION.txt",
+        "D3D9-scroll-sprite-off.dll", "D3D9-scroll-sprite-on.dll",
+        "D3D9-scroll-sprite-off-fast.dll", "D3D9-fast-only.dll", "VERSION.txt",
     }
     assert set(manifest["files"]) == set(EXPECTED_RUNTIME)
     for name, (length, digest) in EXPECTED_RUNTIME.items():
@@ -72,6 +74,24 @@ def test_scroll_off_payload_differs_only_in_the_proxy() -> None:
             assert disabled["files"][name]["sha256"] != enabled["files"][name]["sha256"]
         else:
             assert disabled["files"][name] == enabled["files"][name]
+
+
+def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope() -> None:
+    state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
+    for manifest_name, dll_name, terrain, receipt_hash_name in (
+        ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
+         True, "MEDIEVAL_TERRAIN_FAST_PROXY_HASH"),
+        ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
+         False, "MEDIEVAL_FAST_ONLY_PROXY_HASH"),
+    ):
+        manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
+        dll = RUNTIME / dll_name
+        assert manifest["target_executable"]["sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+        assert manifest["files"]["D3D9.dll"]["sha256"] == sha256(dll)
+        assert manifest["files"]["D3D9.dll"]["length"] == dll.stat().st_size
+        assert (f'#define {receipt_hash_name} '
+                f'"{manifest["files"]["D3D9.dll"]["sha256"]}"') in state
+        assert set(manifest["files"]) == (set(EXPECTED_RUNTIME) if terrain else {"D3D9.dll"})
 
 
 def test_historical_proxy_variants_remain_identifiable_for_migration() -> None:
