@@ -6,6 +6,7 @@
 #include <wincrypt.h>
 #include <stdint.h>
 #include <string.h>
+#include "../../../include/mtw_exe_variants.h"
 #include "../../dust-fidelity/minhook/include/MinHook.h"
 #include "campaign_fast_moves_core.h"
 
@@ -33,12 +34,6 @@ static mtw_fast_move_slot mtw_slow_actions[256];
 static const uintptr_t mtw_move_continue = MTW_MOVE_CONTINUE_ADDRESS;
 static uint64_t mtw_focus_checked_ms;
 static int mtw_focused = 1;
-static const char *const mtw_supported_exe_hashes[] = {
-    "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
-    "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B",
-    "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0",
-    "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"
-};
 static const unsigned char mtw_add_bytes[] = {0x53,0x8B,0xD9,0x8B,0x43,0x6C,0x83,0xF8,0x0C};
 static const unsigned char mtw_click_bytes[] = {0x51,0xA1,0x58,0x68,0x8D,0x00,0x53,0x33,0xD2};
 static const unsigned char mtw_draw_bytes[] = {0xA0,0x3C,0xCF,0x8D,0x00,0x83,0xEC,0x7C};
@@ -48,12 +43,13 @@ static const wchar_t mtw_preference_key[] =
 static const wchar_t mtw_preference_name[] = L"FastComputerMoves";
 static const char mtw_fast_key[] = "fast_moves";
 
-static int mtw_hash_file(const wchar_t *path, char hex[65]) {
+static int mtw_hash_file(const wchar_t *path, char hex[65], size_t *file_length) {
     HCRYPTPROV provider = 0;
     HCRYPTHASH hash = 0;
     HANDLE file = INVALID_HANDLE_VALUE;
     BYTE bytes[32], buffer[16384];
     DWORD size = sizeof(bytes), read = 0;
+    LARGE_INTEGER file_size;
     size_t i;
     static const char digits[] = "0123456789ABCDEF";
     int okay = 0;
@@ -62,7 +58,8 @@ static int mtw_hash_file(const wchar_t *path, char hex[65]) {
     if (!CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash)) goto done;
     file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
                        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) goto done;
+    if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &file_size) ||
+        file_size.QuadPart < 0 || (ULONGLONG)file_size.QuadPart > (ULONGLONG)SIZE_MAX) goto done;
     do {
         if (!ReadFile(file, buffer, sizeof(buffer), &read, NULL)) goto done;
         if (read && !CryptHashData(hash, buffer, read, 0)) goto done;
@@ -73,6 +70,7 @@ static int mtw_hash_file(const wchar_t *path, char hex[65]) {
         hex[i * 2 + 1] = digits[bytes[i] & 15];
     }
     hex[64] = 0;
+    if (file_length) *file_length = (size_t)file_size.QuadPart;
     okay = 1;
 done:
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
@@ -85,19 +83,17 @@ static int mtw_supported_inputs(void) {
     wchar_t path[MAX_PATH], *filename;
     char hex[65];
     DWORD length = GetModuleFileNameW(NULL, path, MAX_PATH);
-    size_t i;
-    int supported = 0;
+    size_t file_length;
+    MtwExeVariant supported;
     if ((uintptr_t)GetModuleHandleW(NULL) != 0x00400000u ||
-        !length || length >= MAX_PATH || !mtw_hash_file(path, hex)) return 0;
-    for (i = 0; i < sizeof(mtw_supported_exe_hashes) / sizeof(mtw_supported_exe_hashes[0]); ++i)
-        if (!strcmp(hex, mtw_supported_exe_hashes[i])) supported = 1;
-    if (!supported) return 0;
+        !length || length >= MAX_PATH || !mtw_hash_file(path, hex, &file_length) ||
+        !mtw_exe_variant_from_hash(hex, file_length, &supported)) return 0;
     filename = wcsrchr(path, L'\\');
     if (!filename || (size_t)(filename - path) +
         wcslen(L"\\Loc\\Eng\\CHANGES.TXT") + 1u >= MAX_PATH) return 0;
     if (wcscpy_s(filename, MAX_PATH - (size_t)(filename - path),
                  L"\\Loc\\Eng\\CHANGES.TXT")) return 0;
-    if (!mtw_hash_file(path, hex) || strcmp(hex, MTW_LOCALE_HASH)) return 0;
+    if (!mtw_hash_file(path, hex, NULL) || strcmp(hex, MTW_LOCALE_HASH)) return 0;
     return !memcmp((void *)MTW_ADD_OPTION_ADDRESS, mtw_add_bytes, sizeof(mtw_add_bytes)) &&
            !memcmp((void *)MTW_CLICK_OPTION_ADDRESS, mtw_click_bytes, sizeof(mtw_click_bytes)) &&
            !memcmp((void *)MTW_DRAW_TEXT_ADDRESS, mtw_draw_bytes, sizeof(mtw_draw_bytes)) &&

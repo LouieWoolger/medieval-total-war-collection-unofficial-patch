@@ -41,5 +41,15 @@ int main(void) {
     assert(r.override && r.x == 10 && r.y == 10);
     r = mtw_fast_move_step(slots, 4, 7, 8, 10, 10, -90, 110, 0, 6100, 1, 1, 0);
     assert(r.override && r.x == -14 && r.y == 34); /* long stall is bounded */
+    memset(slots, 0, sizeof(slots));
+    r = mtw_fast_move_step(slots, 4, (uintptr_t)0xE0001000u,
+                           (uintptr_t)0xF0002000u, 0, 0, 100, 100,
+                           0, 7000, 1, 1, 0);
+    assert(r.override && slots[0].sprite == (uintptr_t)0xE0001000u &&
+           slots[0].action == (uintptr_t)0xF0002000u);
+    r = mtw_fast_move_step(slots, 4, (uintptr_t)0xE0001000u,
+                           (uintptr_t)0xF0002000u, 0, 0, 100, 100,
+                           0, 7500, 1, 1, 0);
+    assert(r.override && r.x > 0 && r.x < 100);
     return 0;
 }

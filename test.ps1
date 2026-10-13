@@ -111,7 +111,7 @@ try {
     if (@($spriteCounts.testcase).Count -ne 4 -or [int]$spriteCounts.tests -lt 4 -or
         [int]$spriteCounts.skipped -ne 0 -or
         [int]$spriteCounts.failures -ne 0 -or [int]$spriteCounts.errors -ne 0) {
-        throw 'The four exact-binary Sprite EXE tests must run without skips or failures.'
+        throw 'The exact-binary Sprite EXE tests must run without skips or failures.'
     }
     $reports['lifecycle'] = Invoke-PytestStage 'lifecycle' $selection.lifecycle
     foreach ($entry in @{legacy_cpp='MTW_LEGACY_CPP_HELPER';legacy_v2='MTW_LEGACY_V2_SOURCE';

@@ -4,6 +4,7 @@
 /* Exact-hash, reversible PE32 transforms for independent Scroll and Sprite
    options. No complete game executable is packaged with the installer. */
 #include "scroll_exe_patch.h"
+#include "../include/mtw_exe_variants.h"
 #include "../vendor/sprite_exe/sprite_hook.inc"
 
 #define MTW_SPRITE_ONLY_SIZE 0x4E8000u
@@ -112,7 +113,7 @@ static inline int mtw_direct_add_sprite(PatchContext *context,
     return 1;
 }
 
-static inline int mtw_direct_exe_transform(PatchContext *context,
+static inline int mtw_direct_exe_transform_canonical(PatchContext *context,
                                             const unsigned char *source, size_t source_length,
                                             int desired_scroll, int desired_sprite,
                                             unsigned char **result, size_t *result_length,
@@ -165,6 +166,134 @@ static inline int mtw_direct_exe_transform(PatchContext *context,
     }
     return mtw_direct_add_sprite(context, desired_base, desired_base_length,
                                   desired_scroll, result, result_length, error);
+}
+
+/* Only the sixteen pinned full-file identities reach this point. A changed
+   direct-fix state is built through the original verified non-LAA transform,
+   then the LAA bit and checksum are restored and the result is hash-checked. */
+static inline int mtw_direct_exe_transform(PatchContext *context,
+                                            const unsigned char *source, size_t source_length,
+                                            int desired_scroll, int desired_sprite,
+                                            unsigned char **result, size_t *result_length,
+                                            PatchError *error) {
+    MtwExeVariant source_variant;
+    const MtwExeVariant *canonical_variant, *output_variant;
+    unsigned char *canonical, *transformed;
+    size_t transformed_length;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0;
+    if (!context || !source || !result || !result_length ||
+        (desired_scroll != 0 && desired_scroll != 1) ||
+        (desired_sprite != 0 && desired_sprite != 1)) {
+        patch_error_set(error, "invalid_argument", "Invalid direct EXE transform arguments.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+        patch_error_set(error, "unsupported_executable",
+                        "Medieval_TW.exe is not an exact supported direct-fix or LAA state.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (!source_variant.laa)
+        return mtw_direct_exe_transform_canonical(context, source, source_length,
+                                                   desired_scroll, desired_sprite,
+                                                   result, result_length, error);
+    if (source_variant.scroll == desired_scroll && source_variant.sprite == desired_sprite) {
+        if (!patch_alloc(context, source_length, 1, (void **)&transformed, error)) return 0;
+        memcpy(transformed, source, source_length);
+        *result = transformed;
+        *result_length = source_length;
+        return 1;
+    }
+    canonical_variant = mtw_exe_variant_for_state(source_variant.scroll, source_variant.sprite, 0u, "base");
+    output_variant = mtw_exe_variant_for_state((unsigned int)desired_scroll,
+                                                (unsigned int)desired_sprite, 1u, "recompute");
+    if (!canonical_variant || !output_variant || source_length < 0xDCu) {
+        patch_error_set(error, "unsupported_executable", "The LAA state table is incomplete.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (!patch_alloc(context, source_length, 1, (void **)&canonical, error)) return 0;
+    memcpy(canonical, source, source_length);
+    canonical[0x96u] = (unsigned char)(canonical[0x96u] & ~0x20u);
+    mtw_scroll_put32(canonical + 0xD8u, source_variant.canonical_checksum);
+    if (!patch_sha256_bytes(context, canonical, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (strcmp(digest, canonical_variant->sha256) ||
+        !mtw_direct_exe_transform_canonical(context, canonical, source_length,
+                                             desired_scroll, desired_sprite,
+                                             &transformed, &transformed_length, error)) {
+        if (strcmp(digest, canonical_variant->sha256))
+            patch_error_set(error, "transform_mismatch", "LAA normalization did not restore the pinned EXE.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    transformed[0x96u] = (unsigned char)(transformed[0x96u] | 0x20u);
+    mtw_scroll_put32(transformed + 0xD8u, 0u);
+    mtw_scroll_put32(transformed + 0xD8u, mtw_direct_checksum(transformed, transformed_length));
+    if (!patch_sha256_bytes(context, transformed, transformed_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (transformed_length != output_variant->file_length || strcmp(digest, output_variant->sha256)) {
+        patch_error_set(error, "transform_mismatch", "The LAA direct EXE transform did not match its pinned output.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    *result = transformed;
+    *result_length = transformed_length;
+    return 1;
+}
+
+/* Rebase a verified pre-patch stock snapshot after a user independently sets
+   LAA on a managed EXE. The caller stages this exact verified result as the
+   new original in the same transaction as the repaired receipt. */
+static inline int mtw_direct_laa_stock_from_base(PatchContext *context,
+                                                  const unsigned char *source, size_t source_length,
+                                                  const char *checksum_style,
+                                                  unsigned char **result, size_t *result_length,
+                                                  PatchError *error) {
+    const MtwExeVariant *wanted = mtw_exe_variant_for_state(0u, 0u, 1u, checksum_style);
+    unsigned char *copy;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0;
+    if (!context || !source || !result || !result_length || !wanted ||
+        source_length != MTW_SCROLL_STOCK_SIZE) {
+        patch_error_set(error, "invalid_argument", "Invalid LAA original snapshot request.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (strcmp(digest, MTW_SCROLL_STOCK_SHA256)) {
+        patch_error_set(error, "unsupported_executable", "The previous original is not the exact supported stock EXE.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (!patch_alloc(context, source_length, 1, (void **)&copy, error)) return 0;
+    memcpy(copy, source, source_length);
+    copy[0x96u] = (unsigned char)(copy[0x96u] | 0x20u);
+    if (!strcmp(checksum_style, "zero"))
+        mtw_scroll_put32(copy + 0xD8u, 0u);
+    else if (!strcmp(checksum_style, "recompute")) {
+        mtw_scroll_put32(copy + 0xD8u, 0u);
+        mtw_scroll_put32(copy + 0xD8u, mtw_direct_checksum(copy, source_length));
+    }
+    if (!patch_sha256_bytes(context, copy, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (strcmp(digest, wanted->sha256)) {
+        patch_error_set(error, "transform_mismatch", "The LAA original did not match its pinned identity.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    *result = copy;
+    *result_length = source_length;
+    return 1;
 }
 
 #endif

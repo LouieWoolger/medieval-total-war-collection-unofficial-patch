@@ -113,6 +113,20 @@ int main(void) {
     check(tracker.pointer == 0u && tracker.capacity_bytes == 0u,
           "game-owned release clears stale tracking");
 
+    /* LAA can place backing allocations above 0x80000000. These are opaque
+     * unsigned pointer identities; no signed-address test may reject them. */
+    mtw_intro_backing_record_allocation(&tracker, (uintptr_t)0xE18D8020u, 614400u);
+    surface.backing = surface.active = (uintptr_t)0xE18D8020u;
+    surface.width = 800u;
+    surface.height = 600u;
+    surface.pitch = 1600u;
+    check(mtw_intro_backing_make_plan(&tracker, &surface, &plan) && plan.grow &&
+          mtw_intro_backing_commit_growth(&tracker, &surface,
+                                           (uintptr_t)0xF0BCF020u, &old_pointer) &&
+          old_pointer == (uintptr_t)0xE18D8020u &&
+          surface.backing == (uintptr_t)0xF0BCF020u,
+          "high LAA backing addresses retain exact unsigned identity");
+
     printf("intro backing repair: %d/%d checks passed\n",
            checks - failures, checks);
     return failures ? 1 : 0;

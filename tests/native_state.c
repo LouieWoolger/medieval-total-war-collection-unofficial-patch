@@ -354,6 +354,10 @@ int wmain(int argc, wchar_t **argv) {
         check(medieval_old_patch(medieval_known_d3d9_mode(
                   "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9")),
               "R195 proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_SPRITE_DISABLED_PROXY_HASH), "r197"),
+              "R197 proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_TERRAIN_FAST_PROXY_HASH)),
+              "R197 Terrain and Fast proxy cannot become a clean original baseline");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;

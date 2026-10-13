@@ -149,6 +149,9 @@ function Get-GameTestSelection {
         'tests/test_lifecycle_permissions.py','tests/test_registry_permissions.py','tests/test_registry_isolation.py',
         'tests/test_native_compatibility.py','tests/test_c_backend_lifecycle.py')
     foreach ($node in @($cpp + $v2)) { $lifecycle += '--deselect=' + $node }
+    if (-not $env:MTW_LEGACY_V3_INSTALLER) {
+        $lifecycle += '--deselect=tests/test_native_compatibility.py::test_actual_v3_receipt_uninstalls_directly_with_new_helper'
+    }
     return @{lifecycle=$lifecycle;legacy_cpp=$cpp;legacy_v2=$v2;historical_state=@($state);
         native_guard=@('tests/test_lifecycle_native.py','tests/test_c_backend_platform.py',
                        'tests/test_c_backend_state.py',('--deselect=' + $state))}

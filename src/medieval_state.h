@@ -17,9 +17,12 @@
 #define MEDIEVAL_LEGACY_SCHEMA "unofficial-medieval-total-war-patch-install-v1"
 #define MEDIEVAL_JOURNAL_SCHEMA "unofficial-medieval-patch-transaction-v2"
 #define MEDIEVAL_EXECUTABLE_HASH "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
-#define MEDIEVAL_SPRITE_DISABLED_PROXY_HASH "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9"
-#define MEDIEVAL_FAST_ONLY_PROXY_HASH "5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2"
-#define MEDIEVAL_TERRAIN_FAST_PROXY_HASH "3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159"
+#define MEDIEVAL_SPRITE_DISABLED_PROXY_HASH "B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7"
+#define MEDIEVAL_R195_SPRITE_DISABLED_PROXY_HASH "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9"
+#define MEDIEVAL_FAST_ONLY_PROXY_HASH "1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0"
+#define MEDIEVAL_TERRAIN_FAST_PROXY_HASH "A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B"
+#define MEDIEVAL_R196_FAST_ONLY_PROXY_HASH "5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2"
+#define MEDIEVAL_R196_TERRAIN_FAST_PROXY_HASH "3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159"
 #define MEDIEVAL_PREVIOUS_FAST_ONLY_PROXY_HASH "BFC72CFE443CF4AABD9B07ADB7B26145CCEACD2EEF7D150B6A0C6B3E65396049"
 #define MEDIEVAL_PREVIOUS_TERRAIN_FAST_PROXY_HASH "28888291DC1057235B8D41A4A6A78B4C7BF3A3716F0387F6536482E734A342AA"
 #define MEDIEVAL_R194_SPRITE_DISABLED_PROXY_HASH "2E0680889E855FB2E5931DC7D0971B875196E8E05231E926BF0DDA42C8FAF7FE"
@@ -311,6 +314,7 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
     }
     if (!r.legacy && !r.old_v2) {
         int terrain, scroll, sprite = 0, fast = 0, previous_fast_locale = 0;
+        MtwExeVariant original_exe, installed_exe;
         const char *delivery = NULL;
         if (!medieval_boolean(value, "terrain_fix_enabled", &terrain, e) ||
             !medieval_boolean(value, "scroll_fix_enabled", &scroll, e))
@@ -333,13 +337,17 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                 return json_invalid(e, "Inconsistent Terrain runtime selection.");
         if (!r.old_v3 && !r.old_v4 && fast &&
             strcmp(r.files[4].installed.sha256,
-                   terrain ? (previous_fast_locale ? MEDIEVAL_PREVIOUS_TERRAIN_FAST_PROXY_HASH :
-                                                    MEDIEVAL_TERRAIN_FAST_PROXY_HASH) :
-                             (previous_fast_locale ? MEDIEVAL_PREVIOUS_FAST_ONLY_PROXY_HASH :
-                                                    MEDIEVAL_FAST_ONLY_PROXY_HASH)))
+                   terrain ? MEDIEVAL_TERRAIN_FAST_PROXY_HASH : MEDIEVAL_FAST_ONLY_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256,
+                   terrain ? MEDIEVAL_R196_TERRAIN_FAST_PROXY_HASH : MEDIEVAL_R196_FAST_ONLY_PROXY_HASH) &&
+            (!previous_fast_locale ||
+             strcmp(r.files[4].installed.sha256,
+                    terrain ? MEDIEVAL_PREVIOUS_TERRAIN_FAST_PROXY_HASH :
+                              MEDIEVAL_PREVIOUS_FAST_ONLY_PROXY_HASH)))
             return json_invalid(e, "Inconsistent Fast computer moves proxy selection.");
         if (!r.old_v3 && !fast && terrain &&
             strcmp(r.files[4].installed.sha256, MEDIEVAL_SPRITE_DISABLED_PROXY_HASH) &&
+            strcmp(r.files[4].installed.sha256, MEDIEVAL_R195_SPRITE_DISABLED_PROXY_HASH) &&
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R194_SPRITE_DISABLED_PROXY_HASH) &&
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R191_SPRITE_DISABLED_PROXY_HASH) &&
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R189_SPRITE_DISABLED_PROXY_HASH) &&
@@ -347,17 +355,17 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R187_SPRITE_DISABLED_PROXY_HASH) &&
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R186_SPRITE_DISABLED_PROXY_HASH))
             return json_invalid(e, "A direct Sprite receipt cannot retain an active proxy Sprite hook.");
-        if (!r.files[5].original.exists ||
-            strcmp(r.files[5].original.sha256, MEDIEVAL_EXECUTABLE_HASH) ||
-            r.files[5].original.length != MTW_SCROLL_STOCK_SIZE ||
-            !r.files[5].installed.exists ||
-            strcmp(r.files[5].installed.sha256,
-                   r.old_v3 ? (scroll ? MTW_SCROLL_PATCHED_SHA256 : MEDIEVAL_EXECUTABLE_HASH) :
-                   (scroll ? (sprite ? MTW_SCROLL_SPRITE_SHA256 : MTW_SCROLL_PATCHED_SHA256) :
-                             (sprite ? MTW_SPRITE_ONLY_SHA256 : MEDIEVAL_EXECUTABLE_HASH))) ||
-            r.files[5].installed.length !=
-                (scroll ? (sprite ? MTW_SCROLL_SPRITE_SIZE : MTW_SCROLL_PATCHED_SIZE) :
-                          (sprite ? MTW_SPRITE_ONLY_SIZE : MTW_SCROLL_STOCK_SIZE)))
+        if (!r.files[5].original.exists || !r.files[5].installed.exists ||
+            !mtw_exe_variant_from_hash(r.files[5].original.sha256,
+                                       (size_t)r.files[5].original.length, &original_exe) ||
+            !mtw_exe_variant_from_hash(r.files[5].installed.sha256,
+                                       (size_t)r.files[5].installed.length, &installed_exe) ||
+            original_exe.scroll || original_exe.sprite ||
+            installed_exe.scroll != (unsigned int)scroll ||
+            installed_exe.sprite != (unsigned int)sprite ||
+            installed_exe.laa != original_exe.laa ||
+            (!scroll && !sprite &&
+             !patch_record_equal(&r.files[5].installed, &r.files[5].original)))
             return json_invalid(e, "Inconsistent direct EXE fix selection.");
         if (!r.old_v3 && !r.old_v4 &&
             (!r.files[6].original.exists ||
@@ -819,7 +827,7 @@ done:
     return ok;
 }
 static inline int medieval_old_patch(const char *mode) {
-    return !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
+    return !strcmp(mode, "r197") || !strcmp(mode, "r196") || !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
            !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
 }
 static inline int medieval_old_configuration(const char *hash) {
@@ -880,7 +888,15 @@ static inline const char *medieval_known_d3d9_mode(const char *hash) {
                  {"BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848", "r195"},
                  {"DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A", "r195"},
                  {"397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232", "r195"},
-                 {"B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9", "r195"}};
+                 {"B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9", "r195"},
+                 {MEDIEVAL_R196_FAST_ONLY_PROXY_HASH, "r196"},
+                 {MEDIEVAL_R196_TERRAIN_FAST_PROXY_HASH, "r196"},
+                 {"C94CB5D586F68D6132A4B9F49F1D16D83EEB7ACCC6201F84CED0FCADC32F1244", "r197"},
+                 {"A5937F08664AC14F79BDCD97002C20F37B53D748E126E9CDFC410450436BCC23", "r197"},
+                 {"84C3EF9423EFBDBAC79ADD53E3AF61D402DB3BBBCB287628F5F79FD90856611B", "r197"},
+                 {MEDIEVAL_SPRITE_DISABLED_PROXY_HASH, "r197"},
+                 {MEDIEVAL_FAST_ONLY_PROXY_HASH, "r197"},
+                 {MEDIEVAL_TERRAIN_FAST_PROXY_HASH, "r197"}};
     size_t i;
     for (i = 0; i < sizeof(known) / sizeof(*known); ++i)
         if (!strcmp(hash, known[i].hash))

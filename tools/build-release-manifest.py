@@ -64,6 +64,31 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def supported_executable_variants() -> list[dict]:
+    """Publish the exact identities compiled into the installer and runtime."""
+    header = (ROOT / "include" / "mtw_exe_variants.h").read_text(encoding="ascii")
+    pattern = re.compile(
+        r'^\s*\{"([0-9A-F]{64})", (\d+)u, 0x([0-9A-F]{8})u, '
+        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, '
+        r'"(base|retain|zero|recompute)"\},$', re.MULTILINE)
+    entries = []
+    for match in pattern.finditer(header):
+        digest, length, image_size, canonical_checksum, scroll, sprite, laa, style = match.groups()
+        entries.append({
+            "sha256": digest, "length": int(length),
+            "image_size": int(image_size, 16),
+            "canonical_checksum": int(canonical_checksum, 16),
+            "scroll": bool(int(scroll)), "sprite": bool(int(sprite)),
+            "laa": bool(int(laa)), "checksum_style": style,
+        })
+    states = {(entry["scroll"], entry["sprite"], entry["checksum_style"]) for entry in entries}
+    if len(entries) != 16 or len(states) != 16 or len({entry["sha256"] for entry in entries}) != 16:
+        raise ValueError("The shared EXE identity table is incomplete or ambiguous.")
+    if any(entry["laa"] != (entry["checksum_style"] != "base") for entry in entries):
+        raise ValueError("The shared EXE identity table has inconsistent LAA metadata.")
+    return entries
+
+
 def file_record(path: Path) -> dict:
     return {"sha256": sha256(path), "length": path.stat().st_size}
 
@@ -366,6 +391,7 @@ def main() -> int:
                         "bundled_engine": list(ENGINE_NAMES), "requires_original_installer": False},
         "supported_executable": payload["target_executable"]["name"],
         "supported_executable_sha256": payload["target_executable"]["sha256"],
+        "supported_executable_variants": supported_executable_variants(),
         "runtime": {"identity": payload["runtime_identity"], "dgvoodoo_version": payload["dgvoodoo_version"],
                     "files": payload["files"], "locked_settings": payload["locked_settings"]},
         "fast_computer_moves": {

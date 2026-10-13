@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R196-scroll-sprite-off-fast-moves-candidate",
+  "runtime_identity": "R197-scroll-sprite-off-fast-moves-candidate",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 202752,
-      "sha256": "3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159",
-      "provenance": "Source-built R195 proxy with guarded campaign Fast computer moves hooks for the four exact supported EXE identities and pinned English campaign text. All R195 Terrain, dust, frontend, input, movie, and battle fixes remain active."
+      "length": 204800,
+      "sha256": "A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B",
+      "provenance": "Source-built R197 proxy with guarded campaign Fast computer moves hooks for the 16 exact supported EXE identities and pinned English campaign text. All R197 Terrain, dust, frontend, input, movie, and battle fixes remain active."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

@@ -77,7 +77,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R195-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R197-scroll-sprite-off"
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["sprite_delivery"] == "direct-exe"
@@ -153,6 +153,13 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["fast_computer_moves"]["shipped_game_text_file"] is False
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+    variants = manifest["supported_executable_variants"]
+    assert len(variants) == 16
+    assert len({entry["sha256"] for entry in variants}) == 16
+    assert {entry["checksum_style"] for entry in variants} == {"base", "retain", "zero", "recompute"}
+    assert {entry["sha256"] for entry in variants if entry["scroll"] is False and
+            entry["sprite"] is False and entry["checksum_style"] == "recompute"} == {
+                "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710"}
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
     parsed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums if "  " in line}
     assert parsed[INSTALLER.name] == sha256(INSTALLER)

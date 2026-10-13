@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import ctypes
 from ctypes import wintypes
 import json
@@ -26,6 +27,8 @@ SUPPORTED_EXE_HASH = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB793
 SCROLL_EXE_HASH = "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B"
 SPRITE_EXE_HASH = "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0"
 COMBINED_EXE_HASH = "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"
+REPORTED_LAA_HASH = "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710"
+LAA_COMBINED_EXE_HASH = "05006A7779EC6CAA2FB4253609C7447AD8A7EE23C5847A302D7731C198091EB7"
 RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf")
 LOCALE_NAME = "Loc/Eng/CHANGES.TXT"
 STOCK_LOCALE_HASH = "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC"
@@ -49,6 +52,16 @@ def supported_exe_source() -> Path:
     path = Path(value)
     assert sha256(path) == SUPPORTED_EXE_HASH
     return path
+
+
+def reported_laa_executable() -> bytes:
+    script = ROOT / "tools" / "generate-laa-exe-variants.py"
+    spec = importlib.util.spec_from_file_location("mtw_laa_variants", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    data = generator.build_variants(supported_exe_source().read_bytes())[(0, 0, "recompute")]
+    assert hashlib.sha256(data).hexdigest().upper() == REPORTED_LAA_HASH
+    return data
 
 
 @pytest.fixture(autouse=True)
@@ -358,6 +371,28 @@ def assert_round_trip(game: Path, before: dict[str, str | None]) -> None:
 def test_compiled_clean_install_and_uninstall(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Clean game with spaces")
     assert_round_trip(game, snapshot(game))
+
+
+def test_compiled_reported_laa_install_repair_deselect_and_exact_uninstall(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Reported LAA game")
+    original = reported_laa_executable()
+    (game / "Medieval_TW.exe").write_bytes(original)
+    before = snapshot(game)
+    installed = run_installer(game, terrain_fix=True, scroll_fix=True,
+                              sprite_fix=True, fast_moves_fix=True)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    assert sha256(game / "Medieval_TW.exe") == LAA_COMBINED_EXE_HASH
+    expected = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off-fast.json")
+                          .read_text(encoding="utf-8"))["files"]["D3D9.dll"]["sha256"]
+    assert sha256(game / "D3D9.dll") == expected
+    assert sha256(game / LOCALE_NAME) == FAST_LOCALE_HASH
+    repaired = run_installer(game, terrain_fix=True, scroll_fix=False,
+                             sprite_fix=False, fast_moves_fix=True)
+    assert repaired.returncode == 0, (repaired.stdout, repaired.stderr)
+    assert (game / "Medieval_TW.exe").read_bytes() == original
+    assert sha256(game / "D3D9.dll") == expected
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
 
 
 def test_compiled_registered_quiet_uninstall_from_another_directory(tmp_path: Path) -> None:

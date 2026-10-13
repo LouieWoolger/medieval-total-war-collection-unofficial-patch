@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "dust_cadence.h"
+#include "../../include/mtw_exe_variants.h"
 #ifdef MTW_DUST_CHILD_DELTA
 #include "particle_normalization.h"
 #endif
@@ -15,8 +16,6 @@ extern IMAGE_DOS_HEADER __ImageBase;
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
-#define MTW_EXPECTED_SHA256_HEX \
-    "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
 #define MTW_EXPECTED_IMAGE_BASE 0x00400000u
 #define MTW_EXPECTED_TIMESTAMP 0x567DD42Fu
 #define MTW_CALLSITE_RVA 0x001B96AFu
@@ -101,19 +100,6 @@ typedef struct MtwDustRuntimeStatus {
     volatile LONG dense_entries;
     volatile LONG dense_exits;
 } MtwDustRuntimeStatus;
-
-typedef struct MtwSupportedExe {
-    DWORD image_size;
-    char sha256[65];
-} MtwSupportedExe;
-
-/* Exact installer output identities: stock, scroll, sprite, both. */
-static const MtwSupportedExe supported_exes[] = {
-    {0x00B4C000u, "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"},
-    {0x00B4E000u, "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B"},
-    {0x00B4D000u, "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0"},
-    {0x00B4F000u, "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"},
-};
 
 #ifndef MTW_DUST_CHILD_DELTA
 static const BYTE expected_producer_callsite_bytes[5] = {
@@ -232,7 +218,7 @@ static void write_particle_float(BYTE *particle, SIZE_T offset, float value) {
 }
 #endif
 
-static int hash_file_sha256(const WCHAR *path, BYTE output[32]) {
+static int hash_file_sha256(const WCHAR *path, BYTE output[32], size_t *file_length) {
     BCRYPT_ALG_HANDLE algorithm = NULL;
     BCRYPT_HASH_HANDLE hash = NULL;
     HANDLE file = INVALID_HANDLE_VALUE;
@@ -242,6 +228,7 @@ static int hash_file_sha256(const WCHAR *path, BYTE output[32]) {
     DWORD hash_size = 0u;
     DWORD result_size = 0u;
     DWORD bytes_read = 0u;
+    LARGE_INTEGER file_size;
     NTSTATUS status;
     int success = 0;
 
@@ -254,6 +241,8 @@ static int hash_file_sha256(const WCHAR *path, BYTE output[32]) {
     if (file == INVALID_HANDLE_VALUE) {
         goto cleanup;
     }
+    if (!GetFileSizeEx(file, &file_size) || file_size.QuadPart < 0 ||
+        (ULONGLONG)file_size.QuadPart > (ULONGLONG)SIZE_MAX) goto cleanup;
     status = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, NULL, 0u);
     if (!NT_SUCCESS(status)) {
         goto cleanup;
@@ -294,6 +283,7 @@ static int hash_file_sha256(const WCHAR *path, BYTE output[32]) {
     }
     status = BCryptFinishHash(hash, output, 32u, 0u);
     success = NT_SUCCESS(status);
+    if (success && file_length) *file_length = (size_t)file_size.QuadPart;
 
 cleanup:
     if (hash) {
@@ -319,8 +309,12 @@ static int main_executable_matches(HMODULE module) {
     const IMAGE_NT_HEADERS32 *nt_headers;
     WCHAR module_path[MAX_PATH];
     BYTE actual_hash[32];
+    char actual_hex[65];
+    size_t file_length;
+    MtwExeVariant known;
     DWORD path_length;
-    SIZE_T known_index;
+    SIZE_T byte_index;
+    static const char hex[] = "0123456789ABCDEF";
 
     if (!module || (ULONG_PTR)module != (ULONG_PTR)MTW_EXPECTED_IMAGE_BASE) {
         return 0;
@@ -342,30 +336,16 @@ static int main_executable_matches(HMODULE module) {
     if (path_length == 0u || path_length >= MAX_PATH) {
         return 0;
     }
-    if (!hash_file_sha256(module_path, actual_hash)) {
+    if (!hash_file_sha256(module_path, actual_hash, &file_length)) {
         return 0;
     }
-    for (known_index = 0u;
-         known_index < sizeof(supported_exes) / sizeof(supported_exes[0]);
-         ++known_index) {
-        const MtwSupportedExe *known = &supported_exes[known_index];
-        SIZE_T byte_index;
-        int equal = 1;
-        if (nt_headers->OptionalHeader.SizeOfImage != known->image_size)
-            continue;
-        for (byte_index = 0u; byte_index < sizeof(actual_hash); ++byte_index) {
-            static const char hex[] = "0123456789ABCDEF";
-            if (known->sha256[byte_index * 2u] !=
-                    hex[actual_hash[byte_index] >> 4u] ||
-                known->sha256[byte_index * 2u + 1u] !=
-                    hex[actual_hash[byte_index] & 0x0Fu]) {
-                equal = 0;
-                break;
-            }
-        }
-        if (equal) return 1;
+    for (byte_index = 0u; byte_index < sizeof(actual_hash); ++byte_index) {
+        actual_hex[byte_index * 2u] = hex[actual_hash[byte_index] >> 4u];
+        actual_hex[byte_index * 2u + 1u] = hex[actual_hash[byte_index] & 0x0Fu];
     }
-    return 0;
+    actual_hex[64] = '\0';
+    return mtw_exe_variant_from_hash(actual_hex, file_length, &known) &&
+           nt_headers->OptionalHeader.SizeOfImage == known.image_size;
 }
 
 #ifndef MTW_DUST_CHILD_DELTA
@@ -630,7 +610,7 @@ static Direct3DCreate9Fn resolve_real_direct3dcreate9(void) {
         real_d3d9_module = LoadLibraryW(module_path);
         if (real_d3d9_module) {
             BYTE actual_hash[32];
-            backend_verified = hash_file_sha256(module_path, actual_hash) &&
+            backend_verified = hash_file_sha256(module_path, actual_hash, NULL) &&
                 memcmp(actual_hash, expected_backend_sha256,
                        sizeof(actual_hash)) == 0;
         }

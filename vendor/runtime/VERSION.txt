@@ -1,26 +1,26 @@
-Unofficial Medieval: Total War Collection Patch core runtime R195
+Unofficial Medieval: Total War Collection Patch core runtime R197
 
-Optional R196 Fast computer moves variants are source-built extensions of
+Optional R197 Fast computer moves variants are source-built extensions of
 this core runtime. The fast-only variant forwards to system D3D9 and does not
-load dgVoodoo2; the combined variant retains the R195 Terrain runtime.
+load dgVoodoo2; the combined variant retains the R197 Terrain runtime.
 
-R196 fast-only D3D9 proxy SHA-256:
-5F1D5FCDBEB7EC9C74355423D23A2E82DAEE015CE444AD24F51CDF2FAB5CB0A2
+R197 fast-only D3D9 proxy SHA-256:
+1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0
 
-R196 combined Terrain and Fast D3D9 proxy SHA-256:
-3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159
+R197 combined Terrain and Fast D3D9 proxy SHA-256:
+A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B
 
-R195 D3D9 proxy SHA-256:
-BC7A0D30EF28E01715ABC05F1C298D884767760CA193B4171DF2A14FB2D4C848
+R197 D3D9 proxy SHA-256:
+C94CB5D586F68D6132A4B9F49F1D16D83EEB7ACCC6201F84CED0FCADC32F1244
 
-R195 scroll-disabled D3D9 proxy SHA-256:
-DAC23D50C2A024084A354527D882BE0E04BF2BDBBDA66E9CC81017D31B3C963A
+R197 scroll-disabled D3D9 proxy SHA-256:
+A5937F08664AC14F79BDCD97002C20F37B53D748E126E9CDFC410450436BCC23
 
-R195 sprite-disabled D3D9 proxy SHA-256:
-397AB7FC769D8DBA919DE2E62A7F5E0A3A32870B5733C3DCD5D43BF472AC6232
+R197 sprite-disabled D3D9 proxy SHA-256:
+84C3EF9423EFBDBAC79ADD53E3AF61D402DB3BBBCB287628F5F79FD90856611B
 
-R195 scroll-and-sprite-disabled D3D9 proxy SHA-256:
-B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9
+R197 scroll-and-sprite-disabled D3D9 proxy SHA-256:
+B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7
 
 Battlefield dust child movement and size deltas are normalized to measured native workload timing without a frame cap.
 The D3D11 RGB565 bridge scans all billboard centers at the exact game DrawIndexedPrimitiveUP return RVA B3FDC7, covering mixed black/white-led batches containing brown dust as well as the observed gray phase; pure nonbrown batches retain their original target.
@@ -59,8 +59,7 @@ Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
-The runtime is gated to these exact Medieval_TW.exe SHA-256 identities (stock, scroll-only, sprite-only, both installer options):
-23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5
-50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B
-72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0
-982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627
+The runtime is gated to the 16 exact Medieval_TW.exe SHA-256 identities in
+include/mtw_exe_variants.h: four verified direct-fix states, each in its
+unmodified and three LAA checksum forms. The reported LAA stock identity is
+9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710.

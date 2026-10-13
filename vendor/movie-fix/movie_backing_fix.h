@@ -3,7 +3,7 @@
 
 #include <windows.h>
 
-/* Installs only for the four exact supported EXE files. Safe to call again. */
+/* Installs only for the exact supported EXE identities. Safe to call again. */
 int mtw_movie_backing_install_once(void);
 
 /* Read-only diagnostics: 0 installed, 1 pitch repairs, 2 capacity growths,

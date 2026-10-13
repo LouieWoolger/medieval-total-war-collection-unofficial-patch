@@ -6,6 +6,7 @@
 #include <intrin.h>
 
 #include "movie_backing_fix.h"
+#include "../../include/mtw_exe_variants.h"
 #include "../r185/source/intro_backing_repair_core.h"
 
 #if !defined(_M_IX86)
@@ -35,30 +36,21 @@ static volatile LONG capacity_growths;
 static volatile LONG failed_growths;
 static volatile LONG fallback_hits;
 
-typedef struct mtw_supported_movie_exe {
-    DWORD image_size;
-    const char *sha256;
-} mtw_supported_movie_exe;
-
-static const mtw_supported_movie_exe supported_exes[] = {
-    {0x00B4C000u, "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"},
-    {0x00B4E000u, "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B"},
-    {0x00B4D000u, "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0"},
-    {0x00B4F000u, "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627"},
-};
-
-static int sha256_file(const WCHAR *path, BYTE result[32]) {
+static int sha256_file(const WCHAR *path, BYTE result[32], size_t *file_length) {
     BCRYPT_ALG_HANDLE algorithm = NULL;
     BCRYPT_HASH_HANDLE hash = NULL;
     HANDLE file = INVALID_HANDLE_VALUE;
     BYTE *object = NULL, *buffer = NULL;
     DWORD object_size = 0, hash_size = 0, returned = 0, read = 0;
+    LARGE_INTEGER file_size;
     int okay = 0;
     if (!path || !result) return 0;
     file = CreateFileW(path, GENERIC_READ,
                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE ||
+        !GetFileSizeEx(file, &file_size) || file_size.QuadPart < 0 ||
+        (ULONGLONG)file_size.QuadPart > (ULONGLONG)SIZE_MAX ||
         BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM,
                                     NULL, 0) < 0 ||
         BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, (PUCHAR)&object_size,
@@ -78,6 +70,7 @@ static int sha256_file(const WCHAR *path, BYTE result[32]) {
         if (read && BCryptHashData(hash, buffer, read, 0) < 0) goto done;
     } while (read);
     okay = BCryptFinishHash(hash, result, 32u, 0) >= 0;
+    if (okay && file_length) *file_length = (size_t)file_size.QuadPart;
 done:
     if (hash) BCryptDestroyHash(hash);
     if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
@@ -92,7 +85,9 @@ static int exact_game_executable(void) {
     const IMAGE_NT_HEADERS32 *nt;
     WCHAR path[MAX_PATH];
     BYTE digest[32];
-    size_t i, j;
+    char digest_hex[65];
+    MtwExeVariant known;
+    size_t i, file_length;
     static const char hex[] = "0123456789ABCDEF";
     if ((uintptr_t)GetModuleHandleW(NULL) != MTW_GAME_BASE ||
         dos->e_magic != IMAGE_DOS_SIGNATURE ||
@@ -104,16 +99,14 @@ static int exact_game_executable(void) {
         nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC ||
         nt->OptionalHeader.ImageBase != MTW_GAME_BASE) return 0;
     i = GetModuleFileNameW(NULL, path, MAX_PATH);
-    if (!i || i >= MAX_PATH || !sha256_file(path, digest)) return 0;
-    for (i = 0; i < sizeof supported_exes / sizeof supported_exes[0]; ++i) {
-        const mtw_supported_movie_exe *known = &supported_exes[i];
-        if (known->image_size != nt->OptionalHeader.SizeOfImage) continue;
-        for (j = 0; j < 32u; ++j)
-            if (known->sha256[j * 2u] != hex[digest[j] >> 4u] ||
-                known->sha256[j * 2u + 1u] != hex[digest[j] & 15u]) break;
-        if (j == 32u) return 1;
+    if (!i || i >= MAX_PATH || !sha256_file(path, digest, &file_length)) return 0;
+    for (i = 0; i < 32u; ++i) {
+        digest_hex[i * 2u] = hex[digest[i] >> 4u];
+        digest_hex[i * 2u + 1u] = hex[digest[i] & 15u];
     }
-    return 0;
+    digest_hex[64] = '\0';
+    return mtw_exe_variant_from_hash(digest_hex, file_length, &known) &&
+           known.image_size == nt->OptionalHeader.SizeOfImage;
 }
 
 static mtw_intro_backing_snapshot backing_snapshot(void) {
