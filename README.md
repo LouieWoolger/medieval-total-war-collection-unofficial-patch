@@ -15,6 +15,8 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 - Terrain Movement Fix - installs dgVoodoo2 to fix click-to-move and drag-formation issues on modern Windows systems.
 - Campaign Map Scroll Fix - Fixes campaign-map scrolling speed at high frame rates.
 - Pre-battle Screen Crash Fix - Fixes a crash that can occur on the pre-battle screen during the campaign.
+- Campaign Tutorial Resolution Fix - Fixes the campaign tutorial resetting your strategy map resolution to 800x600.
+- Battle Unit Portrait Fix - Fixes unit portraits disappearing from battle unit cards after Alt+Tab.
 
 **Optional**:
 
