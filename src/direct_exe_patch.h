@@ -1,8 +1,8 @@
 #ifndef MTW_DIRECT_EXE_PATCH_H
 #define MTW_DIRECT_EXE_PATCH_H
 
-/* Exact-hash, reversible PE32 transforms for independent Scroll and Sprite
-   options. No complete game executable is packaged with the installer. */
+/* Exact-hash, reversible PE32 transforms for independent Scroll, Sprite and
+   campaign-tutorial options. No complete game executable is packaged. */
 #include "scroll_exe_patch.h"
 #include "../include/mtw_exe_variants.h"
 #include "../vendor/sprite_exe/sprite_hook.inc"
@@ -11,6 +11,13 @@
 #define MTW_SCROLL_SPRITE_SIZE 0x4EA000u
 #define MTW_BLITTER_ENTRY_RAW 0x33D47Eu
 #define MTW_BLITTER_BODY_RAW 0x4DE389u
+#define MTW_TUTORIAL_RESET_RAW 0x306A5Cu
+
+static const unsigned char mtw_tutorial_reset_original[6] =
+    {0x89, 0x1D, 0xF0, 0xD1, 0xE7, 0x00};
+/* RVA 0x306A5C -> RVA 0x306AD9, then retain the six-byte instruction span. */
+static const unsigned char mtw_tutorial_reset_skip[6] =
+    {0xE9, 0x78, 0x00, 0x00, 0x00, 0x90};
 
 static inline uint32_t mtw_direct_checksum(const unsigned char *data, size_t length) {
     uint64_t sum = 0;
@@ -168,10 +175,10 @@ static inline int mtw_direct_exe_transform_canonical(PatchContext *context,
                                   desired_scroll, result, result_length, error);
 }
 
-/* Only the sixteen pinned full-file identities reach this point. A changed
+/* Only pinned full-file identities reach this point. A changed
    direct-fix state is built through the original verified non-LAA transform,
    then the LAA bit and checksum are restored and the result is hash-checked. */
-static inline int mtw_direct_exe_transform(PatchContext *context,
+static inline int mtw_direct_exe_transform_base(PatchContext *context,
                                             const unsigned char *source, size_t source_length,
                                             int desired_scroll, int desired_sprite,
                                             unsigned char **result, size_t *result_length,
@@ -193,7 +200,8 @@ static inline int mtw_direct_exe_transform(PatchContext *context,
         patch_error_set(error, context->error.code, context->error.message, context->error.win32);
         return 0;
     }
-    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant) ||
+        source_variant.tutorial) {
         patch_error_set(error, "unsupported_executable",
                         "Medieval_TW.exe is not an exact supported direct-fix or LAA state.", ERROR_INVALID_DATA);
         return 0;
@@ -246,6 +254,142 @@ static inline int mtw_direct_exe_transform(PatchContext *context,
     *result = transformed;
     *result_length = transformed_length;
     return 1;
+}
+
+/* Normalize a verified tutorial state to its exact old identity, run the
+   established Scroll/Sprite transform, then apply the six-byte tutorial
+   redirection. Every intermediate and final state has a pinned full hash. */
+static inline int mtw_direct_exe_transform(PatchContext *context,
+                                           const unsigned char *source, size_t source_length,
+                                           int desired_scroll, int desired_sprite,
+                                           int desired_tutorial,
+                                           unsigned char **result, size_t *result_length,
+                                           PatchError *error) {
+    MtwExeVariant source_variant, transformed_variant;
+    const MtwExeVariant *without_tutorial, *wanted;
+    unsigned char *normalized = NULL, *transformed = NULL;
+    const unsigned char *input = source;
+    size_t transformed_length = 0;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0;
+    if (!context || !source || !result || !result_length ||
+        (desired_scroll != 0 && desired_scroll != 1) ||
+        (desired_sprite != 0 && desired_sprite != 1) ||
+        (desired_tutorial != 0 && desired_tutorial != 1) ||
+        source_length < MTW_TUTORIAL_RESET_RAW + sizeof mtw_tutorial_reset_original) {
+        patch_error_set(error, "invalid_argument", "Invalid direct EXE transform arguments.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+        patch_error_set(error, "unsupported_executable", "The game EXE is not an exact supported state.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (source_variant.scroll == desired_scroll &&
+        source_variant.sprite == desired_sprite &&
+        source_variant.tutorial == desired_tutorial) {
+        if (!patch_alloc(context, source_length, 1, (void **)&normalized, error)) return 0;
+        memcpy(normalized, source, source_length);
+        *result = normalized;
+        *result_length = source_length;
+        return 1;
+    }
+    if (source_variant.tutorial) {
+        without_tutorial = mtw_exe_variant_for_state(
+            source_variant.scroll, source_variant.sprite,
+            source_variant.laa, source_variant.checksum_style);
+        if (!without_tutorial ||
+            memcmp(source + MTW_TUTORIAL_RESET_RAW, mtw_tutorial_reset_skip,
+                   sizeof mtw_tutorial_reset_skip)) {
+            patch_error_set(error, "transform_mismatch", "The tutorial EXE instruction is not pinned.", ERROR_INVALID_DATA);
+            goto failed;
+        }
+        if (!patch_alloc(context, source_length, 1, (void **)&normalized, error)) goto failed;
+        memcpy(normalized, source, source_length);
+        memcpy(normalized + MTW_TUTORIAL_RESET_RAW, mtw_tutorial_reset_original,
+               sizeof mtw_tutorial_reset_original);
+        if (!strcmp(source_variant.checksum_style, "zero"))
+            mtw_scroll_put32(normalized + 0xD8u, 0u);
+        else if (!strcmp(source_variant.checksum_style, "recompute")) {
+            mtw_scroll_put32(normalized + 0xD8u, 0u);
+            mtw_scroll_put32(normalized + 0xD8u,
+                             mtw_direct_checksum(normalized, source_length));
+        } else
+            mtw_scroll_put32(normalized + 0xD8u,
+                             without_tutorial->canonical_checksum);
+        if (!patch_sha256_bytes(context, normalized, source_length, digest)) {
+            patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+            goto failed;
+        }
+        if (strcmp(digest, without_tutorial->sha256)) {
+            patch_error_set(error, "transform_mismatch", "Tutorial removal did not restore a pinned executable.", ERROR_INVALID_DATA);
+            goto failed;
+        }
+        input = normalized;
+    }
+    if (!mtw_direct_exe_transform_base(context, input, source_length,
+                                       desired_scroll, desired_sprite,
+                                       &transformed, &transformed_length, error)) goto failed;
+    if (normalized) patch_context_free(context, normalized);
+    normalized = NULL;
+    if (!desired_tutorial) {
+        if (source_variant.tutorial && source_variant.laa) {
+            wanted = mtw_exe_variant_for_state(
+                (unsigned int)desired_scroll, (unsigned int)desired_sprite,
+                1u, "recompute");
+            mtw_scroll_put32(transformed + 0xD8u, 0u);
+            mtw_scroll_put32(transformed + 0xD8u,
+                             mtw_direct_checksum(transformed, transformed_length));
+            if (!wanted || transformed_length != wanted->file_length ||
+                !patch_sha256_bytes(context, transformed, transformed_length, digest) ||
+                strcmp(digest, wanted->sha256)) {
+                patch_error_set(error, "transform_mismatch", "Tutorial removal did not match its pinned LAA output.", ERROR_INVALID_DATA);
+                goto failed;
+            }
+        }
+        *result = transformed;
+        *result_length = transformed_length;
+        return 1;
+    }
+    if (memcmp(transformed + MTW_TUTORIAL_RESET_RAW, mtw_tutorial_reset_original,
+               sizeof mtw_tutorial_reset_original) ||
+        !patch_sha256_bytes(context, transformed, transformed_length, digest)) {
+        patch_error_set(error, "transform_mismatch", "The tutorial reset instruction changed.", ERROR_INVALID_DATA);
+        goto failed;
+    }
+    if (!mtw_exe_variant_from_hash(digest, transformed_length, &transformed_variant) ||
+        transformed_variant.tutorial) {
+        patch_error_set(error, "transform_mismatch", "The intermediate EXE is not a pinned state.", ERROR_INVALID_DATA);
+        goto failed;
+    }
+    memcpy(transformed + MTW_TUTORIAL_RESET_RAW, mtw_tutorial_reset_skip,
+           sizeof mtw_tutorial_reset_skip);
+    mtw_scroll_put32(transformed + 0xD8u, 0u);
+    mtw_scroll_put32(transformed + 0xD8u,
+                     mtw_direct_checksum(transformed, transformed_length));
+    wanted = mtw_exe_variant_for_options(
+        (unsigned int)desired_scroll, (unsigned int)desired_sprite, 1u,
+        source_variant.laa, source_variant.laa ? "recompute" : "base");
+    if (!wanted || transformed_length != wanted->file_length ||
+        !patch_sha256_bytes(context, transformed, transformed_length, digest)) {
+        patch_error_set(error, "transform_mismatch", "The tutorial EXE output identity is unavailable.", ERROR_INVALID_DATA);
+        goto failed;
+    }
+    if (strcmp(digest, wanted->sha256)) {
+        patch_error_set(error, "transform_mismatch", "The tutorial EXE did not match its pinned output.", ERROR_INVALID_DATA);
+        goto failed;
+    }
+    *result = transformed;
+    *result_length = transformed_length;
+    return 1;
+failed:
+    if (normalized) patch_context_free(context, normalized);
+    if (transformed) patch_context_free(context, transformed);
+    return 0;
 }
 
 /* Rebase a verified pre-patch stock snapshot after a user independently sets

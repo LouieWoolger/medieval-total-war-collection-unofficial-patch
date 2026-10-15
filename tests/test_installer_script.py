@@ -189,6 +189,21 @@ def test_fast_computer_moves_is_an_independent_optional_choice() -> None:
     assert 'File /oname=fast-computer-moves.bmp' in text
 
 
+def test_tutorial_resolution_is_a_recommended_independent_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["tutorial_component_name"] == "Campaign Tutorial Resolution Fix"
+    assert 'StrCpy $TutorialSelected "1"' in text
+    assert '${NSD_CreateCheckbox} 12 184 295 24 "${PRODUCT_TUTORIAL_COMPONENT_NAME}"' in text
+    assert '"/TUTORIALFIX="' in text
+    assert 'tutorial_fix=$TutorialSelected' in text
+    assert 'StrCpy $TutorialSelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
+    assert '${NSD_GetState} $TutorialCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $TutorialCheck "tutorial"' in text
+    assert '${NSD_SetText} $PreviewText "Fixes the campaign tutorial resetting your strategy map resolution to 800x600."' in text
+    assert 'File /oname=campaign-tutorial-resolution.bmp' in text
+
+
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:
     text = script_text()
     assert '--request "$NativeDirectory\\request.ini"' in text

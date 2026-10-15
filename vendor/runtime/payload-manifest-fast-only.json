@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Fast Computer Moves Option",
-  "runtime_identity": "R197-fast-moves-only-candidate",
+  "runtime_identity": "R201-fast-only",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 110592,
-      "sha256": "1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0",
-      "provenance": "Source-built x86 D3D9 system forwarder with only guarded Fast computer moves game hooks. No dgVoodoo2 backend."
+      "length": 113152,
+      "sha256": "541168074FCA1CD213E59C8E0F7700E12192E01CFE9B3966CE31D85F36D454E2",
+      "provenance": "Source-built R201 PE32 proxy from vendor/r185/source with exact supported executable identity checks; independently selected battle unit icon recovery, Terrain Movement Fix and Fast Computer Moves hooks are enabled only in their named variant."
     }
   },
   "locked_settings": null,
@@ -22,5 +22,6 @@
     "~tmp.vrp"
   ],
   "scroll_fix_enabled": false,
-  "sprite_fix_enabled": false
+  "sprite_fix_enabled": false,
+  "battle_icon_fix_enabled": false
 }

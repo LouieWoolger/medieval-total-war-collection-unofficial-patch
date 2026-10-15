@@ -66,7 +66,8 @@ function Build-NativeHelper {
     $compilerVersion = [string](& $gcc -dumpfullversion -dumpversion)
     if ($LASTEXITCODE -ne 0) { throw 'Native compiler version probe failed.' }
     $compilerFlags = @('-std=c99','-DUNICODE','-D_UNICODE','-D_WIN32_WINNT=0x0501','-Os','-Wall','-Wextra','-Werror',
-        '-municode','-static','-static-libgcc','-Wl,--subsystem,console:5.1')
+        '-municode','-static','-static-libgcc','-Wl,--subsystem,console:5.1',
+        '-Wl,--no-insert-timestamp')
     $prefix = @()
     $libexec = Join-Path (Split-Path -Parent $compilerBin) ('libexec\gcc\' + $triple.Trim() + '\' + $compilerVersion.Trim())
     if (Test-Path -LiteralPath (Join-Path $libexec 'cc1.exe') -PathType Leaf) { $prefix = @('-B',($libexec + '\')) }
@@ -97,6 +98,10 @@ function Build-NativeHelper {
         throw 'The installer helper unexpectedly links a C++ runtime.'
     }
     Invoke-LoggedCommand $strip @('-p','-s','-o',$nativeHelper,$unstrippedHelper) 'native-strip.log'
+    # NSIS records the source file's modification time in both packages.
+    # Keep the generated helper's archive metadata stable across clean builds.
+    (Get-Item -LiteralPath $nativeHelper).LastWriteTimeUtc =
+        [datetime]::Parse('2000-01-01T00:00:00Z').ToUniversalTime()
     Invoke-LoggedCommand $python @($manifestScript,'--audit-native-helper',$nativeHelper,'--output',$nativePeReport) 'native-pe-audit.log'
     $nativeSources = [ordered]@{}
     foreach ($path in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -File | Where-Object { $_.Extension -in @('.c','.h','.rc','.manifest') } | Sort-Object Name)) {
@@ -142,6 +147,10 @@ $payloadVariants = [ordered]@{
     'D3D9-scroll-sprite-off.dll' = 'payload-manifest-scroll-sprite-off.json'
     'D3D9-scroll-sprite-off-fast.dll' = 'payload-manifest-scroll-sprite-off-fast.json'
     'D3D9-fast-only.dll' = 'payload-manifest-fast-only.json'
+    'D3D9-scroll-sprite-off-icon-off.dll' = 'payload-manifest-scroll-sprite-off-icon-off.json'
+    'D3D9-scroll-sprite-off-fast-icon-off.dll' = 'payload-manifest-scroll-sprite-off-fast-icon-off.json'
+    'D3D9-icon-only.dll' = 'payload-manifest-icon-only.json'
+    'D3D9-fast-icon.dll' = 'payload-manifest-fast-icon.json'
 }
 New-Item -ItemType Directory -Path $OutputDirectory,$ArtifactDirectory,$BuildDirectory,$TestDirectory -Force | Out-Null
 $tempDirectory = Join-Path $BuildDirectory ('temp-' + $runId)
@@ -234,7 +243,7 @@ try {
     Copy-Item -LiteralPath $audit -Destination (Join-Path $ArtifactDirectory 'INSTALLER_AUDIT.json') -ErrorAction Stop
 
     $reports['project_contracts'] = Invoke-PytestStage 'project_contracts' @(
-        'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_installer_script.py','tests/test_package_audit.py',
+        'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_battle_icon_option.py','tests/test_installer_script.py','tests/test_package_audit.py',
         'tests/test_build_workflow.py','tests/test_installer_elevation.py',
         'tests/test_dust_flicker_status.py','tests/test_dust_gpu_target_guard.py',
         'tests/test_dust_draw_identity.py','tests/test_dust_rgb565_operation_gate.py',

@@ -43,8 +43,12 @@ $runtimeVariants = [ordered]@{
     'payload-scroll-sprite-off' = $runtimeNames
     'payload-scroll-sprite-off-fast' = $runtimeNames
     'payload-fast-only' = @('payload-manifest.json','D3D9.dll')
+    'payload-scroll-sprite-off-icon-off' = $runtimeNames
+    'payload-scroll-sprite-off-fast-icon-off' = $runtimeNames
+    'payload-icon-only' = @('payload-manifest.json','D3D9.dll')
+    'payload-fast-icon' = @('payload-manifest.json','D3D9.dll')
 }
-$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','sprite-clipping.bmp','fast-computer-moves.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
+$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','sprite-clipping.bmp','campaign-tutorial-resolution.bmp','battle-unit-icons.bmp','fast-computer-moves.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
 $common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
 $common += @(foreach ($variant in $runtimeVariants.Keys) {

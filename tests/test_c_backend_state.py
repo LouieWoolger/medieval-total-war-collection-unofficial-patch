@@ -312,6 +312,77 @@ def test_c_v4_direct_sprite_receipt_accepts_known_disabled_proxies(state_exe,tmp
         result=invoke(state_exe,["--receipt",game,path])
         assert (result.returncode==0)==accepted,(proxy_hash,result.stdout,result.stderr)
 
+def test_c_v5_released_fast_terrain_receipt_survives_proxy_upgrade(state_exe,tmp_path,receipt_fixture):
+    game,receipt,_=receipt_fixture
+    receipt.update(schema="unofficial-medieval-total-war-patch-install-v5",
+                   terrain_fix_enabled=True,scroll_fix_enabled=True,
+                   sprite_fix_enabled=True,sprite_delivery="direct-exe",
+                   fast_moves_fix_enabled=True)
+    receipt["files"]["Medieval_TW.exe"]={
+        "existed":True,"original_sha256":EXE_HASH,"original_length":5140480,
+        "snapshot_relative":"originals/Medieval_TW.exe",
+        "installed_sha256":"982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
+        "installed_length":5152768,"sidecar_relative":None,"sidecar_created":False,
+    }
+    receipt["files"]["Loc/Eng/CHANGES.TXT"]={
+        "existed":True,
+        "original_sha256":"A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
+        "original_length":279934,"snapshot_relative":"originals/CHANGES.TXT",
+        "installed_sha256":"2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B",
+        "installed_length":280162,"sidecar_relative":None,"sidecar_created":False,
+    }
+    proxy=receipt["files"]["D3D9.dll"]
+    proxy["installed_length"]=204800
+    path=tmp_path/"released-fast-terrain-receipt.json"
+    for proxy_hash,accepted in (
+        ("A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B",True),
+        ("2B0799454727FDA01E107F3236AB70D8BB0E9C0C6814C730F2E5BB5765E7CF33",True),
+        ("3F10467E0FD6E90D3FB33D4886ED29B94F6242A48E8DE4639969BA1709916159",True),
+        ("660CDB3A233213F64B2BD0913D6D814AF8B49D7549051EC4DCAA770C365758ED",True),
+        ("B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7",False),
+        ("1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0",False),
+        ("F"*64,False),
+    ):
+        proxy["installed_sha256"]=proxy_hash
+        path.write_bytes(canonical(seal(receipt)))
+        result=invoke(state_exe,["--receipt",game,path])
+        assert (result.returncode==0)==accepted,(proxy_hash,result.stdout,result.stderr)
+
+def test_c_v5_released_nonfast_terrain_receipts_survive_proxy_upgrade(state_exe,tmp_path,receipt_fixture):
+    game,receipt,_=receipt_fixture
+    receipt.update(schema="unofficial-medieval-total-war-patch-install-v5",
+                   terrain_fix_enabled=True,scroll_fix_enabled=True,
+                   sprite_fix_enabled=True,sprite_delivery="direct-exe",
+                   fast_moves_fix_enabled=False)
+    receipt["files"]["Medieval_TW.exe"]={
+        "existed":True,"original_sha256":EXE_HASH,"original_length":5140480,
+        "snapshot_relative":"originals/Medieval_TW.exe",
+        "installed_sha256":"982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
+        "installed_length":5152768,"sidecar_relative":None,"sidecar_created":False,
+    }
+    receipt["files"]["Loc/Eng/CHANGES.TXT"]={
+        "existed":True,
+        "original_sha256":"A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
+        "original_length":279934,"snapshot_relative":"originals/CHANGES.TXT",
+        "installed_sha256":"A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
+        "installed_length":279934,"sidecar_relative":None,"sidecar_created":False,
+    }
+    proxy=receipt["files"]["D3D9.dll"]
+    proxy["installed_length"]=204800
+    path=tmp_path/"released-nonfast-terrain-receipt.json"
+    for proxy_hash,accepted in (
+        ("B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7",True),
+        ("37F8C4CCAB491F863CC91639637876696F51C243E4E26DE0649B8B45099CBD6C",True),
+        ("ACDCCA09E28FD13715FA6E8D99E429B2422A37B22E5C5FBE7CCDCA838D418AB3",True),
+        ("A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B",False),
+        ("2B0799454727FDA01E107F3236AB70D8BB0E9C0C6814C730F2E5BB5765E7CF33",False),
+        ("F"*64,False),
+    ):
+        proxy["installed_sha256"]=proxy_hash
+        path.write_bytes(canonical(seal(receipt)))
+        result=invoke(state_exe,["--receipt",game,path])
+        assert (result.returncode==0)==accepted,(proxy_hash,result.stdout,result.stderr)
+
 @pytest.mark.parametrize("field,value,code",[("owner_sid","S-1-5-999","wrong_account"),
     ("directory_identity","00000000:0000000000000001","installation_moved"),
     ("target_directory","F:\\Other","installation_moved"),("registration_key","Other","receipt_invalid"),
@@ -380,7 +451,7 @@ def test_c_genuine_saved_cpp_journals_and_receipts(state_exe,tmp_path):
 
 def test_c_migration_classification_and_wire_file_identity(state_exe):
     result=invoke(state_exe,["--migration-suite"]);assert result.returncode==0,result.stdout
-    assert b"RESULT passed=41 failed=0" in result.stdout
+    assert b"RESULT passed=44 failed=0" in result.stdout
 
 def test_c_receipt_draft_repair_preserves_guid_baseline_and_member_order(state_exe,tmp_path,receipt_fixture):
     game,receipt,_=receipt_fixture;path=tmp_path/"receipt.json";path.write_bytes(canonical(receipt))

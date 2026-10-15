@@ -1,26 +1,32 @@
-Unofficial Medieval: Total War Collection Patch core runtime R197
+Unofficial Medieval: Total War Collection Patch core runtime R201 local candidate
 
-Optional R197 Fast computer moves variants are source-built extensions of
-this core runtime. The fast-only variant forwards to system D3D9 and does not
-load dgVoodoo2; the combined variant retains the R197 Terrain runtime.
+R201 exposes Battle Unit Portrait Fix as an independently selected installer option.
+The Terrain proxy has icon-on and icon-off builds with and without Fast Computer Moves.
+An icon-only system-D3D9 forwarder and a Fast-plus-icon forwarder support installs
+without the Terrain wrapper. The hook retains the verified PE32 callsite and
+queues the live HUD atlas rebuild only after a successful graphics reset.
 
-R197 fast-only D3D9 proxy SHA-256:
-1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0
+The R200 combined Fast computer moves variant retains the Terrain runtime.
+The R200 fast-only variant forwards to system D3D9 and does not
+load dgVoodoo2.
 
-R197 combined Terrain and Fast D3D9 proxy SHA-256:
-A7CEAA57C7D814A120EC3FDCA288DF232F65EF6950E7EB0D924EC4582A8E168B
+R200 fast-only D3D9 proxy SHA-256:
+541168074FCA1CD213E59C8E0F7700E12192E01CFE9B3966CE31D85F36D454E2
 
-R197 D3D9 proxy SHA-256:
-C94CB5D586F68D6132A4B9F49F1D16D83EEB7ACCC6201F84CED0FCADC32F1244
+R200 combined Terrain and Fast D3D9 proxy SHA-256:
+0AA13EA53444BE53AF75B2F9F05F7373C757E68FBE0E19640ED8EAB99F744FB5
 
-R197 scroll-disabled D3D9 proxy SHA-256:
-A5937F08664AC14F79BDCD97002C20F37B53D748E126E9CDFC410450436BCC23
+R200 D3D9 proxy SHA-256:
+926E7A23902AC60CC71EB130EBFD93F723D3F2B52BAAA4FBBD667EF3C7E42CF3
 
-R197 sprite-disabled D3D9 proxy SHA-256:
-84C3EF9423EFBDBAC79ADD53E3AF61D402DB3BBBCB287628F5F79FD90856611B
+R200 scroll-disabled D3D9 proxy SHA-256:
+AB5623557CE8AAD6B62DE13C85355AB30943EBC9117D41630CA805E40670110B
 
-R197 scroll-and-sprite-disabled D3D9 proxy SHA-256:
-B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7
+R200 sprite-disabled D3D9 proxy SHA-256:
+284B30F025F36F8422B6BE20ACED5A7B9B7590753E5F8EE68FC95D0BF9CCBAF3
+
+R200 scroll-and-sprite-disabled D3D9 proxy SHA-256:
+DAB1FF9ADBA510206BC182D975DBFFA0ADC0E4A9637CA2507D4091F33E48F7C7
 
 Battlefield dust child movement and size deltas are normalized to measured native workload timing without a frame cap.
 The D3D11 RGB565 bridge scans all billboard centers at the exact game DrawIndexedPrimitiveUP return RVA B3FDC7, covering mixed black/white-led batches containing brown dust as well as the observed gray phase; pure nonbrown batches retain their original target.
@@ -51,7 +57,9 @@ Frontend-to-loading shrink suppression is restricted to a verified borderless po
 For an explicit non-fullscreen dgVoodoo presentation, successful wrapper sizing establishes live window ownership; subsequent game logical-mode moves and smaller backend frame adjustments cannot expose transient internal dimensions while fullscreen, user-resized, stale, or unknown geometry remains fail-open.
 When Sprite-Clipping Crash Fix is selected, fully off-clip prebattle unit icons are rejected before the game's RLE sprite row decoder; ordinary and partly visible icons continue through the original decoder.
 When Campaign Scrolling Fix is selected, campaign keyboard/action and edge camera inputs receive independent elapsed-time displacement at the verified game call sites, preserving their combined 60 Hz travel without limiting frame rate.
-The battle unit-icon atlas is rebuilt from live cards after graphics reset, retaining the bottom HUD portraits on Alt+Tab.
+When independently selected, the executable tutorial patch retains the chosen strategy-map resolution instead of overwriting it with the adapter's first mode.
+After native mode matching selects an identical duplicate strategy record, the saved selector is retained so Video Options cannot round the duplicate across a different-height boundary.
+The battle unit-icon atlas is rebuilt from live cards after graphics reset, including tutorial battles where the old surface has already been released before the reset hook runs.
 The Campaign Scrolling and Sprite-Clipping hooks are compiled independently in the Terrain runtime. The Fast computer moves hook is available in both a system-D3D9 forwarder and a combined Terrain runtime, so the feature can be installed without dgVoodoo2.
 
 dgVoodoo2 backend version: 2.87.5
@@ -59,7 +67,7 @@ Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
-The runtime is gated to the 16 exact Medieval_TW.exe SHA-256 identities in
-include/mtw_exe_variants.h: four verified direct-fix states, each in its
+The runtime is gated to the 32 exact Medieval_TW.exe SHA-256 identities in
+include/mtw_exe_variants.h: eight verified direct-fix states, each in its
 unmodified and three LAA checksum forms. The reported LAA stock identity is
 9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710.

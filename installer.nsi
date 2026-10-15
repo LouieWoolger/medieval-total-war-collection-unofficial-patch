@@ -18,6 +18,8 @@ RequestExecutionLevel user
 ManifestSupportedOS all
 InstallDir "$EXEDIR"
 SetCompressor /SOLID lzma
+; Packed file bytes determine the installer. Checkout timestamps must not.
+SetDateSave off
 ShowInstDetails show
 ShowUninstDetails show
 UninstallCaption "Remove Unofficial Medieval: Total War Collection Patch"
@@ -117,6 +119,10 @@ Var ScrollCheck
 Var ScrollSelected
 Var SpriteCheck
 Var SpriteSelected
+Var TutorialCheck
+Var TutorialSelected
+Var BattleIconCheck
+Var BattleIconSelected
 Var FastCheck
 Var FastSelected
 Var PreviewBitmap
@@ -155,6 +161,8 @@ Function .onInit
     File /oname=compatibility.bmp "${SOURCE_DIR}\assets\compatibility.bmp"
     File /oname=campaign-scrolling.bmp "${SOURCE_DIR}\assets\campaign-scrolling.bmp"
     File /oname=sprite-clipping.bmp "${SOURCE_DIR}\assets\sprite-clipping.bmp"
+    File /oname=campaign-tutorial-resolution.bmp "${SOURCE_DIR}\assets\campaign-tutorial-resolution.bmp"
+    File /oname=battle-unit-icons.bmp "${SOURCE_DIR}\assets\battle-unit-icons.bmp"
     File /oname=fast-computer-moves.bmp "${SOURCE_DIR}\assets\fast-computer-moves.bmp"
     File /oname=discord-badge.bmp "${SOURCE_DIR}\assets\discord-badge.bmp"
     File /oname=discord-badge-hover.bmp "${SOURCE_DIR}\assets\discord-badge-hover.bmp"
@@ -176,6 +184,8 @@ Function .onInit
     StrCpy $TerrainSelected "1"
     StrCpy $ScrollSelected "1"
     StrCpy $SpriteSelected "1"
+    StrCpy $TutorialSelected "1"
+    StrCpy $BattleIconSelected "1"
     StrCpy $FastSelected "0"
     StrCpy $0 ""
     ${GetOptions} $CommandOptions "/TERRAINFIX=" $0
@@ -215,6 +225,26 @@ Function .onInit
         StrCpy $FastSelected "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_fastmovesfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/TUTORIALFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $TutorialSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $TutorialSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_tutorialfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/BATTLEICONFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $BattleIconSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $BattleIconSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_battleiconfix_option value=$0"
         Call FailInstallation
     ${EndIf}
     Call SelectEnginePayload
@@ -261,14 +291,28 @@ Function RequireComponentPlatform
 FunctionEnd
 
 Function SelectEnginePayload
-    ${If} $FastSelected == "1"
-        ${If} $TerrainSelected == "1"
-            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off-fast"
+    ${If} $TerrainSelected == "1"
+        ${If} $FastSelected == "1"
+            ${If} $BattleIconSelected == "1"
+                StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off-fast"
+            ${Else}
+                StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off-fast-icon-off"
+            ${EndIf}
+        ${ElseIf} $BattleIconSelected == "1"
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
+        ${Else}
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off-icon-off"
+        ${EndIf}
+    ${ElseIf} $FastSelected == "1"
+        ${If} $BattleIconSelected == "1"
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-fast-icon"
         ${Else}
             StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-fast-only"
         ${EndIf}
+    ${ElseIf} $BattleIconSelected == "1"
+        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-icon-only"
     ${Else}
-        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
+        StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-fast-only"
     ${EndIf}
 FunctionEnd
 
@@ -574,6 +618,20 @@ compatibilityInteractive:
         ${NSD_Check} $SpriteCheck
     ${EndIf}
     ${NSD_OnClick} $SpriteCheck PreviewSprite
+    ${NSD_CreateCheckbox} 12 184 295 24 "${PRODUCT_TUTORIAL_COMPONENT_NAME}"
+    Pop $TutorialCheck
+    !insertmacro SET_TAHOMA $TutorialCheck $PatchPageFont
+    ${If} $TutorialSelected == "1"
+        ${NSD_Check} $TutorialCheck
+    ${EndIf}
+    ${NSD_OnClick} $TutorialCheck PreviewTutorial
+    ${NSD_CreateCheckbox} 12 214 295 24 "${PRODUCT_BATTLE_ICON_COMPONENT_NAME}"
+    Pop $BattleIconCheck
+    !insertmacro SET_TAHOMA $BattleIconCheck $PatchPageFont
+    ${If} $BattleIconSelected == "1"
+        ${NSD_Check} $BattleIconCheck
+    ${EndIf}
+    ${NSD_OnClick} $BattleIconCheck PreviewBattleIcon
     ${NSD_CreateGroupBox} 0 338 320 154 "Optional"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
@@ -635,9 +693,21 @@ Function PreviewSprite
     Call SetPreview
 FunctionEnd
 
+Function PreviewTutorial
+    Pop $0
+    StrCpy $R0 "tutorial"
+    Call SetPreview
+FunctionEnd
+
 Function PreviewFast
     Pop $0
     StrCpy $R0 "fast"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewBattleIcon
+    Pop $0
+    StrCpy $R0 "battle-icon"
     Call SetPreview
 FunctionEnd
 
@@ -669,6 +739,8 @@ Function PreviewFromCursor
     !insertmacro CHECK_PREVIEW_HOVER $CompatibilityCheck "terrain"
     !insertmacro CHECK_PREVIEW_HOVER $ScrollCheck "scrolling"
     !insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"
+    !insertmacro CHECK_PREVIEW_HOVER $TutorialCheck "tutorial"
+    !insertmacro CHECK_PREVIEW_HOVER $BattleIconCheck "battle-icon"
     !insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"
 FunctionEnd
 
@@ -683,12 +755,24 @@ Function SetPreview
         StrCpy $PreviewImage ""
     ${EndIf}
 
-    ${If} $R0 == "fast"
+    ${If} $R0 == "battle-icon"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_BATTLE_ICON_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Fixes unit portraits disappearing from battle unit cards after Alt+Tab."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\battle-unit-icons.bmp"
+    ${ElseIf} $R0 == "fast"
         ${NSD_SetText} $PreviewTitle "Fast Computer Moves Option"
         ${NSD_SetText} $PreviewText "Adds an option to the campaign tray. When turned off, AI turns play at reduced speed so you can follow where the AI has moved."
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\fast-computer-moves.bmp"
+    ${ElseIf} $R0 == "tutorial"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_TUTORIAL_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Fixes the campaign tutorial resetting your strategy map resolution to 800x600."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\campaign-tutorial-resolution.bmp"
     ${ElseIf} $R0 == "sprite"
         ${NSD_SetText} $PreviewTitle "Pre-battle Screen Crash Fix"
         ${NSD_SetText} $PreviewText "Fixes a crash that can occur on the pre-battle screen during the campaign."
@@ -739,6 +823,16 @@ Function CompatibilityPageBack
     ${If} $0 == ${BST_CHECKED}
         StrCpy $SpriteSelected "1"
     ${EndIf}
+    ${NSD_GetState} $TutorialCheck $0
+    StrCpy $TutorialSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $TutorialSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $BattleIconCheck $0
+    StrCpy $BattleIconSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $BattleIconSelected "1"
+    ${EndIf}
     ${NSD_GetState} $FastCheck $0
     StrCpy $FastSelected "0"
     ${If} $0 == ${BST_CHECKED}
@@ -765,6 +859,16 @@ Function CompatibilityPageLeave
     ${If} $0 == ${BST_CHECKED}
         StrCpy $SpriteSelected "1"
     ${EndIf}
+    ${NSD_GetState} $TutorialCheck $0
+    StrCpy $TutorialSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $TutorialSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $BattleIconCheck $0
+    StrCpy $BattleIconSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $BattleIconSelected "1"
+    ${EndIf}
     ${NSD_GetState} $FastCheck $0
     StrCpy $FastSelected "0"
     ${If} $0 == ${BST_CHECKED}
@@ -773,6 +877,8 @@ Function CompatibilityPageLeave
     ${If} $TerrainSelected != "1"
     ${AndIf} $ScrollSelected != "1"
     ${AndIf} $SpriteSelected != "1"
+    ${AndIf} $TutorialSelected != "1"
+    ${AndIf} $BattleIconSelected != "1"
     ${AndIf} $FastSelected != "1"
         MessageBox MB_OK|MB_ICONEXCLAMATION "Select at least one fix to continue."
         Abort
@@ -883,6 +989,8 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $LogLine "campaign_scroll_fix_selected=$ScrollSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "sprite_clipping_fix_selected=$SpriteSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "campaign_tutorial_resolution_fix_selected=$TutorialSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "fast_computer_moves_option_selected=$FastSelected"
     Call WriteDiagnostic

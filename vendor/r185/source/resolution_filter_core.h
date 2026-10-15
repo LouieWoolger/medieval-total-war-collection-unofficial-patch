@@ -97,5 +97,10 @@ int mtw_resolution_conservative_cap(
     uint32_t count,
     uint32_t *cap_width,
     uint32_t *cap_height);
+int mtw_resolution_should_restore_strategy_index(
+    const mtw_resolution_record *active_record,
+    const mtw_resolution_record *saved_record,
+    uint32_t selected_width,
+    uint32_t selected_height);
 
 #endif

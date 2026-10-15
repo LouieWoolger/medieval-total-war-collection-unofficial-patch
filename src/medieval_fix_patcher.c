@@ -22,14 +22,14 @@ static int medieval_version_valid(const char *s) {
 static int medieval_field(const wchar_t *s, int request) {
     static const wchar_t *const command[] = {L"--operation", L"--target", L"--payload", L"--version",
         L"--installer", L"--uninstaller", L"--log", L"--request", L"--test-fault", L"--output", L"--require-owner",
-        L"--terrain-fix", L"--scroll-fix", L"--sprite-fix", L"--fast-moves-fix"};
+        L"--terrain-fix", L"--scroll-fix", L"--sprite-fix", L"--fast-moves-fix", L"--tutorial-fix", L"--battle-icon-fix"};
     static const wchar_t *const aliases[] = {L"-Operation", L"-Target", L"-PayloadDirectory", L"-InstallerVersion",
         L"-InstallerPath", L"-UninstallerSource", L"-LogPath", L"-RequestPath", L"-TestFault", L"-OutputMode", L"-RequireOwner",
-        L"-TerrainFix", L"-ScrollFix", L"-SpriteFix", L"-FastMovesFix"};
+        L"-TerrainFix", L"-ScrollFix", L"-SpriteFix", L"-FastMovesFix", L"-TutorialFix", L"-BattleIconFix"};
     static const wchar_t *const fields[] = {L"operation", L"target", L"payload", L"version", L"installer", L"uninstaller", L"log",
-        L"require_owner", L"terrain_fix", L"scroll_fix", L"sprite_fix", L"fast_moves_fix"};
+        L"require_owner", L"terrain_fix", L"scroll_fix", L"sprite_fix", L"fast_moves_fix", L"tutorial_fix", L"battle_icon_fix"};
     size_t i;
-    for (i = 0; i < (request ? 12U : 15U); ++i)
+    for (i = 0; i < (request ? 14U : 17U); ++i)
         if (request ? !wcscmp(s, fields[i]) : (!wcscmp(s, command[i]) || !wcscmp(s, aliases[i])))
             return request && i >= 7 ? (int)i + 3 : (int)i;
     return -1;
@@ -55,6 +55,8 @@ static int medieval_option_set(PatchContext *c, MedievalOptions *o, int field, c
     case 12: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->scroll_fix = text[0] - '0'; o->selection_provided = 1; break;
     case 13: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->sprite_fix = text[0] - '0'; o->selection_provided = 1; break;
     case 14: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->fast_moves_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 15: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->tutorial_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 16: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->battle_icon_fix = text[0] - '0'; o->selection_provided = 1; break;
     default: return 0;
     }
     return 1;
@@ -64,7 +66,7 @@ static int medieval_options_parse(PatchContext *c, int argc, wchar_t **argv, Med
     int i, field;
     PatchError nested = {0};
     memset(o, 0, sizeof *o); o->output = "Json";
-    o->terrain_fix = 1; o->scroll_fix = 0; o->sprite_fix = 1;
+    o->terrain_fix = 1; o->scroll_fix = 0; o->sprite_fix = 1; o->battle_icon_fix = 1;
     for (i = 1; i < argc; ++i) {
         field = medieval_field(argv[i], 0);
         if (field < 0 || i + 1 >= argc || (seen & (1U << field))) goto invalid;

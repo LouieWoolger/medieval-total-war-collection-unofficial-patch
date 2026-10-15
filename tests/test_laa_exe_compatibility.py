@@ -49,8 +49,8 @@ def variants(generator, stock):
 
 
 def test_reported_laa_is_exact_supported_stock_header_change(generator, stock, variants):
-    original = variants[(0, 0, "base")]
-    reported = variants[(0, 0, "recompute")]
+    original = variants[(0, 0, 0, "base")]
+    reported = variants[(0, 0, 0, "recompute")]
     assert original == stock
     assert digest(reported) == REPORTED_LAA_HASH
     assert len(reported) == len(stock) == 0x4E7000
@@ -60,23 +60,24 @@ def test_reported_laa_is_exact_supported_stock_header_change(generator, stock, v
     assert struct.unpack_from("<I", reported, 0xD8)[0] == generator.pe_checksum(reported, 0xD8)
 
 
-def test_all_four_states_have_only_three_pinned_laa_forms(generator, variants):
-    assert len(variants) == 16
-    assert len({digest(data) for data in variants.values()}) == 16
+def test_all_eight_states_have_only_three_pinned_laa_forms(generator, variants):
+    assert len(variants) == 32
+    assert len({digest(data) for data in variants.values()}) == 32
     for scroll in (0, 1):
         for sprite in (0, 1):
-            base = variants[(scroll, sprite, "base")]
+          for tutorial in (0, 1):
+            base = variants[(scroll, sprite, tutorial, "base")]
             for style in ("retain", "zero", "recompute"):
-                data = variants[(scroll, sprite, style)]
+                data = variants[(scroll, sprite, tutorial, style)]
                 assert len(data) == len(base)
                 assert {i for i, (a, b) in enumerate(zip(base, data)) if a != b} <= {
                     0x96, 0xD8, 0xD9, 0xDA, 0xDB}
                 assert struct.unpack_from("<H", data, 0x96)[0] == (
                     struct.unpack_from("<H", base, 0x96)[0] | 0x20)
-            assert struct.unpack_from("<I", variants[(scroll, sprite, "zero")], 0xD8)[0] == 0
-            assert struct.unpack_from("<I", variants[(scroll, sprite, "retain")], 0xD8)[0] == (
+            assert struct.unpack_from("<I", variants[(scroll, sprite, tutorial, "zero")], 0xD8)[0] == 0
+            assert struct.unpack_from("<I", variants[(scroll, sprite, tutorial, "retain")], 0xD8)[0] == (
                 struct.unpack_from("<I", base, 0xD8)[0])
-            recomputed = variants[(scroll, sprite, "recompute")]
+            recomputed = variants[(scroll, sprite, tutorial, "recompute")]
             assert struct.unpack_from("<I", recomputed, 0xD8)[0] == generator.pe_checksum(
                 recomputed, 0xD8)
 
@@ -96,13 +97,13 @@ def test_native_classifier_accepts_only_pinned_variants(tmp_path, variants):
                             str(ROOT / "tests" / "native_exe_variants.c"), "-o", str(binary)],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
     assert build.returncode == 0, build.stderr
-    for (scroll, sprite, style), data in variants.items():
+    for (scroll, sprite, tutorial, style), data in variants.items():
         result = subprocess.run([str(binary), digest(data), str(len(data))], capture_output=True,
                                 text=True, timeout=10)
         assert result.returncode == 0, (style, result.stderr)
-        assert result.stdout.strip() == f"{scroll} {sprite} {style}"
+        assert result.stdout.strip() == f"{scroll} {sprite} {tutorial} {style}"
     for bad_hash, bad_length in (("0" * 64, 0x4E7000),
-                                 (digest(variants[(0, 0, "recompute")]), 0x4E7001)):
+                                 (digest(variants[(0, 0, 0, "recompute")]), 0x4E7001)):
         result = subprocess.run([str(binary), bad_hash, str(bad_length)], capture_output=True,
                                 text=True, timeout=10)
         assert result.returncode == 2
@@ -118,7 +119,7 @@ def test_header_mutations_cannot_be_classified_as_supported(tmp_path, variants):
                             str(ROOT / "tests" / "native_exe_variants.c"), "-o", str(binary)],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
     assert build.returncode == 0, build.stderr
-    source = variants[(0, 0, "recompute")]
+    source = variants[(0, 0, 0, "recompute")]
     for offset in (0x1000, 0x97, 0xD8, 0x200):
         altered = bytearray(source)
         altered[offset] ^= 0x01
@@ -145,28 +146,30 @@ def native_transform(tmp_path_factory):
 def test_native_direct_transform_preserves_laa_across_all_states(
         tmp_path, native_transform, variants):
     """The shipping native transform must round-trip every exact LAA family member."""
-    for (source_scroll, source_sprite, style), source in variants.items():
+    for (source_scroll, source_sprite, source_tutorial, style), source in variants.items():
         source_path = tmp_path / "source.exe"
         source_path.write_bytes(source)
         for desired_scroll in (0, 1):
             for desired_sprite in (0, 1):
+              for desired_tutorial in (0, 1):
                 output_path = tmp_path / "result.exe"
                 result = subprocess.run([str(native_transform), str(source_path),
                                          str(desired_scroll), str(desired_sprite),
+                                         str(desired_tutorial),
                                          str(output_path)], capture_output=True, text=True, timeout=20)
                 assert result.returncode == 0, (
-                    (source_scroll, source_sprite, style),
-                    (desired_scroll, desired_sprite), result.stderr)
-                expected_style = style if (source_scroll, source_sprite) == (
-                    desired_scroll, desired_sprite) else (
+                    (source_scroll, source_sprite, source_tutorial, style),
+                    (desired_scroll, desired_sprite, desired_tutorial), result.stderr)
+                expected_style = style if (source_scroll, source_sprite, source_tutorial) == (
+                    desired_scroll, desired_sprite, desired_tutorial) else (
                         "recompute" if style != "base" else "base")
-                assert output_path.read_bytes() == variants[(desired_scroll, desired_sprite,
+                assert output_path.read_bytes() == variants[(desired_scroll, desired_sprite, desired_tutorial,
                                                                expected_style)]
 
 
 def test_native_direct_transform_rejects_unpinned_laa_edits(
         tmp_path, native_transform, variants):
-    source = variants[(1, 1, "recompute")]
+    source = variants[(1, 1, 1, "recompute")]
     for offset in (0x97, 0xD8, 0x200, 0x4E0000):
         damaged = bytearray(source)
         damaged[offset] ^= 1

@@ -55,6 +55,14 @@ int main(void) {
     changed = after;
     changed.mode = 0u;
     check("menu setup", mtw_battle_icon_atlas_should_mark_dirty(&before, &changed, 1), 0);
+    before.mode = 0u;
+    check("battle tutorial with live atlas", mtw_battle_icon_atlas_should_mark_dirty(&before, &changed, 1), 1);
+    before.surface = 0u;
+    check("tutorial reset after old surface released", mtw_battle_icon_atlas_should_mark_dirty(&before, &changed, 1), 1);
+    before.surface = 0x140000u;
+    before.render_root = 0x170000u;
+    check("zero mode with frontend root", mtw_battle_icon_atlas_should_mark_dirty(&before, &changed, 1), 0);
+    before.render_root = 0u;
     changed.mode = UINT32_MAX;
     check("menu idle", mtw_battle_icon_atlas_should_mark_dirty(&before, &changed, 1), 0);
     changed = after;

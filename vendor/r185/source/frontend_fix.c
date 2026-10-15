@@ -9,7 +9,7 @@
 #include <intrin.h>
 
 #include "frontend_fix.h"
-#include "battle_icon_atlas_core.h"
+#include "battle_icon_atlas_fix.h"
 #include "campaign_pan_core.h"
 #include "frontend_epoch_core.h"
 #include "focus_plane_shadow_core.h"
@@ -54,6 +54,12 @@ extern int mtw_dust_simulation_hook_installed(void);
 #if MTW_ENABLE_MOVIE_FIX != 0 && MTW_ENABLE_MOVIE_FIX != 1
 #error MTW_ENABLE_MOVIE_FIX must be 0 or 1.
 #endif
+#ifndef MTW_ENABLE_BATTLE_ICON_FIX
+#define MTW_ENABLE_BATTLE_ICON_FIX 1
+#endif
+#if MTW_ENABLE_BATTLE_ICON_FIX != 0 && MTW_ENABLE_BATTLE_ICON_FIX != 1
+#error MTW_ENABLE_BATTLE_ICON_FIX must be 0 or 1.
+#endif
 
 #define MTW_INITIAL_COPY_PRE_UNLOCK_RVA 0x0000BF60u
 #define MTW_PROGRESS_POST_LOCK_RVA 0x0031CBC8u
@@ -79,6 +85,10 @@ extern int mtw_dust_simulation_hook_installed(void);
 #define MTW_TRANSITION_MOVE_RETURN_RVA 0x002D631Du
 #define MTW_RESOLUTION_INITIALIZE_CALL_RVA 0x002DDD2Fu
 #define MTW_RESOLUTION_INITIALIZE_TARGET_RVA 0x002DCE50u
+#define MTW_STRATEGY_MODE_PICK_HEIGHT_WRITE_RVA 0x002DE981u
+#define MTW_RESOLUTION_ACTIVE_ADAPTER_RVA 0x00495F8Cu
+#define MTW_STRATEGY_ACTIVE_INDEX_RVA 0x00A7D1F0u
+#define MTW_STRATEGY_SAVED_INDEX_RVA 0x00A77B04u
 #define MTW_RESOLUTION_ADAPTERS_RVA 0x00A7A1E0u
 #define MTW_RESOLUTION_ADAPTER_SIZE 96u
 #define MTW_RESOLUTION_BATTLE_COUNT_OFFSET 0x20u
@@ -110,12 +120,6 @@ extern int mtw_dust_simulation_hook_installed(void);
 #define MTW_TOP_LEVEL_MODE_CAMPAIGN 1u
 #define MTW_TOP_LEVEL_MODE_QUICK_BATTLE 12u
 #define MTW_MENU_UPDATE_SURFACE_CALLSITE_RVA 0x00B3E8FCu
-#define MTW_BATTLE_ICON_ATLAS_INIT_CALL_RVA 0x00023E20u
-#define MTW_BATTLE_ICON_ATLAS_INIT_TARGET_RVA 0x000DA2A0u
-#define MTW_BATTLE_ICON_CACHE_FIRST_RVA 0x003B9354u
-#define MTW_BATTLE_ICON_SURFACE_RECORD_RVA 0x00743678u
-#define MTW_BATTLE_HUD_SCENE_RVA 0x0074275Cu
-#define MTW_BATTLE_HUD_DIRTY_OFFSET 0x94Cu
 
 /* These sites belong to the pinned Medieval_TW.exe SHA-256 in the accepted
  * proxy. They are kept separate from the frontend/presentation hook group. */
@@ -216,12 +220,14 @@ static const unsigned char d3d11_create_device_call_expected[6] = {
 static const unsigned char resolution_initialize_call_expected[5] = {
     0xE8, 0x1C, 0xF1, 0xFF, 0xFF
 };
-static const unsigned char battle_icon_atlas_init_call_expected[5] = {
-    0xE8, 0x7B, 0x64, 0x0B, 0x00
+static const unsigned char strategy_mode_pick_before_expected[4] = {
+    0x8B, 0x54, 0x08, 0x08
 };
-static const unsigned char battle_icon_atlas_init_target_expected[11] = {
-    0xA1, 0x1C, 0xF5, 0xB8, 0x00, 0xC7,
-    0x05, 0x54, 0x93, 0x7B, 0x00
+static const unsigned char strategy_mode_pick_height_expected[6] = {
+    0x89, 0x15, 0x8C, 0x27, 0x7A, 0x00
+};
+static const unsigned char strategy_mode_pick_after_expected[4] = {
+    0x83, 0xC4, 0x0C, 0xC3
 };
 #if MTW_ENABLE_SPRITE_CLIP_FIX
 static const unsigned char blitter_entry_expected[5] = {
@@ -309,9 +315,7 @@ static void *reverse_dispatcher_continue;
 static void *primary_surface_unlock_continue;
 static void *prebattle_entry_original_target;
 static void *prebattle_resolution_return_continue;
-typedef int (__cdecl *mtw_battle_icon_atlas_init_fn)(void);
-static mtw_battle_icon_atlas_init_fn original_battle_icon_atlas_init;
-static volatile LONG battle_icon_atlas_rebuild_events;
+static void *strategy_mode_pick_continue;
 static void *primary_origin_guard_failure_continue;
 static void *primary_origin_guard_success_continue;
 static void *constructor_global_target;
@@ -421,6 +425,7 @@ static uint32_t resolution_enumeration_generation;
 static uint32_t resolution_monitor_cap_width;
 static uint32_t resolution_monitor_cap_height;
 static uintptr_t resolution_monitor_identity;
+static volatile LONG strategy_duplicate_restore_events;
 static volatile LONG focus_span_substitutions;
 static volatile LONG startup_slow_lane_mutations;
 static volatile LONG reentrant_outer_owner_tid;
@@ -470,6 +475,7 @@ __declspec(naked) static void constructor_return_hook_stub(void);
 __declspec(naked) static void d3d11_create_device_hook_stub(void);
 __declspec(naked) static void prebattle_entry_hook_stub(void);
 __declspec(naked) static void prebattle_resolution_return_hook_stub(void);
+__declspec(naked) static void strategy_mode_pick_hook_stub(void);
 #if MTW_ENABLE_SPRITE_CLIP_FIX
 __declspec(naked) static void blitter_entry_hook_stub(void);
 #endif
@@ -535,72 +541,6 @@ static int write_current_process_memory_exact(uintptr_t address,
                GetCurrentProcess(), (void *)address,
                source, size, &transferred) != 0 &&
            transferred == size;
-}
-
-static int sample_battle_icon_atlas_state(
-    mtw_battle_icon_atlas_state *state) {
-    uintptr_t scene = 0u;
-    uintptr_t surface_record = 0u;
-
-    if (state == NULL || game_base == 0u) return 0;
-    memset(state, 0, sizeof(*state));
-    if (!read_current_process_memory_exact(
-            game_base + MTW_TOP_LEVEL_GAME_MODE_RVA,
-            &state->mode, sizeof(state->mode)) ||
-        !read_current_process_memory_exact(
-            game_base + MTW_RENDER_INPUT_ROOT_RVA,
-            &state->render_root, sizeof(state->render_root)) ||
-        !read_current_process_memory_exact(
-            game_base + MTW_BATTLE_HUD_SCENE_RVA,
-            &scene, sizeof(scene)) ||
-        !read_current_process_memory_exact(
-            game_base + MTW_BATTLE_ICON_CACHE_FIRST_RVA,
-            &state->cache_first, sizeof(state->cache_first)) ||
-        !read_current_process_memory_exact(
-            game_base + MTW_BATTLE_ICON_SURFACE_RECORD_RVA,
-            &surface_record, sizeof(surface_record))) {
-        return 0;
-    }
-    state->scene = (uint32_t)scene;
-    if (surface_record != 0u &&
-        !read_current_process_memory_exact(
-            surface_record, &state->surface, sizeof(state->surface))) {
-        return 0;
-    }
-    if (scene != 0u &&
-        !read_current_process_memory_exact(
-            scene + MTW_BATTLE_HUD_DIRTY_OFFSET,
-            &state->dirty, sizeof(state->dirty))) {
-        return 0;
-    }
-    return 1;
-}
-
-/* The graphics reset clears the atlas cache, then fills the replacement
- * surface from that now-empty list. The battle HUD only rebuilds its live
- * icon list when its ordinary update flag is set. Schedule that update after
- * a successful reset while the same battle object is still active. */
-static int __cdecl battle_icon_atlas_init_hook(void) {
-    mtw_battle_icon_atlas_state before;
-    mtw_battle_icon_atlas_state after;
-    int have_before;
-    int result;
-    const uint8_t dirty = 1u;
-
-    if (original_battle_icon_atlas_init == NULL) return 0;
-    have_before = sample_battle_icon_atlas_state(&before);
-    result = original_battle_icon_atlas_init();
-    if (have_before && sample_battle_icon_atlas_state(&after) &&
-        mtw_battle_icon_atlas_should_mark_dirty(
-            &before, &after, result) &&
-        write_current_process_memory_exact(
-            (uintptr_t)after.scene + MTW_BATTLE_HUD_DIRTY_OFFSET,
-            &dirty, sizeof(dirty))) {
-        if (InterlockedIncrement(&battle_icon_atlas_rebuild_events) <= 8) {
-            diagnostic_write("battle unit-icon atlas live rebuild queued r195\r\n");
-        }
-    }
-    return result;
 }
 
 static HWND query_game_window(void) {
@@ -850,6 +790,109 @@ static int normalize_selected_resolution(
     }
     if (changed != NULL) *changed = 1;
     return 1;
+}
+
+/* The native mode picker chooses the last matching width/height. On this
+ * adapter, positions 173-187 are identical 1920x1080 records. Position 187
+ * rounds through the Video Options slider to position 188 (1920x1200).
+ * Keep the saved position only when it names the exact same live mode. */
+static void __cdecl restore_strategy_index_after_mode_pick(void) {
+    uintptr_t adapter_base;
+    uintptr_t records_address;
+    uintptr_t strategy_begin;
+    uintptr_t strategy_end;
+    uint32_t adapter_index;
+    uint32_t record_count;
+    uint32_t strategy_count;
+    uint32_t active_index;
+    uint32_t saved_index;
+    uint32_t active_record_index;
+    uint32_t saved_record_index;
+    uint32_t selected_width;
+    uint32_t selected_height;
+    mtw_resolution_record active_record;
+    mtw_resolution_record saved_record;
+
+    if (game_base != 0x00400000u ||
+        !read_current_process_memory_exact(
+            game_base + MTW_RESOLUTION_ACTIVE_ADAPTER_RVA,
+            &adapter_index, sizeof(adapter_index)) || adapter_index > 63u) {
+        return;
+    }
+    adapter_base = game_base + MTW_RESOLUTION_ADAPTERS_RVA +
+                   (uintptr_t)adapter_index * MTW_RESOLUTION_ADAPTER_SIZE;
+    if (!read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_COUNT_OFFSET,
+            &record_count, sizeof(record_count)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_COUNT_OFFSET,
+            &strategy_count, sizeof(strategy_count)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_RECORDS_OFFSET,
+            &records_address, sizeof(records_address)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_BEGIN_OFFSET,
+            &strategy_begin, sizeof(strategy_begin)) ||
+        !read_current_process_memory_exact(
+            adapter_base + MTW_RESOLUTION_STRATEGY_END_OFFSET,
+            &strategy_end, sizeof(strategy_end)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_STRATEGY_ACTIVE_INDEX_RVA,
+            &active_index, sizeof(active_index)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_STRATEGY_SAVED_INDEX_RVA,
+            &saved_index, sizeof(saved_index)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_STRATEGY_WIDTH_RVA,
+            &selected_width, sizeof(selected_width)) ||
+        !read_current_process_memory_exact(
+            game_base + MTW_STRATEGY_HEIGHT_RVA,
+            &selected_height, sizeof(selected_height)) ||
+        record_count == 0u || record_count > MTW_RESOLUTION_FILTER_CAPACITY ||
+        strategy_count == 0u ||
+        strategy_count > MTW_RESOLUTION_FILTER_CAPACITY ||
+        records_address == 0u || strategy_begin == 0u ||
+        strategy_end < strategy_begin ||
+        strategy_end - strategy_begin !=
+            (uintptr_t)strategy_count * sizeof(uint32_t) ||
+        active_index >= strategy_count || saved_index >= strategy_count ||
+        active_index == saved_index) {
+        return;
+    }
+    if (!read_current_process_memory_exact(
+            strategy_begin + (uintptr_t)active_index * sizeof(uint32_t),
+            &active_record_index, sizeof(active_record_index)) ||
+        !read_current_process_memory_exact(
+            strategy_begin + (uintptr_t)saved_index * sizeof(uint32_t),
+            &saved_record_index, sizeof(saved_record_index)) ||
+        active_record_index >= record_count ||
+        saved_record_index >= record_count ||
+        !read_current_process_memory_exact(
+            records_address +
+                (uintptr_t)active_record_index * sizeof(active_record),
+            &active_record, sizeof(active_record)) ||
+        !read_current_process_memory_exact(
+            records_address +
+                (uintptr_t)saved_record_index * sizeof(saved_record),
+            &saved_record, sizeof(saved_record)) ||
+        !mtw_resolution_should_restore_strategy_index(
+            &active_record, &saved_record,
+            selected_width, selected_height)) {
+        return;
+    }
+    if (write_current_process_memory_exact(
+            game_base + MTW_STRATEGY_ACTIVE_INDEX_RVA,
+            &saved_index, sizeof(saved_index))) {
+        LONG event = InterlockedIncrement(&strategy_duplicate_restore_events);
+        if (event <= 8) {
+            char line[160];
+            wsprintfA(line,
+                "strategy identical selector restored mtw003 active=%lu saved=%lu %lux%lu\r\n",
+                (DWORD)active_index, (DWORD)saved_index,
+                (DWORD)selected_width, (DWORD)selected_height);
+            diagnostic_write(line);
+        }
+    }
 }
 
 static int refresh_resolution_filter(const char *reason) {
@@ -3967,6 +4010,18 @@ __declspec(naked) static void prebattle_resolution_return_hook_stub(void) {
     }
 }
 
+__declspec(naked) static void strategy_mode_pick_hook_stub(void) {
+    __asm {
+        mov dword ptr [0x007A278C], edx
+        pushfd
+        pushad
+        call restore_strategy_index_after_mode_pick
+        popad
+        popfd
+        jmp dword ptr [strategy_mode_pick_continue]
+    }
+}
+
 #if MTW_ENABLE_SPRITE_CLIP_FIX
 /* The original RLE routine computes a signed visible row count and enters
  * its row decoder even when the sprite starts below the clip bottom. Avoid
@@ -4669,27 +4724,6 @@ static int write_rel_call(uintptr_t target,
     return bytes_match(target, patch, sizeof(patch));
 }
 
-static int install_battle_icon_atlas_hook(void) {
-    uintptr_t callsite = game_base + MTW_BATTLE_ICON_ATLAS_INIT_CALL_RVA;
-    uintptr_t original = game_base + MTW_BATTLE_ICON_ATLAS_INIT_TARGET_RVA;
-
-    if (game_base == 0u || !mtw_dust_simulation_hook_installed() ||
-        !bytes_match(original, battle_icon_atlas_init_target_expected,
-                     sizeof(battle_icon_atlas_init_target_expected)) ||
-        !bytes_match(callsite, battle_icon_atlas_init_call_expected,
-                     sizeof(battle_icon_atlas_init_call_expected))) {
-        return 0;
-    }
-    original_battle_icon_atlas_init =
-        (mtw_battle_icon_atlas_init_fn)original;
-    if (!write_rel_call(callsite, battle_icon_atlas_init_hook,
-                        battle_icon_atlas_init_call_expected)) {
-        original_battle_icon_atlas_init = NULL;
-        return 0;
-    }
-    return 1;
-}
-
 static void restore_original(uintptr_t target,
                              const unsigned char *original,
                              size_t size) {
@@ -5056,6 +5090,25 @@ static int install_transition_resolution_hooks(void) {
     return 1;
 }
 
+static int install_strategy_duplicate_selector_hook(void) {
+    uintptr_t target = game_base + MTW_STRATEGY_MODE_PICK_HEIGHT_WRITE_RVA;
+
+    if (game_base != 0x00400000u ||
+        !bytes_match(target - sizeof(strategy_mode_pick_before_expected),
+                     strategy_mode_pick_before_expected,
+                     sizeof(strategy_mode_pick_before_expected)) ||
+        !bytes_match(target + sizeof(strategy_mode_pick_height_expected),
+                     strategy_mode_pick_after_expected,
+                     sizeof(strategy_mode_pick_after_expected))) {
+        return 0;
+    }
+    strategy_mode_pick_continue =
+        (void *)(target + sizeof(strategy_mode_pick_height_expected));
+    return write_rel_jump(target, strategy_mode_pick_hook_stub,
+                          strategy_mode_pick_height_expected,
+                          sizeof(strategy_mode_pick_height_expected));
+}
+
 static int install_outer_owned_guard_diversion(void) {
     uintptr_t outer_acquire =
         backend_base + DGVOODOO_OUTER_ACQUIRE_CALL_RVA;
@@ -5417,11 +5470,15 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         return TRUE;
     }
     if (install_all_hooks_transactionally()) {
-        if (install_battle_icon_atlas_hook()) {
+#if MTW_ENABLE_BATTLE_ICON_FIX
+        if (mtw_battle_icon_atlas_install_once()) {
             diagnostic_write("battle unit-icon atlas live rebuild armed r195\r\n");
         } else {
             diagnostic_write("battle unit-icon atlas rebuild unavailable r195\r\n");
         }
+#else
+        diagnostic_write("battle unit-icon atlas rebuild disabled by installer\r\n");
+#endif
 #if MTW_ENABLE_SPRITE_CLIP_FIX
         if (install_blitter_guard_hook()) {
             diagnostic_write("offscreen RLE sprite guard installed mtw001\r\n");
@@ -5446,6 +5503,11 @@ static BOOL CALLBACK loading_frontend_install(PINIT_ONCE once,
         } else {
             diagnostic_write(
                 "transition resize guard and monitor resolution filter unavailable r278\r\n");
+        }
+        if (install_strategy_duplicate_selector_hook()) {
+            diagnostic_write("identical strategy selector guard installed mtw003\r\n");
+        } else {
+            diagnostic_write("identical strategy selector guard unavailable mtw003\r\n");
         }
         if (install_mapper_shader_clone_hook()) {
             diagnostic_write("mapper shader clone hook installed r154\r\n");

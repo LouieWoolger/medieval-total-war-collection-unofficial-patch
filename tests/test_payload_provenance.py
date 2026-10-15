@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (199680, "B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7"),
+    "D3D9.dll": (202752, "9BE59686AB10B1823A2AAA7F01689E77ECB0A824B92C8D60C6D85CC556538EEB"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -47,6 +47,11 @@ def test_runtime_payload_is_exact_and_complete() -> None:
         "D3D9-scroll-off.dll", "D3D9-sprite-off.dll",
         "D3D9-scroll-sprite-off.dll", "D3D9-scroll-sprite-on.dll",
         "D3D9-scroll-sprite-off-fast.dll", "D3D9-fast-only.dll", "VERSION.txt",
+        "D3D9-scroll-sprite-off-icon-off.dll", "D3D9-scroll-sprite-off-fast-icon-off.dll",
+        "D3D9-icon-only.dll", "D3D9-fast-icon.dll",
+        "payload-manifest-scroll-sprite-off-icon-off.json",
+        "payload-manifest-scroll-sprite-off-fast-icon-off.json",
+        "payload-manifest-icon-only.json", "payload-manifest-fast-icon.json",
     }
     assert set(manifest["files"]) == set(EXPECTED_RUNTIME)
     for name, (length, digest) in EXPECTED_RUNTIME.items():
@@ -80,7 +85,7 @@ def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope(
     state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
     for manifest_name, dll_name, terrain, receipt_hash_name in (
         ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
-         True, "MEDIEVAL_TERRAIN_FAST_PROXY_HASH"),
+         True, "MEDIEVAL_R201_TERRAIN_FAST_ICON_HASH"),
         ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
          False, "MEDIEVAL_FAST_ONLY_PROXY_HASH"),
     ):

@@ -3,6 +3,20 @@
 #include <stddef.h>
 #include <string.h>
 
+int mtw_resolution_should_restore_strategy_index(
+    const mtw_resolution_record *active_record,
+    const mtw_resolution_record *saved_record,
+    uint32_t selected_width,
+    uint32_t selected_height) {
+    return active_record != NULL && saved_record != NULL &&
+           active_record->flags[1] != 0u &&
+           saved_record->flags[1] != 0u &&
+           active_record->width == selected_width &&
+           active_record->height == selected_height &&
+           memcmp(active_record, saved_record,
+                  sizeof(*active_record)) == 0;
+}
+
 void mtw_resolution_filter_initialize(
     mtw_resolution_filter_state *state) {
     if (state != NULL) memset(state, 0, sizeof(*state));

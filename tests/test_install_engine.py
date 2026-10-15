@@ -101,7 +101,8 @@ def invoke(
     if selection is not None:
         terrain, scroll, sprite, fast = selection
         command += ["-TerrainFix", str(terrain), "-ScrollFix", str(scroll),
-                    "-SpriteFix", str(sprite), "-FastMovesFix", str(fast)]
+                    "-SpriteFix", str(sprite), "-FastMovesFix", str(fast),
+                    "-BattleIconFix", str(int(bool(terrain)))]
     environment = dict(os.environ)
     if fault:
         (game / ".umtwp-test-fixture").write_text("disposable LAA transaction fixture\n")
@@ -199,7 +200,7 @@ def test_laa_fresh_install_repair_and_exact_restore(
         tmp_path: Path, laa_variants, fast_only_payload, style: str,
         selection: tuple[int, int, int, int]) -> None:
     game = new_game(tmp_path, "LAA exact original")
-    original = laa_variants[(0, 0, style)]
+    original = laa_variants[(0, 0, 0, style)]
     (game / "Medieval_TW.exe").write_bytes(original)
     before = relevant_snapshot(game)
     inspected, report = invoke("Inspect", game)
@@ -208,7 +209,7 @@ def test_laa_fresh_install_repair_and_exact_restore(
     payload = fast_only_payload if selection == (0, 0, 0, 1) else PAYLOAD
     first, report = invoke("Install", game, selection=selection, payload=payload)
     assert first.returncode == 0, (first.stdout, first.stderr)
-    expected = (selection[1], selection[2],
+    expected = (selection[1], selection[2], 0,
                 "recompute" if selection[1] or selection[2] else style)
     assert sha256(game / "Medieval_TW.exe") == hashlib.sha256(
         laa_variants[expected]).hexdigest().upper()
@@ -227,7 +228,7 @@ def test_laa_fresh_install_repair_and_exact_restore(
 def test_laa_deselect_direct_fix_restores_exact_original(
         tmp_path: Path, laa_variants, style: str) -> None:
     game = new_game(tmp_path, "LAA deselect")
-    original = laa_variants[(0, 0, style)]
+    original = laa_variants[(0, 0, 0, style)]
     (game / "Medieval_TW.exe").write_bytes(original)
     first, report = invoke("Install", game, selection=(1, 1, 1, 0))
     assert first.returncode == 0, (first.stdout, first.stderr)
@@ -245,7 +246,7 @@ def test_managed_external_laa_requires_guarded_repair(
     game = new_game(tmp_path, "External LAA")
     first, report = invoke("Install", game, selection=(1, 1, 1, 0))
     assert first.returncode == 0, (first.stdout, first.stderr)
-    (game / "Medieval_TW.exe").write_bytes(laa_variants[(1, 1, style)])
+    (game / "Medieval_TW.exe").write_bytes(laa_variants[(1, 1, 0, style)])
     before = relevant_snapshot(game)
     remove, report = invoke("Restore", game)
     assert remove.returncode != 0
@@ -256,16 +257,16 @@ def test_managed_external_laa_requires_guarded_repair(
     receipt = json.loads((game / ".unofficial-medieval-total-war-patch" /
                           "install-manifest.json").read_text(encoding="utf-8-sig"))
     assert receipt["files"]["Medieval_TW.exe"]["original_sha256"] == hashlib.sha256(
-        laa_variants[(0, 0, style)]).hexdigest().upper()
-    assert (game / "Medieval_TW.exe").read_bytes() == laa_variants[(1, 1, style)]
+        laa_variants[(0, 0, 0, style)]).hexdigest().upper()
+    assert (game / "Medieval_TW.exe").read_bytes() == laa_variants[(1, 1, 0, style)]
     restored, report = invoke("Restore", game)
     assert restored.returncode == 0, (restored.stdout, restored.stderr)
-    assert (game / "Medieval_TW.exe").read_bytes() == laa_variants[(0, 0, style)]
+    assert (game / "Medieval_TW.exe").read_bytes() == laa_variants[(0, 0, 0, style)]
 
 
 def test_laa_with_unrelated_exe_edit_is_rejected_without_changes(tmp_path: Path, laa_variants) -> None:
     game = new_game(tmp_path, "Unsupported LAA edit")
-    changed = bytearray(laa_variants[(0, 0, "recompute")])
+    changed = bytearray(laa_variants[(0, 0, 0, "recompute")])
     changed[0x2000] ^= 1
     (game / "Medieval_TW.exe").write_bytes(changed)
     before = relevant_snapshot(game)
@@ -284,7 +285,7 @@ def test_external_laa_repair_rejects_damaged_original(tmp_path: Path, laa_varian
     receipt = state / "install-manifest.json"
     original = state / "originals" / "Medieval_TW.exe"
     original.write_bytes(b"damaged original")
-    (game / "Medieval_TW.exe").write_bytes(laa_variants[(1, 1, "recompute")])
+    (game / "Medieval_TW.exe").write_bytes(laa_variants[(1, 1, 0, "recompute")])
     before, receipt_before = relevant_snapshot(game), receipt.read_bytes()
     result, report = invoke("Install", game, selection=(1, 1, 1, 0))
     assert result.returncode != 0
@@ -296,7 +297,7 @@ def test_external_laa_repair_rejects_damaged_original(tmp_path: Path, laa_varian
 
 def test_laa_receipt_option_forgery_is_rejected(tmp_path: Path, laa_variants) -> None:
     game = new_game(tmp_path, "Forged LAA receipt")
-    (game / "Medieval_TW.exe").write_bytes(laa_variants[(0, 0, "recompute")])
+    (game / "Medieval_TW.exe").write_bytes(laa_variants[(0, 0, 0, "recompute")])
     installed, report = invoke("Install", game, selection=(1, 1, 1, 0))
     assert installed.returncode == 0, (installed.stdout, installed.stderr)
     receipt = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
@@ -314,7 +315,7 @@ def test_laa_receipt_option_forgery_is_rejected(tmp_path: Path, laa_variants) ->
 def test_laa_install_fault_rolls_back_and_retry_restores_original(
         tmp_path: Path, laa_variants) -> None:
     game = new_game(tmp_path, "LAA rollback")
-    original = laa_variants[(0, 0, "recompute")]
+    original = laa_variants[(0, 0, 0, "recompute")]
     (game / "Medieval_TW.exe").write_bytes(original)
     before = relevant_snapshot(game)
     result, report = invoke("Install", game, selection=(1, 1, 1, 0), fault="throw:after-file-5")
@@ -493,7 +494,7 @@ def test_previous_fullscreen_config_upgrades_to_single_window_presentation(tmp_p
 
     inspected, report = invoke("Inspect", game)
     assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
-    assert report["mode"] == "r197"
+    assert report["mode"] == "r201"
 
     upgraded, report = invoke("Install", game)
     assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)

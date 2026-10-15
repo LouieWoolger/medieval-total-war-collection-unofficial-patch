@@ -23,7 +23,13 @@ static inline int mtw_battle_icon_atlas_should_mark_dirty(
            before->cache_first != UINT32_MAX &&
            after->cache_first == UINT32_MAX && after->surface != 0u &&
            after->render_root == 0u &&
-           after->mode != 0u && after->mode != UINT32_MAX &&
+           after->mode != UINT32_MAX &&
+           /* Battle tutorials keep top-level mode zero, like menus. The old
+            * surface is already released at this callsite during focus reset;
+            * the stable live HUD scene and nonempty icon cache identify the
+            * battle state before the cache is cleared. */
+           (after->mode != 0u ||
+            (before->mode == 0u && before->render_root == 0u)) &&
            after->dirty == 0u;
 }
 

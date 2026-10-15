@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import subprocess
@@ -73,14 +74,20 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     assert manifest["product"]["version"] == product["version"] == "1.0.0"
     assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
+    assert manifest["product"]["tutorial_component"] == product["tutorial_component_name"]
+    assert manifest["product"]["battle_icon_component"] == product["battle_icon_component_name"]
     assert manifest["product"]["fast_component"] == product["fast_component_name"]
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R197-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R201-scroll-sprite-off"
+    assert manifest["battle_unit_icons"]["default_installer_selection"] is True
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["sprite_delivery"] == "direct-exe"
+    assert manifest["direct_tutorial_executable"]["default_installer_selection"] is True
+    assert manifest["direct_tutorial_executable"]["patch_offset"] == 0x306A5C
+    assert manifest["direct_tutorial_executable"]["shipped_game_executable"] is False
     helper = manifest["native_helper_build"]
     assert helper["language"] == "C99"
     assert helper["compiler"]["role"] == "native-gcc"
@@ -154,11 +161,12 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     variants = manifest["supported_executable_variants"]
-    assert len(variants) == 16
-    assert len({entry["sha256"] for entry in variants}) == 16
+    assert len(variants) == 32
+    assert len({entry["sha256"] for entry in variants}) == 32
     assert {entry["checksum_style"] for entry in variants} == {"base", "retain", "zero", "recompute"}
     assert {entry["sha256"] for entry in variants if entry["scroll"] is False and
-            entry["sprite"] is False and entry["checksum_style"] == "recompute"} == {
+            entry["sprite"] is False and entry["tutorial"] is False and
+            entry["checksum_style"] == "recompute"} == {
                 "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710"}
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
     parsed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums if "  " in line}
@@ -208,6 +216,7 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "compatibility.bmp",
         "campaign-scrolling.bmp",
         "sprite-clipping.bmp",
+        "campaign-tutorial-resolution.bmp",
         "fast-computer-moves.bmp",
     ):
         assert required in lowered
@@ -341,6 +350,16 @@ def test_setup_and_uninstaller_embed_exact_selfcontained_native_helper(tmp_path:
         assert not list(directory.rglob("*.ps1"))
         assert not list(directory.rglob("*.cs"))
         assert sha256(directory / "MinGW-w64-runtime.txt") == sha256(ROOT / "licenses/MinGW-w64-runtime.txt")
+
+
+def test_native_helper_has_reproducible_timestamps() -> None:
+    helper_path = os.environ.get("MTW_TEST_NATIVE_HELPER")
+    assert helper_path, "MTW_TEST_NATIVE_HELPER must identify the compiled input"
+    with pefile.PE(str(Path(helper_path)), fast_load=True) as pe:
+        assert pe.FILE_HEADER.TimeDateStamp == 0
+    assert datetime.fromtimestamp(Path(helper_path).stat().st_mtime, timezone.utc) == datetime(
+        2000, 1, 1, tzinfo=timezone.utc
+    )
 
 
 def test_native_helper_audit_rejects_wrong_machine_clr_import_and_elevation(tmp_path: Path) -> None:

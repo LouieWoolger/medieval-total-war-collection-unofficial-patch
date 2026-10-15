@@ -354,10 +354,18 @@ int wmain(int argc, wchar_t **argv) {
         check(medieval_old_patch(medieval_known_d3d9_mode(
                   "B620EFA4334DA6D8317DD7EAEC22805F04C16A01BC947373271B7E89635EC0A9")),
               "R195 proxy cannot become a clean original baseline");
-        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_SPRITE_DISABLED_PROXY_HASH), "r197"),
-              "R197 proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_SPRITE_DISABLED_PROXY_HASH), "r200"),
+              "R200 proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R199_SPRITE_DISABLED_PROXY_HASH), "r199"),
+              "R199 proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "37F8C4CCAB491F863CC91639637876696F51C243E4E26DE0649B8B45099CBD6C"), "r198"),
+              "R198 proxy remains identifiable for upgrade");
+        check(!strcmp(medieval_known_d3d9_mode(
+                  "B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7"), "r197"),
+              "R197 proxy remains identifiable for upgrade");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_TERRAIN_FAST_PROXY_HASH)),
-              "R197 Terrain and Fast proxy cannot become a clean original baseline");
+              "R200 Terrain and Fast proxy cannot become a clean original baseline");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;

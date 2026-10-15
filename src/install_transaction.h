@@ -18,7 +18,7 @@
 typedef struct {
     const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
-    int terrain_fix, scroll_fix, sprite_fix, fast_moves_fix, selection_provided;
+    int terrain_fix, scroll_fix, sprite_fix, tutorial_fix, fast_moves_fix, battle_icon_fix, selection_provided;
 } MedievalOptions;
 typedef struct {
     JsonDocument document;
@@ -412,6 +412,22 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
             if (!medieval_boolean(actual->json, "fast_moves_fix_enabled", &a, e) ||
                 !medieval_boolean(retained->json, "fast_moves_fix_enabled", &b, e)) return 0;
             if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained Fast computer moves selection.");
+        }
+        if (!!json_get(actual->json, "tutorial_fix_enabled") !=
+            !!json_get(retained->json, "tutorial_fix_enabled"))
+            return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained tutorial selection.");
+        if (json_get(actual->json, "tutorial_fix_enabled")) {
+            if (!medieval_boolean(actual->json, "tutorial_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "tutorial_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained tutorial selection.");
+        }
+        if (!!json_get(actual->json, "battle_icon_fix_enabled") !=
+            !!json_get(retained->json, "battle_icon_fix_enabled"))
+            return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained battle icon selection.");
+        if (json_get(actual->json, "battle_icon_fix_enabled")) {
+            if (!medieval_boolean(actual->json, "battle_icon_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "battle_icon_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained battle icon selection.");
         }
     }
     for (k = 0; k < medieval_receipt_file_count(actual); ++k) {

@@ -75,6 +75,26 @@ Var ElevatedExit
     SetOutPath "$PLUGINSDIR\payload-fast-only"
     File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-fast-only.json"
     File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-fast-only.dll"
+    SetOutPath "$PLUGINSDIR\payload-scroll-sprite-off-icon-off"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-sprite-off-icon-off.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-sprite-off-icon-off.dll"
+    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
+    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
+    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
+    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
+    SetOutPath "$PLUGINSDIR\payload-scroll-sprite-off-fast-icon-off"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-sprite-off-fast-icon-off.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-sprite-off-fast-icon-off.dll"
+    File /oname=dgVoodoo_D3D9.dll "${SOURCE_DIR}\vendor\runtime\dgVoodoo_D3D9.dll"
+    File /oname=ddraw.dll "${SOURCE_DIR}\vendor\runtime\ddraw.dll"
+    File /oname=D3DImm.dll "${SOURCE_DIR}\vendor\runtime\D3DImm.dll"
+    File /oname=dgVoodoo.conf "${SOURCE_DIR}\vendor\runtime\dgVoodoo.conf"
+    SetOutPath "$PLUGINSDIR\payload-icon-only"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-icon-only.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-icon-only.dll"
+    SetOutPath "$PLUGINSDIR\payload-fast-icon"
+    File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-fast-icon.json"
+    File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-fast-icon.dll"
     ${EndIf}
 !macroend
 ; Shared installer/uninstaller diagnostics and native process runner.
@@ -367,7 +387,9 @@ Function ${PREFIX}WriteEngineRequest
     FileWriteUTF16LE $RequestHandle "terrain_fix=$TerrainSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "scroll_fix=$ScrollSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "sprite_fix=$SpriteSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "tutorial_fix=$TutorialSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "fast_moves_fix=$FastSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "battle_icon_fix=$BattleIconSelected$\r$\n"
     ${If} ${Errors}
         StrCpy $RequestWriteFailed "1"
     ${EndIf}
@@ -489,7 +511,7 @@ Function InstallWithAdministratorPermission
     ${EndIf}
     DetailPrint "Windows permission is needed to update an older patch entry."
     ; NSIS /D= must be last and unquoted, including paths with spaces.
-    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /TERRAINFIX=$TerrainSelected /SCROLLFIX=$ScrollSelected /SPRITEFIX=$SpriteSelected /D=$INSTDIR'
+    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /TERRAINFIX=$TerrainSelected /SCROLLFIX=$ScrollSelected /SPRITEFIX=$SpriteSelected /TUTORIALFIX=$TutorialSelected /FASTMOVESFIX=$FastSelected /BATTLEICONFIX=$BattleIconSelected /D=$INSTDIR'
     StrLen $0 $ElevationArguments
     ${If} $0 >= 1023
         StrCpy $InstallError "The administrator command is too long. Close setup and use Run as administrator."

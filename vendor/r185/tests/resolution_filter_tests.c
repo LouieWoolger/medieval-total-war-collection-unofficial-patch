@@ -336,6 +336,35 @@ static int test_conservative_cap_uses_existing_safe_modes(void) {
     return 0;
 }
 
+static int test_strategy_selector_restores_only_identical_saved_record(void) {
+    mtw_resolution_record active = record(1920u, 1080u, 1u, 1u, 60u);
+    mtw_resolution_record saved = active;
+
+    /* The game may pick the last duplicate (187), although the saved
+     * 1920x1080 slider choice points to another identical entry (180). */
+    CHECK(mtw_resolution_should_restore_strategy_index(
+        &active, &saved, 1920u, 1080u));
+    saved.height = 1200u;
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        &active, &saved, 1920u, 1080u));
+    saved = active;
+    saved.refresh_or_field14 = 75u;
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        &active, &saved, 1920u, 1080u));
+    saved = active;
+    saved.flags[1] = 0u;
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        &active, &saved, 1920u, 1080u));
+    saved = active;
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        &active, &saved, 1920u, 1200u));
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        NULL, &saved, 1920u, 1080u));
+    CHECK(!mtw_resolution_should_restore_strategy_index(
+        &active, NULL, 1920u, 1080u));
+    return 0;
+}
+
 int main(void) {
     CHECK(sizeof(mtw_resolution_record) == 32u);
     CHECK(test_componentwise_caps() == 0);
@@ -347,6 +376,7 @@ int main(void) {
     CHECK(test_invalid_caps_capacity_and_reentrancy_fail_closed() == 0);
     CHECK(test_fallback_never_invents_a_mode() == 0);
     CHECK(test_conservative_cap_uses_existing_safe_modes() == 0);
+    CHECK(test_strategy_selector_restores_only_identical_saved_record() == 0);
     puts("resolution filter tests passed");
     return 0;
 }

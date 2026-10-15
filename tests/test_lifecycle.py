@@ -94,6 +94,8 @@ def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None
                              ("SpriteFix", sprite_fix)):
         if selected is not None:
             command.extend(("-" + option, str(int(selected))))
+    if terrain_fix is False:
+        command.extend(("-BattleIconFix", "0"))
     environment = dict(os.environ)
     if fault:
         environment["MTW_ENABLE_LIFECYCLE_FAULTS"] = "1"

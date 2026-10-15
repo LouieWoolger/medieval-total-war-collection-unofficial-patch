@@ -22,6 +22,14 @@ EXPECTED_ASSETS = {
         388854,
         "945FF6E4CAF7974B4CF67875930152470ED1E93B8EAF47C927D68FC30626FA81",
     ),
+    "campaign-tutorial-resolution.bmp": (
+        388854,
+        "F3B497185B2757B0BD2432DB408E98FA04C60AAB7264F0E7328D7DB69B740EDB",
+    ),
+    "battle-unit-icons.bmp": (
+        388854,
+        "EAB150CE9E18C35F7CF718DBEF7CD3BF9B05C9027180DCE0298E3839D0A89E98",
+    ),
     "fast-computer-moves.bmp": (
         388854,
         "223B10F33D0033FC91E395DD1D0E06397942F1C28A7CE32424EF68CAFDB679DE",
@@ -79,6 +87,8 @@ def test_nsis_bitmaps_have_exact_dimensions_and_format() -> None:
         "compatibility.bmp": (480, 270),
         "campaign-scrolling.bmp": (480, 270),
         "sprite-clipping.bmp": (480, 270),
+        "campaign-tutorial-resolution.bmp": (480, 270),
+        "battle-unit-icons.bmp": (480, 270),
         "fast-computer-moves.bmp": (480, 270),
         "discord-badge.bmp": (138, 28),
         "discord-badge-hover.bmp": (138, 28),

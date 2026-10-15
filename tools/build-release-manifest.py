@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_NAMES = (
     "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp",
-    "sprite-clipping.bmp", "fast-computer-moves.bmp",
+    "sprite-clipping.bmp", "campaign-tutorial-resolution.bmp", "battle-unit-icons.bmp", "fast-computer-moves.bmp",
     "discord-badge.bmp", "discord-badge-hover.bmp", "kofi-badge.bmp",
     "kofi-badge-hover.bmp",
 )
@@ -69,20 +69,21 @@ def supported_executable_variants() -> list[dict]:
     header = (ROOT / "include" / "mtw_exe_variants.h").read_text(encoding="ascii")
     pattern = re.compile(
         r'^\s*\{"([0-9A-F]{64})", (\d+)u, 0x([0-9A-F]{8})u, '
-        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, '
+        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, '
         r'"(base|retain|zero|recompute)"\},$', re.MULTILINE)
     entries = []
     for match in pattern.finditer(header):
-        digest, length, image_size, canonical_checksum, scroll, sprite, laa, style = match.groups()
+        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, laa, style = match.groups()
         entries.append({
             "sha256": digest, "length": int(length),
             "image_size": int(image_size, 16),
             "canonical_checksum": int(canonical_checksum, 16),
             "scroll": bool(int(scroll)), "sprite": bool(int(sprite)),
+            "tutorial": bool(int(tutorial)),
             "laa": bool(int(laa)), "checksum_style": style,
         })
-    states = {(entry["scroll"], entry["sprite"], entry["checksum_style"]) for entry in entries}
-    if len(entries) != 16 or len(states) != 16 or len({entry["sha256"] for entry in entries}) != 16:
+    states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["checksum_style"]) for entry in entries}
+    if len(entries) != 32 or len(states) != 32 or len({entry["sha256"] for entry in entries}) != 32:
         raise ValueError("The shared EXE identity table is incomplete or ambiguous.")
     if any(entry["laa"] != (entry["checksum_style"] != "base") for entry in entries):
         raise ValueError("The shared EXE identity table has inconsistent LAA metadata.")
@@ -325,6 +326,10 @@ def main() -> int:
     scroll_sprite_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off.json")
     scroll_sprite_off_fast_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off-fast.json")
     fast_only_payload = load_json(ROOT / "vendor/runtime/payload-manifest-fast-only.json")
+    icon_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off-icon-off.json")
+    fast_icon_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off-fast-icon-off.json")
+    icon_only_payload = load_json(ROOT / "vendor/runtime/payload-manifest-icon-only.json")
+    fast_icon_payload = load_json(ROOT / "vendor/runtime/payload-manifest-fast-icon.json")
     payload = scroll_sprite_off_payload
     validation = {stage: not_run("No JUnit evidence was supplied.") for stage in STAGES}
     supplied = set()
@@ -345,6 +350,10 @@ def main() -> int:
             ("D3D9-scroll-sprite-off.dll", scroll_sprite_off_payload),
             ("D3D9-scroll-sprite-off-fast.dll", scroll_sprite_off_fast_payload),
             ("D3D9-fast-only.dll", fast_only_payload),
+            ("D3D9-scroll-sprite-off-icon-off.dll", icon_off_payload),
+            ("D3D9-scroll-sprite-off-fast-icon-off.dll", fast_icon_off_payload),
+            ("D3D9-icon-only.dll", icon_only_payload),
+            ("D3D9-fast-icon.dll", fast_icon_payload),
         )},
     )
     audit = load_json(args.audit) if args.audit else None
@@ -382,6 +391,8 @@ def main() -> int:
                     "company": product["company_name"], "component": product["component_name"],
                     "scroll_component": product["scroll_component_name"],
                      "sprite_component": product["sprite_component_name"],
+                     "tutorial_component": product["tutorial_component_name"],
+                     "battle_icon_component": product["battle_icon_component_name"],
                      "fast_component": product["fast_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
                       "signature": audit["authenticode"] if audit else "not-verified"},
@@ -394,6 +405,14 @@ def main() -> int:
         "supported_executable_variants": supported_executable_variants(),
         "runtime": {"identity": payload["runtime_identity"], "dgvoodoo_version": payload["dgvoodoo_version"],
                     "files": payload["files"], "locked_settings": payload["locked_settings"]},
+        "battle_unit_icons": {
+            "default_installer_selection": True,
+            "terrain_proxy": scroll_sprite_off_payload["files"]["D3D9.dll"],
+            "terrain_disabled_proxy": icon_off_payload["files"]["D3D9.dll"],
+            "standalone_proxy": icon_only_payload["files"]["D3D9.dll"],
+            "fast_standalone_proxy": fast_icon_payload["files"]["D3D9.dll"],
+            "fast_terrain_disabled_proxy": fast_icon_off_payload["files"]["D3D9.dll"],
+        },
         "fast_computer_moves": {
             "optional": True,
             "default_installer_selection": False,
@@ -410,6 +429,15 @@ def main() -> int:
         "direct_sprite_executable": {"sprite_only_sha256": "72A42C3635ED808E87CF85BAF24D39601376E4B0143B109B0A63771541B662D0",
                                       "scroll_and_sprite_sha256": "982921CEFDED31C298F249742B8A001BB1A823F77FB3965E01892A34ED12E627",
                                       "sprite_delivery": "direct-exe", "shipped_game_executable": False},
+        "direct_tutorial_executable": {
+            "default_installer_selection": True,
+            "stock_tutorial_only_sha256": next(entry["sha256"] for entry in supported_executable_variants()
+                                               if not entry["scroll"] and not entry["sprite"] and
+                                               entry["tutorial"] and entry["checksum_style"] == "base"),
+            "patch_offset": 0x306A5C,
+            "patch_length": 6,
+            "shipped_game_executable": False,
+        },
         "assets": {name: file_record(ROOT / "assets" / name) for name in ASSET_NAMES},
         "documentation": {name: file_record(args.output.parent / name) for name in documentation},
         "validation": validation,

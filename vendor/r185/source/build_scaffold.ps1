@@ -39,10 +39,16 @@ $expected = [ordered]@{
 $expectedAcceptedProxy = '34F855A17C10B6BBCEFD844B99A5B5A7F442DECDDFFDB0D898645FA2FF0B0F0C'
 $expectedBackend = '6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2'
 $expectedControlBackend = 'E36F5C8140EB6D1DC8F35E60AB231C07DFA2EB667F9CC0A909AC2D419DE078C6'
-$expectedR185Proxy = 'C94CB5D586F68D6132A4B9F49F1D16D83EEB7ACCC6201F84CED0FCADC32F1244'
-$expectedScrollOffProxy = 'A5937F08664AC14F79BDCD97002C20F37B53D748E126E9CDFC410450436BCC23'
-$expectedSpriteOffProxy = '84C3EF9423EFBDBAC79ADD53E3AF61D402DB3BBBCB287628F5F79FD90856611B'
-$expectedScrollSpriteOffProxy = 'B0394B8A79A178C51F8F8393B4826FB959DAE98413F6476E367C5DB8F4202AF7'
+$expectedR185Proxy = '3EA1861DE84D4A3862A1BA828015F63EC6A25693116AC0FFBA717DCC92E3A0B2'
+$expectedScrollOffProxy = '326DE8B247048EDF1D03D69AD03BC52707562E4669F86D78A2252FFA287ED324'
+$expectedSpriteOffProxy = 'EEB34A05DB59B3FB547B880AE83EE5ED9E01761F1CACE9824F679BE0EB8C3762'
+$expectedScrollSpriteOffProxy = '9BE59686AB10B1823A2AAA7F01689E77ECB0A824B92C8D60C6D85CC556538EEB'
+$expectedFastOnlyProxy = '541168074FCA1CD213E59C8E0F7700E12192E01CFE9B3966CE31D85F36D454E2'
+$expectedScrollSpriteOffFastProxy = '7D6C94A4CF0542BA5B64046E607F0FF80DD1E1F90FF2CB19A979E31D343610B3'
+$expectedScrollSpriteOffIconOffProxy = '7577E700E9DE772FB6117689B8BACE2B1137C512D291A5532A3785476AC65743'
+$expectedScrollSpriteOffFastIconOffProxy = 'AD2A580188AE30092D2E570592E525C1DE37BE5CC26BC3DFAE8FB5FE878D0B87'
+$expectedIconOnlyProxy = '13CC413BC03477BD053E2A6026C0B51791C0DEADB67D9EBBB53696DF74A623A4'
+$expectedFastIconProxy = '77413C55AFBE182D061A8C83D1F83E352FBC8F6D917DD35973B8BF76E04E9D02'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -115,11 +121,15 @@ $minhookHdeObj = Join-Path $combined 'minhook_hde32.obj'
 $publicObj = Join-Path $combined 'combined_proxy.obj'
 $fastPublicObj = Join-Path $combined 'combined_proxy_fast.obj'
 $fastOnlyPublicObj = Join-Path $combined 'campaign_fast_moves_proxy.obj'
+$iconOnlyPublicObj = Join-Path $combined 'battle_icon_only_proxy.obj'
+$fastIconPublicObj = Join-Path $combined 'campaign_fast_battle_icon_proxy.obj'
 $fastMovesObj = Join-Path $combined 'campaign_fast_moves.obj'
+$battleIconObj = Join-Path $combined 'battle_icon_atlas_fix.obj'
 $frontendObj = Join-Path $combined 'frontend_fix.obj'
 $frontendScrollOffObj = Join-Path $combined 'frontend_fix_scroll_off.obj'
 $frontendSpriteOffObj = Join-Path $combined 'frontend_fix_sprite_off.obj'
 $frontendScrollSpriteOffObj = Join-Path $combined 'frontend_fix_scroll_sprite_off.obj'
+$frontendScrollSpriteOffIconOffObj = Join-Path $combined 'frontend_fix_scroll_sprite_off_icon_off.obj'
 $campaignPanObj = Join-Path $combined 'campaign_pan_core.obj'
 $frontendEpochObj = Join-Path $combined 'frontend_epoch_core.obj'
 $presentationInputObj = Join-Path $combined 'presentation_input_core.obj'
@@ -138,7 +148,11 @@ $scrollOffDll = Join-Path $combined 'D3D9-scroll-off.dll'
 $spriteOffDll = Join-Path $combined 'D3D9-sprite-off.dll'
 $scrollSpriteOffDll = Join-Path $combined 'D3D9-scroll-sprite-off.dll'
 $fastOnlyDll = Join-Path $combined 'D3D9-fast-only.dll'
+$iconOnlyDll = Join-Path $combined 'D3D9-icon-only.dll'
+$fastIconDll = Join-Path $combined 'D3D9-fast-icon.dll'
 $scrollSpriteOffFastDll = Join-Path $combined 'D3D9-scroll-sprite-off-fast.dll'
+$scrollSpriteOffIconOffDll = Join-Path $combined 'D3D9-scroll-sprite-off-icon-off.dll'
+$scrollSpriteOffFastIconOffDll = Join-Path $combined 'D3D9-scroll-sprite-off-fast-icon-off.dll'
 
 $dustCompileDefinitions = @('/DMTW_DUST_CHILD_DELTA=1')
 $dustArgs = @(
@@ -196,9 +210,26 @@ if ($LASTEXITCODE -ne 0) { throw "Fast combined bridge build failed: $LASTEXITCO
 if ($LASTEXITCODE -ne 0) { throw "Fast feature-only bridge build failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_FAST_MOVES=0','/DMTW_ENABLE_BATTLE_ICON_FIX=1',
+    ('/Fo' + $iconOnlyPublicObj),(Join-Path $PSScriptRoot 'campaign_fast_moves_proxy.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Icon feature-only bridge build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_FAST_MOVES=1','/DMTW_ENABLE_BATTLE_ICON_FIX=1',
+    ('/Fo' + $fastIconPublicObj),(Join-Path $PSScriptRoot 'campaign_fast_moves_proxy.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast-and-icon feature-only bridge build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
     ('/Fo' + $fastMovesObj),(Join-Path $PSScriptRoot 'campaign_fast_moves.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Fast campaign runtime build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    ('/Fo' + $battleIconObj),(Join-Path $PSScriptRoot 'battle_icon_atlas_fix.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Battle icon atlas runtime build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -231,6 +262,14 @@ if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled frontend build failed: $LASTEX
     ('/Fo' + $frontendScrollSpriteOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled frontend build failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
+    '/DMTW_ENABLE_CAMPAIGN_SCROLL_FIX=0',
+    '/DMTW_ENABLE_SPRITE_CLIP_FIX=0',
+    '/DMTW_ENABLE_BATTLE_ICON_FIX=0',
+    ('/Fo' + $frontendScrollSpriteOffIconOffObj),(Join-Path $PSScriptRoot 'frontend_fix.c')
+)
+if ($LASTEXITCODE -ne 0) { throw "Icon-disabled frontend build failed: $LASTEXITCODE" }
 
 & $clangCl @(
     '/nologo','/TC','--target=i686-pc-windows-msvc','/O2','/W4','/WX','/c',
@@ -313,28 +352,28 @@ if ($LASTEXITCODE -ne 0) { throw "Mapper activation core build failed: $LASTEXIT
 
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $combinedDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $combinedDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Combined inert proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $scrollOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $scrollOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollOffObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-disabled proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $spriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $spriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendSpriteOffObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $scrollSpriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $scrollSpriteOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollSpriteOffObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
@@ -349,17 +388,49 @@ if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled proxy link failed: 
 if ($LASTEXITCODE -ne 0) { throw "Fast feature-only proxy link failed: $LASTEXITCODE" }
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $scrollSpriteOffFastDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastPublicObj,$fastMovesObj,$frontendScrollSpriteOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    ('/Fe' + $scrollSpriteOffFastDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastPublicObj,$fastMovesObj,$frontendScrollSpriteOffObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
     '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','advapi32.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Fast combined proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $scrollSpriteOffIconOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$publicObj,$frontendScrollSpriteOffIconOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Icon-disabled Terrain proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $scrollSpriteOffFastIconOffDll),$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastPublicObj,$fastMovesObj,$frontendScrollSpriteOffIconOffObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','advapi32.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Icon-disabled Fast Terrain proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $iconOnlyDll),$iconOnlyPublicObj,$battleIconObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Icon-only proxy link failed: $LASTEXITCODE" }
+& $clangCl @(
+    '/nologo','--target=i686-pc-windows-msvc','/LD',
+    ('/Fe' + $fastIconDll),$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastIconPublicObj,$fastMovesObj,$battleIconObj,
+    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
+    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','advapi32.lib','user32.lib'
+)
+if ($LASTEXITCODE -ne 0) { throw "Fast-and-icon-only proxy link failed: $LASTEXITCODE" }
 $combinedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $combinedDll).Hash
 $scrollOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollOffDll).Hash
 $spriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $spriteOffDll).Hash
 $scrollSpriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffDll).Hash
 $fastOnlyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fastOnlyDll).Hash
 $scrollSpriteOffFastHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffFastDll).Hash
+$scrollSpriteOffIconOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffIconOffDll).Hash
+$scrollSpriteOffFastIconOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollSpriteOffFastIconOffDll).Hash
+$iconOnlyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconOnlyDll).Hash
+$fastIconHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fastIconDll).Hash
 if (-not $AllowUnpinnedOutput -and $combinedHash -ne $expectedR185Proxy) {
     throw "R185 reproducible build drift: $combinedHash"
 }
@@ -371,6 +442,18 @@ if (-not $AllowUnpinnedOutput -and $spriteOffHash -ne $expectedSpriteOffProxy) {
 }
 if (-not $AllowUnpinnedOutput -and $scrollSpriteOffHash -ne $expectedScrollSpriteOffProxy) {
     throw "Scroll-and-sprite-disabled reproducible build drift: $scrollSpriteOffHash"
+}
+foreach ($entry in @(
+    @('fast-only', $fastOnlyHash, $expectedFastOnlyProxy),
+    @('fast-terrain', $scrollSpriteOffFastHash, $expectedScrollSpriteOffFastProxy),
+    @('icon-off-terrain', $scrollSpriteOffIconOffHash, $expectedScrollSpriteOffIconOffProxy),
+    @('icon-off-fast-terrain', $scrollSpriteOffFastIconOffHash, $expectedScrollSpriteOffFastIconOffProxy),
+    @('icon-only', $iconOnlyHash, $expectedIconOnlyProxy),
+    @('fast-icon', $fastIconHash, $expectedFastIconProxy)
+)) {
+    if (-not $AllowUnpinnedOutput -and $entry[1] -ne $entry[2]) {
+        throw "$($entry[0]) reproducible build drift: $($entry[1])"
+    }
 }
 Copy-Item -LiteralPath $backend -Destination (Join-Path $combined 'dgVoodoo_D3D9.dll') -Force
 
@@ -640,6 +723,10 @@ $manifest = [ordered]@{
     scroll_sprite_off_sha256 = $scrollSpriteOffHash
     fast_only_sha256 = $fastOnlyHash
     scroll_sprite_off_fast_sha256 = $scrollSpriteOffFastHash
+    scroll_sprite_off_icon_off_sha256 = $scrollSpriteOffIconOffHash
+    scroll_sprite_off_fast_icon_off_sha256 = $scrollSpriteOffFastIconOffHash
+    icon_only_sha256 = $iconOnlyHash
+    fast_icon_sha256 = $fastIconHash
     backend_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $combined 'dgVoodoo_D3D9.dll')).Hash
     smoke_loader_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $smokeExe).Hash
     smoke_loader_exit = 0
@@ -688,6 +775,8 @@ $manifest = [ordered]@{
     campaign_pan_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'campaign_pan_core.c')).Hash
     frontend_fix_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_fix.c')).Hash
     battle_icon_atlas_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'battle_icon_atlas_core.h')).Hash
+    battle_icon_atlas_fix_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'battle_icon_atlas_fix.c')).Hash
+    battle_icon_atlas_fix_header_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'battle_icon_atlas_fix.h')).Hash
     frontend_epoch_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'frontend_epoch_core.c')).Hash
     presentation_input_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'presentation_input_core.c')).Hash
     primary_origin_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'primary_origin_guard_core.c')).Hash

@@ -59,7 +59,7 @@ def reported_laa_executable() -> bytes:
     spec = importlib.util.spec_from_file_location("mtw_laa_variants", script)
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
-    data = generator.build_variants(supported_exe_source().read_bytes())[(0, 0, "recompute")]
+    data = generator.build_variants(supported_exe_source().read_bytes())[(0, 0, 0, "recompute")]
     assert hashlib.sha256(data).hexdigest().upper() == REPORTED_LAA_HASH
     return data
 
@@ -120,7 +120,9 @@ def assert_registration(game: Path) -> None:
 
 def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bool | None = None,
                   sprite_fix: bool | None = None,
-                  fast_moves_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
+                  tutorial_fix: bool | None = False,
+                  fast_moves_fix: bool | None = None,
+                  battle_icon_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
     logs.mkdir(parents=True)
     command = [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
@@ -130,8 +132,15 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
         command.append(f"/SCROLLFIX={int(scroll_fix)}")
     if sprite_fix is not None:
         command.append(f"/SPRITEFIX={int(sprite_fix)}")
+    if tutorial_fix is not None:
+        command.append(f"/TUTORIALFIX={int(tutorial_fix)}")
     if fast_moves_fix is not None:
         command.append(f"/FASTMOVESFIX={int(fast_moves_fix)}")
+    # Legacy lifecycle cases choose no wrapper when Terrain is deselected.
+    # Test the installer's checked default separately with an explicit call.
+    if battle_icon_fix is None:
+        battle_icon_fix = terrain_fix is not False
+    command.append(f"/BATTLEICONFIX={int(battle_icon_fix)}")
     result = subprocess.run(
         command,
         cwd=game,
@@ -143,6 +152,76 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
         encoding = "utf-16" if log.name == "installer.log" else "utf-8-sig"
         result.stdout += f"\n{log}\n" + log.read_text(encoding=encoding, errors="replace")
     return result
+
+
+def test_compiled_tutorial_fix_is_recommended_independent_and_reversible(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Tutorial resolution option")
+    before = snapshot(game)
+    script = ROOT / "tools" / "generate-laa-exe-variants.py"
+    spec = importlib.util.spec_from_file_location("mtw_tutorial_variants", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    variants = generator.build_variants(supported_exe_source().read_bytes())
+    expected = hashlib.sha256(variants[(0, 0, 1, "base")]).hexdigest().upper()
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+
+    only_tutorial = run_installer(game, terrain_fix=False, scroll_fix=False,
+                                  sprite_fix=False, tutorial_fix=True, fast_moves_fix=False)
+    assert only_tutorial.returncode == 0, (only_tutorial.stdout, only_tutorial.stderr)
+    assert sha256(game / "Medieval_TW.exe") == expected
+    assert (game / "Medieval_TW.exe").read_bytes()[0x306A5C:0x306A62] == b"\xe9\x78\x00\x00\x00\x90"
+    assert not (game / "D3D9.dll").exists()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert receipt["tutorial_fix_enabled"] is True
+
+    disabled = run_installer(game, terrain_fix=True, scroll_fix=False,
+                             sprite_fix=False, tutorial_fix=False, fast_moves_fix=False)
+    assert disabled.returncode == 0, (disabled.stdout, disabled.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    assert (game / "D3D9.dll").is_file()
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["tutorial_fix_enabled"] is False
+
+    default = run_installer(game, tutorial_fix=None)
+    assert default.returncode == 0, (default.stdout, default.stderr)
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["tutorial_fix_enabled"] is True
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_battle_icon_choice_is_independent_and_reversible(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Battle icon option")
+    before = snapshot(game)
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    choices = (
+        (False, False, True, "payload-manifest-icon-only.json"),
+        (False, True, True, "payload-manifest-fast-icon.json"),
+        (False, True, False, "payload-manifest-fast-only.json"),
+        (True, False, False, "payload-manifest-scroll-sprite-off-icon-off.json"),
+        (True, False, True, "payload-manifest-scroll-sprite-off.json"),
+        (True, True, False, "payload-manifest-scroll-sprite-off-fast-icon-off.json"),
+        (True, True, True, "payload-manifest-scroll-sprite-off-fast.json"),
+    )
+    installation_id = None
+    for terrain, fast, icon, manifest_name in choices:
+        result = run_installer(game, terrain_fix=terrain, scroll_fix=False,
+                               sprite_fix=False, tutorial_fix=False,
+                               fast_moves_fix=fast, battle_icon_fix=icon)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        manifest = json.loads((PAYLOAD / manifest_name).read_text(encoding="utf-8"))
+        expected = manifest["files"]["D3D9.dll"]["sha256"]
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+        assert sha256(game / "D3D9.dll") == expected
+        assert receipt["files"]["D3D9.dll"]["installed_sha256"] == expected
+        assert receipt["battle_icon_fix_enabled"] is icon
+        assert receipt["terrain_fix_enabled"] is terrain
+        assert receipt["fast_moves_fix_enabled"] is fast
+        if installation_id is None:
+            installation_id = receipt["installation_id"]
+        assert receipt["installation_id"] == installation_id
+        for name in RUNTIME_NAMES[1:]:
+            assert (game / name).is_file() is terrain
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
 
 
 def test_compiled_scroll_choice_changes_exe_and_can_toggle(tmp_path: Path) -> None:
@@ -493,9 +572,8 @@ def test_compiled_managed_repair_replaces_modified_config(tmp_path: Path) -> Non
     assert snapshot(game) == before_install
 
 
-def test_compiled_unmanaged_r186_adoption_and_managed_repair(tmp_path: Path) -> None:
-    game = new_game(tmp_path, "Existing R186")
-    clean = snapshot(game)
+def test_compiled_unmanaged_current_runtime_preserved_on_removal(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Existing current runtime")
     for name in RUNTIME_NAMES:
         shutil.copy2(PAYLOAD / name, game / name)
     before = snapshot(game)
@@ -515,11 +593,9 @@ def test_compiled_unmanaged_r186_adoption_and_managed_repair(tmp_path: Path) -> 
     assert second_receipt["installer_sha256"] == sha256(game / DIST_INSTALLER.name)
     assert_runtime(game)
     assert run_uninstaller(game).returncode == 0
-    assert snapshot(game) == clean
+    assert snapshot(game) == before
     archives = list(game.glob(".medieval-recovery-*"))
-    assert len(archives) == 1
-    for name in RUNTIME_NAMES:
-        assert sha256(archives[0] / name) == before[name]
+    assert not archives
 
 
 def test_compiled_two_folders_have_independent_registrations(tmp_path: Path) -> None:

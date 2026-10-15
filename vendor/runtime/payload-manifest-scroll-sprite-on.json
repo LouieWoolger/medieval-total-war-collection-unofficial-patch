@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R197-scroll-sprite-on",
+  "runtime_identity": "R201-scroll-sprite-on",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 202240,
-      "sha256": "C94CB5D586F68D6132A4B9F49F1D16D83EEB7ACCC6201F84CED0FCADC32F1244",
-      "provenance": "Source-built R197 PE32 proxy for dgVoodoo2 2.87.5 and the 16 exact supported game executable identities. The RGB565 dust bridge scans every billboard center in a validated game dust batch at direct DrawIndexedPrimitiveUP return RVA B3FDC7. Mixed black/white-led batches containing brown dust are corrected; nonbrown batches retain the original target. Native-work child movement and size normalization, deferred D3D11 dust completion, frontend focus, movie backing and guarded final credits composition, input and selected Scroll/Sprite hooks are retained from R189; no frame cap or dust-opacity reduction is added. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab. The verified battle graphics-reset call queues the game's live unit-icon atlas rebuild, restoring HUD portraits after Alt+Tab."
+      "length": 205824,
+      "sha256": "3EA1861DE84D4A3862A1BA828015F63EC6A25693116AC0FFBA717DCC92E3A0B2",
+      "provenance": "Source-built R201 PE32 proxy from vendor/r185/source with exact supported executable identity checks; independently selected battle unit icon recovery, Terrain Movement Fix and Fast Computer Moves hooks are enabled only in their named variant."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,
@@ -48,5 +48,6 @@
     "~tmp.vrp"
   ],
   "scroll_fix_enabled": true,
-  "sprite_fix_enabled": true
+  "sprite_fix_enabled": true,
+  "battle_icon_fix_enabled": true
 }

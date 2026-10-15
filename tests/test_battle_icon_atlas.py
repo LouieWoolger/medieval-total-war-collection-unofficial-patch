@@ -27,4 +27,4 @@ def test_battle_icon_atlas_guard(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "RESULT passed=13 failed=0" in run.stdout
+    assert "RESULT passed=16 failed=0" in run.stdout
