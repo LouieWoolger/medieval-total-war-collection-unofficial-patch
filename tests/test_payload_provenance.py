@@ -9,7 +9,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (202752, "9BE59686AB10B1823A2AAA7F01689E77ECB0A824B92C8D60C6D85CC556538EEB"),
+    "D3D9.dll": (206336, "E8E09A4404E9604666916E29B2A31D8F2F718ABDC549F952F3A85930E39E35E2"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -85,9 +85,9 @@ def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope(
     state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
     for manifest_name, dll_name, terrain, receipt_hash_name in (
         ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
-         True, "MEDIEVAL_R201_TERRAIN_FAST_ICON_HASH"),
+         True, "MEDIEVAL_R202_TERRAIN_FAST_ICON_HASH"),
         ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
-         False, "MEDIEVAL_FAST_ONLY_PROXY_HASH"),
+         False, "MEDIEVAL_R202_FAST_ONLY_PROXY_HASH"),
     ):
         manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
         dll = RUNTIME / dll_name

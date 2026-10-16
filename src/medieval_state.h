@@ -7,10 +7,13 @@
 #include "patch_registry.h"
 #include "direct_exe_patch.h"
 #include "campaign_locale_patch.h"
+#include "game_data_patch.h"
 
 #define MEDIEVAL_STATE_NAME ".unofficial-medieval-total-war-patch"
 #define MEDIEVAL_RECEIPT_NAME "install-manifest.json"
-#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v5"
+#define MEDIEVAL_RECEIPT_SCHEMA "unofficial-medieval-total-war-patch-install-v7"
+#define MEDIEVAL_RECEIPT_SCHEMA_V6 "unofficial-medieval-total-war-patch-install-v6"
+#define MEDIEVAL_RECEIPT_SCHEMA_V5 "unofficial-medieval-total-war-patch-install-v5"
 #define MEDIEVAL_RECEIPT_SCHEMA_V4 "unofficial-medieval-total-war-patch-install-v4"
 #define MEDIEVAL_RECEIPT_SCHEMA_V3 "unofficial-medieval-total-war-patch-install-v3"
 #define MEDIEVAL_RECEIPT_SCHEMA_V2 "unofficial-medieval-total-war-patch-install-v2"
@@ -29,6 +32,15 @@
 #define MEDIEVAL_R201_TERRAIN_FAST_NO_ICON_HASH "AD2A580188AE30092D2E570592E525C1DE37BE5CC26BC3DFAE8FB5FE878D0B87"
 #define MEDIEVAL_R201_ICON_ONLY_HASH "13CC413BC03477BD053E2A6026C0B51791C0DEADB67D9EBBB53696DF74A623A4"
 #define MEDIEVAL_R201_FAST_ICON_HASH "77413C55AFBE182D061A8C83D1F83E352FBC8F6D917DD35973B8BF76E04E9D02"
+/* Keep the released R201 identities for v5 receipt upgrades. R202 was
+   rebuilt with the 64-state EXE table needed by Character Parchment Fix. */
+#define MEDIEVAL_R202_TERRAIN_ICON_HASH "E8E09A4404E9604666916E29B2A31D8F2F718ABDC549F952F3A85930E39E35E2"
+#define MEDIEVAL_R202_TERRAIN_FAST_ICON_HASH "18ABF59CC3D739ADCEE0A54FFFDCC054877F44ED23ADDA104B45BD1E186B8BD2"
+#define MEDIEVAL_R202_TERRAIN_NO_ICON_HASH "7586A362788583C6D620E7683476ABF4A083B81A5122A9EE37790176306493C1"
+#define MEDIEVAL_R202_TERRAIN_FAST_NO_ICON_HASH "31B3A56F7EC715EA797AEA140126B581602D735E65F021C1C6F7CD3741EED933"
+#define MEDIEVAL_R202_FAST_ONLY_PROXY_HASH "BF548CA7E2D164CB63867E0B826F6BF191E89216D4FAD0F371D081F926BCF548"
+#define MEDIEVAL_R202_FAST_ICON_HASH "CAC0963CA6638ED64C303995AA0E93455BD3C8FD7537BCCB849D9BD2375D9937"
+#define MEDIEVAL_R202_ICON_ONLY_HASH MEDIEVAL_R201_ICON_ONLY_HASH
 #define MEDIEVAL_R199_FAST_ONLY_PROXY_HASH "1A70E91A7575D881C57FF41BB318312B41D4BB9F5ED36E7577260716075CAED0"
 #define MEDIEVAL_TERRAIN_FAST_PROXY_HASH "0AA13EA53444BE53AF75B2F9F05F7373C757E68FBE0E19640ED8EAB99F744FB5"
 #define MEDIEVAL_R199_TERRAIN_FAST_PROXY_HASH "660CDB3A233213F64B2BD0913D6D814AF8B49D7549051EC4DCAA770C365758ED"
@@ -45,10 +57,11 @@
 #define MEDIEVAL_R187_SPRITE_DISABLED_PROXY_HASH "064C234EB46ABDC690F42C5AFE0BFBC61F2D388DE63F9F28D23A27E064E0D6A7"
 #define MEDIEVAL_R186_SPRITE_DISABLED_PROXY_HASH "300373700D0868CF2B1BA94762132A781E70918A01DB873DA3E8666FCD73B8F1"
 #define MEDIEVAL_RUNTIME_COUNT 5u
-#define MEDIEVAL_FILE_COUNT 7u
+#define MEDIEVAL_FILE_COUNT 9u
 static const char *const medieval_payload_names[] = {"dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll",
                                                      "dgVoodoo.conf", "D3D9.dll", "Medieval_TW.exe",
-                                                     "Loc/Eng/CHANGES.TXT"};
+                                                     "Loc/Eng/CHANGES.TXT", "campmap/names/DEFAULT_HEROES.TXT",
+                                                     "Loc/Eng/NAMES.TXT"};
 
 typedef struct {
     PatchContext context;
@@ -69,6 +82,9 @@ typedef struct {
     int old_v2;
     int old_v3;
     int old_v4;
+    int old_v5;
+    int old_v6;
+    int name_fix_enabled;
     const JsonValue *json;
     const char *installation_id, *status, *target_directory, *installer_version, *preinstall_mode,
         *uninstaller_sha256;
@@ -77,7 +93,7 @@ typedef struct {
 
 static inline size_t medieval_receipt_file_count(const MedievalReceipt *r) {
     return r->legacy || r->old_v2 ? MEDIEVAL_RUNTIME_COUNT :
-           r->old_v3 || r->old_v4 ? 6u : MEDIEVAL_FILE_COUNT;
+           r->old_v3 || r->old_v4 ? 6u : r->old_v5 ? 7u : MEDIEVAL_FILE_COUNT;
 }
 typedef struct {
     int is_registry;
@@ -230,6 +246,9 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
     int64_t length;
     char expected[96];
     memset(out, 0, sizeof(*out));
+    /* Historical receipts predate this choice and must retain their original
+       journal masks. Only v7 can describe an unselected name component. */
+    r.name_fix_enabled = 1;
     schema = medieval_string(value, "schema", 0, e);
     if (!schema)
         return 0;
@@ -237,8 +256,10 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
     r.old_v2 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V2);
     r.old_v3 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V3);
     r.old_v4 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V4);
+    r.old_v5 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V5);
+    r.old_v6 = !strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA_V6);
     if (strcmp(schema, MEDIEVAL_RECEIPT_SCHEMA) &&
-        !(allow_legacy && (r.legacy || r.old_v2 || r.old_v3 || r.old_v4)))
+        !(allow_legacy && (r.legacy || r.old_v2 || r.old_v3 || r.old_v4 || r.old_v5 || r.old_v6)))
         return json_invalid(e, "Unsupported installation receipt schema.");
     if (!r.legacy && !medieval_integrity_valid(owner, value, e))
         return 0;
@@ -306,15 +327,21 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
             !medieval_integer(rec, "original_length", 1, &length, e))
             return 0;
         if (i == 6u) strcpy(expected, "originals/CHANGES.TXT");
+        else if (i == 7u) strcpy(expected, "originals/DEFAULT_HEROES.TXT");
+        else if (i == 8u) strcpy(expected, "originals/NAMES.TXT");
         else snprintf(expected, sizeof(expected), "originals/%s", f->name);
         if ((existed && (strcmp(snapshot, expected) || !medieval_hash_valid(original) || length < 0)) ||
             (!existed && (*snapshot || *original || length)))
             return json_invalid(e, "Unsafe or invalid original record.");
         if (i == 6u) strcpy(expected, "CHANGES.TXT.unofficial-patch.bak");
+        else if (i == 7u) strcpy(expected, "DEFAULT_HEROES.TXT.unofficial-patch.bak");
+        else if (i == 8u) strcpy(expected, "NAMES.TXT.unofficial-patch.bak");
         else snprintf(expected, sizeof(expected), "%s.unofficial-patch.bak", f->name);
         if ((*sidecar && strcmp(sidecar, expected)) || (created && (!existed || !*sidecar)) ||
             (*legacy_hash && !medieval_hash_valid(legacy_hash)))
             return json_invalid(e, "Unsafe or inconsistent sidecar record.");
+        if (i >= 7u && (created || *sidecar || *legacy_hash))
+            return json_invalid(e, "Game data originals do not use legacy sidecars.");
         f->original.exists = existed;
         f->original.length = (uint64_t)length;
         if (existed)
@@ -326,8 +353,10 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         f->json = rec;
     }
     if (!r.legacy && !r.old_v2) {
-        int terrain, scroll, sprite = 0, tutorial = 0, fast = 0, icon = 0, previous_fast_locale = 0;
+        int terrain, scroll, sprite = 0, tutorial = 0, parchment = 0, name_fix = 1, fast = 0, icon = 0, previous_fast_locale = 0;
         const JsonValue *tutorial_field = json_get(value, "tutorial_fix_enabled");
+        const JsonValue *parchment_field = json_get(value, "parchment_fix_enabled");
+        const JsonValue *name_field = json_get(value, "name_fix_enabled");
         const JsonValue *icon_field = json_get(value, "battle_icon_fix_enabled");
         MtwExeVariant original_exe, installed_exe;
         const char *delivery = NULL;
@@ -345,6 +374,15 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
         /* R197-R199 v5 receipts have no tutorial field: the old runtime
            installed this fix implicitly, but their on-disk EXE is unpatched. */
         if (tutorial_field && !medieval_boolean(value, "tutorial_fix_enabled", &tutorial, e)) return 0;
+        if (!r.old_v3 && !r.old_v4 && !r.old_v5 && !parchment_field)
+            return json_invalid(e, "The character parchment selection is missing.");
+        if (parchment_field && !medieval_boolean(value, "parchment_fix_enabled", &parchment, e)) return 0;
+        if (!r.old_v3 && !r.old_v4 && !r.old_v5 && !r.old_v6 &&
+            (!name_field || !medieval_boolean(value, "name_fix_enabled", &name_fix, e)))
+            return json_invalid(e, "The name correction selection is missing or invalid.");
+        if (r.old_v6 && name_field)
+            return json_invalid(e, "A v6 receipt cannot carry a name correction selection.");
+        r.name_fix_enabled = name_fix;
         if (icon_field && !medieval_boolean(value, "battle_icon_fix_enabled", &icon, e)) return 0;
         if (!r.old_v3 && !r.old_v4 && fast)
             previous_fast_locale = r.files[6].installed.length == MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SIZE &&
@@ -382,11 +420,17 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
             strcmp(r.files[4].installed.sha256, MEDIEVAL_R186_SPRITE_DISABLED_PROXY_HASH))
             return json_invalid(e, "A direct Sprite receipt cannot retain an active proxy Sprite hook.");
         if (icon_field && (terrain || fast || icon)) {
-            const char *expected_proxy = terrain ?
-                (fast ? (icon ? MEDIEVAL_R201_TERRAIN_FAST_ICON_HASH : MEDIEVAL_R201_TERRAIN_FAST_NO_ICON_HASH) :
-                        (icon ? MEDIEVAL_R201_TERRAIN_ICON_HASH : MEDIEVAL_R201_TERRAIN_NO_ICON_HASH)) :
-                (fast ? (icon ? MEDIEVAL_R201_FAST_ICON_HASH : MEDIEVAL_FAST_ONLY_PROXY_HASH) :
-                        MEDIEVAL_R201_ICON_ONLY_HASH);
+            const char *expected_proxy = r.old_v5 ?
+                (terrain ?
+                    (fast ? (icon ? MEDIEVAL_R201_TERRAIN_FAST_ICON_HASH : MEDIEVAL_R201_TERRAIN_FAST_NO_ICON_HASH) :
+                            (icon ? MEDIEVAL_R201_TERRAIN_ICON_HASH : MEDIEVAL_R201_TERRAIN_NO_ICON_HASH)) :
+                    (fast ? (icon ? MEDIEVAL_R201_FAST_ICON_HASH : MEDIEVAL_FAST_ONLY_PROXY_HASH) :
+                            MEDIEVAL_R201_ICON_ONLY_HASH)) :
+                (terrain ?
+                    (fast ? (icon ? MEDIEVAL_R202_TERRAIN_FAST_ICON_HASH : MEDIEVAL_R202_TERRAIN_FAST_NO_ICON_HASH) :
+                            (icon ? MEDIEVAL_R202_TERRAIN_ICON_HASH : MEDIEVAL_R202_TERRAIN_NO_ICON_HASH)) :
+                    (fast ? (icon ? MEDIEVAL_R202_FAST_ICON_HASH : MEDIEVAL_R202_FAST_ONLY_PROXY_HASH) :
+                            MEDIEVAL_R202_ICON_ONLY_HASH));
             if (strcmp(r.files[4].installed.sha256, expected_proxy))
                 return json_invalid(e, "Inconsistent battle icon proxy selection.");
         }
@@ -395,12 +439,13 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                                        (size_t)r.files[5].original.length, &original_exe) ||
             !mtw_exe_variant_from_hash(r.files[5].installed.sha256,
                                        (size_t)r.files[5].installed.length, &installed_exe) ||
-            original_exe.scroll || original_exe.sprite || original_exe.tutorial ||
+            original_exe.scroll || original_exe.sprite || original_exe.tutorial || original_exe.ui ||
             installed_exe.scroll != (unsigned int)scroll ||
             installed_exe.sprite != (unsigned int)sprite ||
             installed_exe.tutorial != (unsigned int)tutorial ||
+            installed_exe.ui != (unsigned int)parchment ||
             installed_exe.laa != original_exe.laa ||
-            (!scroll && !sprite && !tutorial &&
+            (!scroll && !sprite && !tutorial && !parchment &&
              !patch_record_equal(&r.files[5].installed, &r.files[5].original)))
             return json_invalid(e, "Inconsistent direct EXE fix selection.");
         if (!r.old_v3 && !r.old_v4 &&
@@ -414,6 +459,30 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                             MTW_CAMPAIGN_LOCALE_PREVIOUS_FAST_SIZE : MTW_CAMPAIGN_LOCALE_FAST_SIZE) :
                      !patch_record_equal(&r.files[6].installed, &r.files[6].original))))
             return json_invalid(e, "Inconsistent Fast computer moves localization selection.");
+        if (!r.old_v3 && !r.old_v4 && !r.old_v5) {
+            const MedievalFileState *heroes = &r.files[7], *names = &r.files[8];
+            int heroes_input = heroes->original.exists &&
+                ((heroes->original.length == MTW_HEROES_STOCK_SIZE &&
+                  !strcmp(heroes->original.sha256, MTW_HEROES_STOCK_SHA256)) ||
+                 (heroes->original.length == MTW_HEROES_FIXED_SIZE &&
+                  !strcmp(heroes->original.sha256, MTW_HEROES_FIXED_SHA256)));
+            int names_stock = names->original.length == MTW_NAMES_STOCK_SIZE &&
+                (!strcmp(names->original.sha256, MTW_NAMES_STOCK_SHA256) ||
+                 !strcmp(names->original.sha256, MTW_NAMES_CYD_SHA256));
+            int names_fixed = names->original.length == MTW_NAMES_FIXED_SIZE &&
+                (!strcmp(names->original.sha256, MTW_NAMES_KILIJ_SHA256) ||
+                 !strcmp(names->original.sha256, MTW_NAMES_FIXED_SHA256));
+            int names_input = names->original.exists && (names_stock || names_fixed);
+            if (!heroes->original.exists || !names->original.exists ||
+                (name_fix ? (!heroes_input || !names_input || !heroes->installed.exists ||
+                 heroes->installed.length != MTW_HEROES_FIXED_SIZE ||
+                 strcmp(heroes->installed.sha256, MTW_HEROES_FIXED_SHA256) ||
+                 !names->installed.exists || names->installed.length != MTW_NAMES_FIXED_SIZE ||
+                 strcmp(names->installed.sha256, MTW_NAMES_FIXED_SHA256)) :
+                 (!patch_record_equal(&heroes->installed, &heroes->original) ||
+                  !patch_record_equal(&names->installed, &names->original))))
+                return json_invalid(e, "Inconsistent character data correction or original baseline.");
+        }
     }
     r.json = value;
     r.target_directory = target;
@@ -608,6 +677,14 @@ static inline int medieval_path_role(const char *relative, size_t *file_index) {
             if (!strcmp(relative, "CHANGES.TXT.unofficial-patch.bak")) return 2;
             continue;
         }
+        if (i == 7u || i == 8u) {
+            const char *basename = i == 7u ? "DEFAULT_HEROES.TXT" : "NAMES.TXT";
+            snprintf(path, sizeof(path), MEDIEVAL_STATE_NAME "/originals/%s", basename);
+            if (!strcmp(relative, path)) return 3;
+            snprintf(path, sizeof(path), "%s.unofficial-patch.bak", basename);
+            if (!strcmp(relative, path)) return 2;
+            continue;
+        }
         snprintf(path, sizeof(path), "%s.unofficial-patch.bak", medieval_payload_names[i]);
         if (!strcmp(relative, path))
             return 2;
@@ -718,11 +795,13 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
                 !medieval_file_record(json_get(a, "after"), &action->after_file, e))
                 return 0;
             if (role == 1) {
+                if (index >= 7u && !j.receipt.name_fix_enabled && !j.receipt.old_v6 && restore)
+                    return json_invalid(e, "Unselected name data cannot be a transaction target.");
                 const PatchFileRecord *expected =
                     restore ? &j.receipt.files[index].original : &j.receipt.files[index].installed;
                 if (!patch_record_equal(&action->after_file, expected))
                     return json_invalid(e, "Runtime recovery differs from retained receipt.");
-                required |= index == 6u ? 512U : 1U << index;
+                required |= index >= 6u ? 1U << (index + 3u) : 1U << index;
             } else if (role == 6) {
                 if (!action->after_file.exists ||
                     strcmp(action->after_file.sha256, j.receipt.uninstaller_sha256) ||
@@ -816,8 +895,12 @@ static inline int medieval_journal_validate(JsonDocument *owner, const JsonValue
         } else
             return json_invalid(e, "Unknown transaction action.");
     }
-    if (required != (j.receipt.old_v2 || j.receipt.legacy ? 479U :
-                     j.receipt.old_v3 || j.receipt.old_v4 ? 511U : 1023U))
+    if ((!j.receipt.name_fix_enabled && !j.receipt.old_v6 && !restore &&
+         (required != 1023U && required != 4095U)) ||
+        (!(!j.receipt.name_fix_enabled && !j.receipt.old_v6 && !restore) &&
+         required != (j.receipt.old_v2 || j.receipt.legacy ? 479U :
+                      j.receipt.old_v3 || j.receipt.old_v4 ? 511U :
+                      j.receipt.old_v5 || !j.receipt.name_fix_enabled ? 1023U : 4095U)))
         return json_invalid(e, "Recovery omits a required runtime, receipt, uninstaller or registration.");
     j.json = value;
     j.count = actions->count;
@@ -863,7 +946,7 @@ done:
     return ok;
 }
 static inline int medieval_old_patch(const char *mode) {
-    return !strcmp(mode, "r200") || !strcmp(mode, "r199") || !strcmp(mode, "r198") || !strcmp(mode, "r197") || !strcmp(mode, "r196") || !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
+    return !strcmp(mode, "r202") || !strcmp(mode, "r201") || !strcmp(mode, "r200") || !strcmp(mode, "r199") || !strcmp(mode, "r198") || !strcmp(mode, "r197") || !strcmp(mode, "r196") || !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
            !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
 }
 static inline int medieval_old_configuration(const char *hash) {
@@ -950,11 +1033,18 @@ static inline const char *medieval_known_d3d9_mode(const char *hash) {
                  {MEDIEVAL_R199_SPRITE_DISABLED_PROXY_HASH, "r199"},
                  {MEDIEVAL_R199_FAST_ONLY_PROXY_HASH, "r199"},
                  {MEDIEVAL_R199_TERRAIN_FAST_PROXY_HASH, "r199"}};
+    static const char *const r202[] = {
+        MEDIEVAL_R202_TERRAIN_ICON_HASH, MEDIEVAL_R202_TERRAIN_FAST_ICON_HASH,
+        MEDIEVAL_R202_TERRAIN_NO_ICON_HASH, MEDIEVAL_R202_TERRAIN_FAST_NO_ICON_HASH,
+        MEDIEVAL_R202_ICON_ONLY_HASH, MEDIEVAL_R202_FAST_ICON_HASH,
+        MEDIEVAL_R202_FAST_ONLY_PROXY_HASH};
     static const char *const r201[] = {
         MEDIEVAL_R201_TERRAIN_ICON_HASH, MEDIEVAL_R201_TERRAIN_FAST_ICON_HASH,
         MEDIEVAL_R201_TERRAIN_NO_ICON_HASH, MEDIEVAL_R201_TERRAIN_FAST_NO_ICON_HASH,
         MEDIEVAL_R201_ICON_ONLY_HASH, MEDIEVAL_R201_FAST_ICON_HASH};
     size_t i;
+    for (i = 0; i < sizeof(r202) / sizeof(*r202); ++i)
+        if (!strcmp(hash, r202[i])) return "r202";
     for (i = 0; i < sizeof(r201) / sizeof(*r201); ++i)
         if (!strcmp(hash, r201[i])) return "r201";
     for (i = 0; i < sizeof(known) / sizeof(*known); ++i)

@@ -9,6 +9,9 @@ import re
 import subprocess
 
 import pefile
+from test_game_data_patch import (
+    HEROES_STOCK, HEROES_FIXED, NAMES_STOCK, NAMES_CYD, NAMES_KILIJ, NAMES_FIXED,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,12 +78,13 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["product"]["version"] == product["version"] == "1.0.0"
     assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
     assert manifest["product"]["tutorial_component"] == product["tutorial_component_name"]
+    assert manifest["product"]["parchment_component"] == product["parchment_component_name"]
     assert manifest["product"]["battle_icon_component"] == product["battle_icon_component_name"]
     assert manifest["product"]["fast_component"] == product["fast_component_name"]
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R201-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R202-scroll-sprite-off"
     assert manifest["battle_unit_icons"]["default_installer_selection"] is True
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
@@ -88,6 +92,25 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["direct_tutorial_executable"]["default_installer_selection"] is True
     assert manifest["direct_tutorial_executable"]["patch_offset"] == 0x306A5C
     assert manifest["direct_tutorial_executable"]["shipped_game_executable"] is False
+    assert manifest["character_parchment"]["default_installer_selection"] is True
+    assert manifest["character_parchment"]["independent_direct_executable_fix"] is True
+    assert manifest["character_parchment"]["ui_only_sha256"] == (
+        "1BF4B4D8123A1218E35D8D44E16ADE55ED0BDDF1A03B109299A034092524FBFA")
+    assert manifest["character_parchment"]["shipped_game_executable"] is False
+    character_data = manifest["character_data_corrections"]
+    assert character_data["independent_component"] is True
+    assert character_data["default_installer_selection"] is True
+    assert character_data["shipped_game_text_files"] is False
+    assert character_data["files"]["campmap/names/DEFAULT_HEROES.TXT"]["supported_input_sha256"] == [
+        HEROES_STOCK, HEROES_FIXED,
+    ]
+    assert character_data["files"]["Loc/Eng/NAMES.TXT"]["supported_input_sha256"] == [
+        NAMES_STOCK, NAMES_CYD, NAMES_KILIJ, NAMES_FIXED,
+    ]
+    assert character_data["files"]["campmap/names/DEFAULT_HEROES.TXT"]["installed_sha256"] == (
+        "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB")
+    assert character_data["files"]["Loc/Eng/NAMES.TXT"]["installed_sha256"] == (
+        "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15")
     helper = manifest["native_helper_build"]
     assert helper["language"] == "C99"
     assert helper["compiler"]["role"] == "native-gcc"
@@ -161,11 +184,12 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     variants = manifest["supported_executable_variants"]
-    assert len(variants) == 32
-    assert len({entry["sha256"] for entry in variants}) == 32
+    assert len(variants) == 64
+    assert len({entry["sha256"] for entry in variants}) == 64
+    assert sum(entry["ui"] for entry in variants) == 32
     assert {entry["checksum_style"] for entry in variants} == {"base", "retain", "zero", "recompute"}
     assert {entry["sha256"] for entry in variants if entry["scroll"] is False and
-            entry["sprite"] is False and entry["tutorial"] is False and
+            entry["sprite"] is False and entry["tutorial"] is False and entry["ui"] is False and
             entry["checksum_style"] == "recompute"} == {
                 "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710"}
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
@@ -215,6 +239,8 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "payload-fast-only\\d3d9.dll",
         "compatibility.bmp",
         "campaign-scrolling.bmp",
+        "character-parchment.bmp",
+        "name-and-title.bmp",
         "sprite-clipping.bmp",
         "campaign-tutorial-resolution.bmp",
         "fast-computer-moves.bmp",

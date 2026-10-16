@@ -11,7 +11,7 @@ import sys
 import pytest
 from native_helper import helper_path, seal
 from registry_isolation import LEGACY_NAMES, read_registration, registration_name, remove_test_registration
-from game_fixture_assets import copy_campaign_text
+from game_fixture_assets import copy_campaign_text, copy_character_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +69,7 @@ def new_game(root: Path, name: str = "Game Folder") -> Path:
     source = supported_exe_source()
     shutil.copy2(source, game / "Medieval_TW.exe")
     copy_campaign_text(source, game)
+    copy_character_text(source, game)
     return game
 
 
@@ -103,6 +104,8 @@ def invoke(
         command += ["-TerrainFix", str(terrain), "-ScrollFix", str(scroll),
                     "-SpriteFix", str(sprite), "-FastMovesFix", str(fast),
                     "-BattleIconFix", str(int(bool(terrain)))]
+    # These historical LAA fixtures predate the new independent UI option.
+    command += ["-ParchmentFix", "0"]
     environment = dict(os.environ)
     if fault:
         (game / ".umtwp-test-fixture").write_text("disposable LAA transaction fixture\n")
@@ -125,6 +128,8 @@ def invoke(
 def relevant_snapshot(game: Path) -> dict[str, str | None]:
     names = [
         "Medieval_TW.exe",
+        "campmap/names/DEFAULT_HEROES.TXT",
+        "Loc/Eng/NAMES.TXT",
         "D3D9.dll",
         "dgVoodoo_D3D9.dll",
         "ddraw.dll",
@@ -494,7 +499,7 @@ def test_previous_fullscreen_config_upgrades_to_single_window_presentation(tmp_p
 
     inspected, report = invoke("Inspect", game)
     assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
-    assert report["mode"] == "r201"
+    assert report["mode"] == "r202"
 
     upgraded, report = invoke("Install", game)
     assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)

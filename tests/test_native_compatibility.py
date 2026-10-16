@@ -13,7 +13,7 @@ import pytest
 
 from native_helper import canonical_json, seal
 from test_lifecycle import (
-    ENGINE, PAYLOAD, PRODUCT, STATE, TX, UNINSTALL, digest, games, installed,
+    ENGINE, PAYLOAD, PRODUCT, STATE, TX, UNINSTALL, FIXED_NAMES, digest, games, installed,
     read_receipt, registry, registry_key, relevant, run, run_at_wait,
 )
 from test_lifecycle_adversarial import tree_snapshot
@@ -188,6 +188,61 @@ def test_foreign_journal_is_not_adopted_when_preparation_publishes(games):
     assert not registry(game)
 
 
+def test_changed_unpublished_copy_is_retained_for_review(games):
+    game = games("Changed preparation")
+    before = relevant(game)
+    altered = []
+    source = game.parent / "synthetic-uninstaller.bin"
+    source.write_bytes(b"synthetic uninstaller")
+
+    def change_staged_copy():
+        preparing = list(game.glob(".unofficial-medieval-patch-preparing-*"))
+        assert len(preparing) == 1
+        copies = [path for path in (preparing[0] / "after").glob("*.bin")
+                  if digest(path) == FIXED_NAMES]
+        assert len(copies) == 1
+        copies[0].write_bytes(b"foreign staged content")
+        altered.append(copies[0])
+        # Fail before publication so this specifically exercises retirement
+        # of an unpublished preparation with a changed transaction copy.
+        source.unlink()
+
+    code, report, output, error = run_at_wait("Install", game, "before-stage-uninstaller",
+                                              change_staged_copy, uninstaller=source)
+    assert code != 0, (output, error)
+    assert report["rollback"] == "incomplete", report
+    assert altered[0].read_bytes() == b"foreign staged content"
+    assert relevant(game) == before
+    assert not registry(game)
+
+
+def test_changed_staged_copy_detected_before_transaction_publication(games, tmp_path):
+    # Keep the preparation directory beyond legacy MAX_PATH even when pytest's
+    # temporary root is short; cleanup must inspect this exact retained copy.
+    prefix = "Changed-copy-before-publish-"
+    game = games(prefix + "x" * max(0, 190 - len(str(tmp_path)) - 1 - len(prefix)))
+    assert len(str(game)) >= 190
+    before = relevant(game)
+    altered = []
+
+    def change_staged_copy():
+        preparing = list(game.glob(".unofficial-medieval-patch-preparing-*"))
+        assert len(preparing) == 1
+        copies = [path for path in (preparing[0] / "after").glob("*.bin")
+                  if digest(path) == FIXED_NAMES]
+        assert len(copies) == 1
+        copies[0].write_bytes(b"foreign staged content")
+        altered.append(copies[0])
+
+    code, report, output, error = run_at_wait("Install", game, "before-stage-uninstaller",
+                                              change_staged_copy)
+    assert code != 0, (output, error)
+    assert report["rollback"] == "incomplete", report
+    assert altered[0].read_bytes() == b"foreign staged content"
+    assert relevant(game) == before
+    assert not registry(game)
+
+
 def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     """Synthetic uncertain v1 receipt: archive is not authority to discard an original."""
     game = games()
@@ -200,6 +255,14 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     # A v1 installation predates both direct EXE fixes. Restore its stock
     # executable before synthesizing that historical receipt.
     shutil.copy2(state / "originals/Medieval_TW.exe", game / "Medieval_TW.exe")
+    data_originals = {}
+    for relative, snapshot in (
+        ("campmap/names/DEFAULT_HEROES.TXT", "DEFAULT_HEROES.TXT"),
+        ("Loc/Eng/NAMES.TXT", "NAMES.TXT"),
+    ):
+        shutil.copy2(state / "originals" / snapshot, game / relative)
+        data_originals[relative] = digest(game / relative)
+        receipt["files"].pop(relative)
     receipt["schema"] = "unofficial-medieval-total-war-patch-install-v1"
     receipt["files"].pop("Medieval_TW.exe")
     receipt["files"].pop("Loc/Eng/CHANGES.TXT")
@@ -217,6 +280,7 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     result, report = run("Restore", game)
     assert result.returncode == 0, report
     assert (game / "ddraw.dll").read_bytes() == original
+    assert {relative: digest(game / relative) for relative in data_originals} == data_originals
 
 
 def test_actual_v3_receipt_uninstalls_directly_with_new_helper(games):
@@ -243,6 +307,55 @@ def test_actual_v3_receipt_uninstalls_directly_with_new_helper(games):
     assert not (game / UNINSTALL).exists()
     assert not (game / STATE / "install-manifest.json").exists()
     assert not registry(game)
+
+
+@pytest.fixture
+def legacy_v5_installer() -> Path:
+    source_name = os.environ.get("MTW_LEGACY_V5_INSTALLER")
+    if not source_name:
+        pytest.skip("MTW_LEGACY_V5_INSTALLER is required for published v5 package proof")
+    installer = Path(source_name)
+    assert digest(installer) == "0DED51E9CEA667801E9B8656610F4EFF843C70CBCA49276D5FD59D3A0D1FE33E"
+    return installer
+
+
+def install_published_v5(game: Path, installer: Path) -> None:
+    local = game / installer.name
+    shutil.copy2(installer, local)
+    result = subprocess.run(
+        [str(local), "/S", "/TERRAINFIX=0", "/SCROLLFIX=1", "/SPRITEFIX=1", "/FASTMOVESFIX=0"],
+        cwd=game, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert read_receipt(game)["schema"] == "unofficial-medieval-total-war-patch-install-v5"
+
+
+def test_published_v5_receipt_uninstalls_directly_with_new_helper(games, legacy_v5_installer):
+    game = games("Direct v5 removal")
+    before = relevant(game)
+    install_published_v5(game, legacy_v5_installer)
+    result, report = run("Restore", game)
+    assert result.returncode == 0, (result.stdout, result.stderr, report)
+    assert relevant(game) == before
+    assert not (game / STATE / "install-manifest.json").exists()
+    assert not registry(game)
+
+
+def test_published_v5_upgrade_preserves_partial_names_baseline(games, legacy_v5_installer):
+    game = games("Partial v5 upgrade")
+    names = game / "Loc/Eng/NAMES.TXT"
+    names.write_bytes(names.read_bytes().replace(b'{"Kilij Arslan}', b'{"Kilij Arslan"}'))
+    before = relevant(game)
+    install_published_v5(game, legacy_v5_installer)
+    result, report = run("Install", game, terrain_fix=False, scroll_fix=True, sprite_fix=True)
+    assert result.returncode == 0, (result.stdout, result.stderr, report)
+    receipt = read_receipt(game)
+    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    assert receipt["files"]["Loc/Eng/NAMES.TXT"]["original_sha256"] == before["Loc/Eng/NAMES.TXT"]
+    assert digest(names) == "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
+    result, report = run("Restore", game)
+    assert result.returncode == 0, (result.stdout, result.stderr, report)
+    assert relevant(game) == before
 
 
 @pytest.fixture

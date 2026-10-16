@@ -12,7 +12,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_NAMES = (
-    "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp",
+    "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp", "character-parchment.bmp",
+    "name-and-title.bmp",
     "sprite-clipping.bmp", "campaign-tutorial-resolution.bmp", "battle-unit-icons.bmp", "fast-computer-moves.bmp",
     "discord-badge.bmp", "discord-badge-hover.bmp", "kofi-badge.bmp",
     "kofi-badge-hover.bmp",
@@ -69,21 +70,22 @@ def supported_executable_variants() -> list[dict]:
     header = (ROOT / "include" / "mtw_exe_variants.h").read_text(encoding="ascii")
     pattern = re.compile(
         r'^\s*\{"([0-9A-F]{64})", (\d+)u, 0x([0-9A-F]{8})u, '
-        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, '
+        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, '
         r'"(base|retain|zero|recompute)"\},$', re.MULTILINE)
     entries = []
     for match in pattern.finditer(header):
-        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, laa, style = match.groups()
+        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, ui, laa, style = match.groups()
         entries.append({
             "sha256": digest, "length": int(length),
             "image_size": int(image_size, 16),
             "canonical_checksum": int(canonical_checksum, 16),
             "scroll": bool(int(scroll)), "sprite": bool(int(sprite)),
-            "tutorial": bool(int(tutorial)),
+            "tutorial": bool(int(tutorial)), "ui": bool(int(ui)),
             "laa": bool(int(laa)), "checksum_style": style,
         })
-    states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["checksum_style"]) for entry in entries}
-    if len(entries) != 32 or len(states) != 32 or len({entry["sha256"] for entry in entries}) != 32:
+    states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["ui"],
+               entry["checksum_style"]) for entry in entries}
+    if len(entries) != 64 or len(states) != 64 or len({entry["sha256"] for entry in entries}) != 64:
         raise ValueError("The shared EXE identity table is incomplete or ambiguous.")
     if any(entry["laa"] != (entry["checksum_style"] != "base") for entry in entries):
         raise ValueError("The shared EXE identity table has inconsistent LAA metadata.")
@@ -392,6 +394,7 @@ def main() -> int:
                     "scroll_component": product["scroll_component_name"],
                      "sprite_component": product["sprite_component_name"],
                      "tutorial_component": product["tutorial_component_name"],
+                     "parchment_component": product["parchment_component_name"],
                      "battle_icon_component": product["battle_icon_component_name"],
                      "fast_component": product["fast_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
@@ -423,6 +426,29 @@ def main() -> int:
             "enabled_english_sha256": "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B",
             "shipped_game_text_file": False,
         },
+        "character_data_corrections": {
+            "independent_component": True,
+            "default_installer_selection": True,
+            "shipped_game_text_files": False,
+            "files": {
+                "campmap/names/DEFAULT_HEROES.TXT": {
+                    "supported_input_sha256": [
+                        "62B181D0804E48ECB527CAC1DC38D5DBE6CC79A22B9C576530F6F1C842D6E6DF",
+                        "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB",
+                    ],
+                    "installed_sha256": "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB",
+                },
+                "Loc/Eng/NAMES.TXT": {
+                    "supported_input_sha256": [
+                        "BDFB6F894C4B21C147A523A1FAD84B1A8F3CF8D809E98C69363266D4B17A7A76",
+                        "A4CC2AF6ECA25792E5E0FC64055706B4C22763C4D4A51080F774B0A8420E080E",
+                        "F2847372150BED92E36F87F629A955344D2DEF533D6FD5ED6A1C25EDECF532FA",
+                        "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15",
+                    ],
+                    "installed_sha256": "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15",
+                },
+            },
+        },
         "direct_scroll_executable": {"stock_sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5",
                                      "patched_sha256": "50829CD084355D81EC94D6F4489D1F60E2EF7FA92983D0EAD07D43832DEEF15B",
                                      "shipped_game_executable": False},
@@ -433,9 +459,19 @@ def main() -> int:
             "default_installer_selection": True,
             "stock_tutorial_only_sha256": next(entry["sha256"] for entry in supported_executable_variants()
                                                if not entry["scroll"] and not entry["sprite"] and
-                                               entry["tutorial"] and entry["checksum_style"] == "base"),
+                                               entry["tutorial"] and not entry["ui"] and
+                                               entry["checksum_style"] == "base"),
             "patch_offset": 0x306A5C,
             "patch_length": 6,
+            "shipped_game_executable": False,
+        },
+        "character_parchment": {
+            "default_installer_selection": True,
+            "independent_direct_executable_fix": True,
+            "ui_only_sha256": next(entry["sha256"] for entry in supported_executable_variants()
+                                   if not entry["scroll"] and not entry["sprite"] and
+                                   not entry["tutorial"] and entry["ui"] and
+                                   entry["checksum_style"] == "base"),
             "shipped_game_executable": False,
         },
         "assets": {name: file_record(ROOT / "assets" / name) for name in ASSET_NAMES},

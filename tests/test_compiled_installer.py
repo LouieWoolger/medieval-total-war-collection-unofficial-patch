@@ -17,7 +17,7 @@ import sys
 import pytest
 from registry_isolation import (LEGACY_NAMES, read_registration, registration_name,
                                 remove_test_registration, assert_empty_registration)
-from game_fixture_assets import copy_campaign_text
+from game_fixture_assets import copy_campaign_text, copy_character_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +31,10 @@ REPORTED_LAA_HASH = "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129
 LAA_COMBINED_EXE_HASH = "05006A7779EC6CAA2FB4253609C7447AD8A7EE23C5847A302D7731C198091EB7"
 RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf")
 LOCALE_NAME = "Loc/Eng/CHANGES.TXT"
+HEROES_NAME = "campmap/names/DEFAULT_HEROES.TXT"
+NAMES_NAME = "Loc/Eng/NAMES.TXT"
+FIXED_HEROES_HASH = "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB"
+FIXED_NAMES_HASH = "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
 STOCK_LOCALE_HASH = "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC"
 FAST_LOCALE_HASH = "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B"
 
@@ -91,12 +95,13 @@ def new_game(root: Path, name: str) -> Path:
     source = supported_exe_source()
     shutil.copy2(source, game / "Medieval_TW.exe")
     copy_campaign_text(source, game)
+    copy_character_text(source, game)
     shutil.copy2(DIST_INSTALLER, game / DIST_INSTALLER.name)
     return game
 
 
 def snapshot(game: Path) -> dict[str, str | None]:
-    names = ["Medieval_TW.exe", LOCALE_NAME, *RUNTIME_NAMES, "D3D8.dll"]
+    names = ["Medieval_TW.exe", LOCALE_NAME, HEROES_NAME, NAMES_NAME, *RUNTIME_NAMES, "D3D8.dll"]
     names += [f"{name}.unofficial-patch.bak" for name in RUNTIME_NAMES]
     return {name: sha256(game / name) if (game / name).is_file() else None for name in names}
 
@@ -121,6 +126,8 @@ def assert_registration(game: Path) -> None:
 def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bool | None = None,
                   sprite_fix: bool | None = None,
                   tutorial_fix: bool | None = False,
+                  parchment_fix: bool | None = False,
+                  name_fix: bool | None = None,
                   fast_moves_fix: bool | None = None,
                   battle_icon_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
@@ -134,6 +141,10 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
         command.append(f"/SPRITEFIX={int(sprite_fix)}")
     if tutorial_fix is not None:
         command.append(f"/TUTORIALFIX={int(tutorial_fix)}")
+    if parchment_fix is not None:
+        command.append(f"/PARCHMENTFIX={int(parchment_fix)}")
+    if name_fix is not None:
+        command.append(f"/NAMEFIX={int(name_fix)}")
     if fast_moves_fix is not None:
         command.append(f"/FASTMOVESFIX={int(fast_moves_fix)}")
     # Legacy lifecycle cases choose no wrapper when Terrain is deselected.
@@ -152,6 +163,30 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
         encoding = "utf-16" if log.name == "installer.log" else "utf-8-sig"
         result.stdout += f"\n{log}\n" + log.read_text(encoding=encoding, errors="replace")
     return result
+
+
+def test_compiled_name_choice_installs_alone_and_other_fixes_leave_text_alone(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Independent name option")
+    before = snapshot(game)
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    only_names = run_installer(game, terrain_fix=False, scroll_fix=False, sprite_fix=False,
+                               tutorial_fix=False, parchment_fix=False, name_fix=True,
+                               battle_icon_fix=False, fast_moves_fix=False)
+    assert only_names.returncode == 0, (only_names.stdout, only_names.stderr)
+    assert sha256(game / HEROES_NAME) == FIXED_HEROES_HASH
+    assert sha256(game / NAMES_NAME) == FIXED_NAMES_HASH
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["name_fix_enabled"] is True
+
+    off = run_installer(game, terrain_fix=False, scroll_fix=True, sprite_fix=False,
+                        tutorial_fix=False, parchment_fix=False, name_fix=False,
+                        battle_icon_fix=False, fast_moves_fix=False)
+    assert off.returncode == 0, (off.stdout, off.stderr)
+    assert sha256(game / HEROES_NAME) == before[HEROES_NAME]
+    assert sha256(game / NAMES_NAME) == before[NAMES_NAME]
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["name_fix_enabled"] is False
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
 
 
 def test_compiled_tutorial_fix_is_recommended_independent_and_reversible(tmp_path: Path) -> None:
@@ -184,6 +219,57 @@ def test_compiled_tutorial_fix_is_recommended_independent_and_reversible(tmp_pat
     default = run_installer(game, tutorial_fix=None)
     assert default.returncode == 0, (default.stdout, default.stderr)
     assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["tutorial_fix_enabled"] is True
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_character_parchment_choice_is_recommended_and_reversible(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Character parchment option")
+    before = snapshot(game)
+    receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
+    ui_only_hash = "1BF4B4D8123A1218E35D8D44E16ADE55ED0BDDF1A03B109299A034092524FBFA"
+
+    enabled = run_installer(game, terrain_fix=False, scroll_fix=False, sprite_fix=False,
+                            tutorial_fix=False, parchment_fix=True, fast_moves_fix=False,
+                            battle_icon_fix=False)
+    assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
+    assert sha256(game / "Medieval_TW.exe") == ui_only_hash
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["parchment_fix_enabled"] is True
+
+    disabled = run_installer(game, terrain_fix=True, scroll_fix=False, sprite_fix=False,
+                             tutorial_fix=False, parchment_fix=False, fast_moves_fix=False,
+                             battle_icon_fix=False)
+    assert disabled.returncode == 0, (disabled.stdout, disabled.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["parchment_fix_enabled"] is False
+
+    default = run_installer(game, terrain_fix=False, scroll_fix=False, sprite_fix=False,
+                            tutorial_fix=False, parchment_fix=None, fast_moves_fix=False,
+                            battle_icon_fix=False)
+    assert default.returncode == 0, (default.stdout, default.stderr)
+    assert sha256(game / "Medieval_TW.exe") == ui_only_hash
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["parchment_fix_enabled"] is True
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
+def test_compiled_character_parchment_reinstalls_extended_executable(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Extended parchment reinstall")
+    before = snapshot(game)
+    options = dict(terrain_fix=True, scroll_fix=True, sprite_fix=True,
+                   tutorial_fix=False, parchment_fix=True,
+                   fast_moves_fix=False, battle_icon_fix=False)
+
+    first = run_installer(game, **options)
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    executable = game / "Medieval_TW.exe"
+    assert executable.stat().st_size == 0x4EB000
+    installed_hash = sha256(executable)
+
+    second = run_installer(game, **options)
+    assert second.returncode == 0, (second.stdout, second.stderr)
+    assert sha256(executable) == installed_hash
+
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before
 
@@ -283,7 +369,7 @@ def test_compiled_all_seven_independent_fix_combinations(tmp_path: Path) -> None
         assert receipt["scroll_fix_enabled"] is scroll
         assert receipt["sprite_fix_enabled"] is sprite
         assert receipt["sprite_delivery"] == "direct-exe"
-        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v5"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
         if installation_id is None:
             installation_id = receipt["installation_id"]
         assert receipt["installation_id"] == installation_id
@@ -307,7 +393,7 @@ def test_compiled_fast_computer_moves_is_independent_reversible_and_combines_wit
         assert result.returncode == 0, (result.stdout, result.stderr)
         receipt = json.loads((game / ".unofficial-medieval-total-war-patch" / "install-manifest.json")
                              .read_text(encoding="utf-8-sig"))
-        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v5"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
         assert receipt["fast_moves_fix_enabled"] is fast
         assert receipt["terrain_fix_enabled"] is terrain
         if installation_id is None:
@@ -452,6 +538,25 @@ def test_compiled_clean_install_and_uninstall(tmp_path: Path) -> None:
     assert_round_trip(game, snapshot(game))
 
 
+def test_compiled_character_data_fixes_share_one_transaction_and_restore_originals(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Character data")
+    before = snapshot(game)
+    installed = run_installer(game)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    assert sha256(game / HEROES_NAME) == FIXED_HEROES_HASH
+    assert sha256(game / NAMES_NAME) == FIXED_NAMES_HASH
+    receipt = json.loads((game / ".unofficial-medieval-total-war-patch/install-manifest.json")
+                         .read_text(encoding="utf-8-sig"))
+    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    for name in (HEROES_NAME, NAMES_NAME):
+        row = receipt["files"][name]
+        assert row["original_sha256"] == before[name]
+        assert row["installed_sha256"] == sha256(game / name)
+        assert sha256(game / ".unofficial-medieval-total-war-patch" / row["snapshot_relative"]) == before[name]
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+
+
 def test_compiled_reported_laa_install_repair_deselect_and_exact_uninstall(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Reported LAA game")
     original = reported_laa_executable()
@@ -526,7 +631,8 @@ def test_compiled_invalid_component_combinations_leave_game_untouched(tmp_path: 
     game = new_game(tmp_path, "Invalid component combinations")
     before = snapshot(game)
     for terrain, scroll, sprite in ((False, False, False),):
-        result = run_installer(game, terrain_fix=terrain, scroll_fix=scroll, sprite_fix=sprite)
+        result = run_installer(game, terrain_fix=terrain, scroll_fix=scroll, sprite_fix=sprite,
+                               name_fix=False)
         assert result.returncode == 2, (result.stdout, result.stderr)
         assert snapshot(game) == before
         assert read_registration(registration_name(game)) is None
@@ -572,7 +678,7 @@ def test_compiled_managed_repair_replaces_modified_config(tmp_path: Path) -> Non
     assert snapshot(game) == before_install
 
 
-def test_compiled_unmanaged_current_runtime_preserved_on_removal(tmp_path: Path) -> None:
+def test_compiled_receiptless_current_patch_runtime_archived_on_removal(tmp_path: Path) -> None:
     game = new_game(tmp_path, "Existing current runtime")
     for name in RUNTIME_NAMES:
         shutil.copy2(PAYLOAD / name, game / name)
@@ -581,11 +687,18 @@ def test_compiled_unmanaged_current_runtime_preserved_on_removal(tmp_path: Path)
     assert first.returncode == 0
     manifest_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
     first_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    assert first_receipt["preinstall_mode"] == "r202"
+    archive = Path(first_receipt["recovery_archive"])
+    assert archive.is_dir()
+    for name in RUNTIME_NAMES:
+        assert first_receipt["files"][name]["baseline_kind"] == "older-patch-archived"
+        assert sha256(archive / name) == before[name]
     second = run_installer(game)
     assert second.returncode == 0
     second_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     assert second_receipt["installation_id"] == first_receipt["installation_id"]
     assert second_receipt["repair_count"] == 1
+    assert second_receipt["recovery_archive"] == str(archive)
     installed_manifest = json.loads((PAYLOAD / "payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
     for name, expected in expected_runtime().items():
         assert second_receipt["files"][name]["installed_sha256"] == expected
@@ -593,9 +706,11 @@ def test_compiled_unmanaged_current_runtime_preserved_on_removal(tmp_path: Path)
     assert second_receipt["installer_sha256"] == sha256(game / DIST_INSTALLER.name)
     assert_runtime(game)
     assert run_uninstaller(game).returncode == 0
-    assert snapshot(game) == before
-    archives = list(game.glob(".medieval-recovery-*"))
-    assert not archives
+    after = snapshot(game)
+    assert all(after[name] is None for name in RUNTIME_NAMES)
+    assert all(after[name] == before[name] for name in before if name not in RUNTIME_NAMES)
+    assert list(game.glob(".medieval-recovery-*")) == [archive]
+    assert all(sha256(archive / name) == before[name] for name in RUNTIME_NAMES)
 
 
 def test_compiled_two_folders_have_independent_registrations(tmp_path: Path) -> None:

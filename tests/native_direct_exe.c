@@ -10,9 +10,10 @@ int main(int argc, char **argv) {
     size_t length;
     PatchContext context = {0};
     PatchError error = {0};
-    if ((argc != 5 && argc != 6) || (argv[2][0] != '0' && argv[2][0] != '1') ||
+    if ((argc != 5 && argc != 6 && argc != 7) || (argv[2][0] != '0' && argv[2][0] != '1') ||
         (argv[3][0] != '0' && argv[3][0] != '1') ||
-        (argc == 6 && argv[4][0] != '0' && argv[4][0] != '1')) return 2;
+        (argc >= 6 && argv[4][0] != '0' && argv[4][0] != '1') ||
+        (argc == 7 && argv[5][0] != '0' && argv[5][0] != '1')) return 2;
     input = fopen(argv[1], "rb");
     if (!input) return 3;
     if (fseek(input, 0, SEEK_END) || (size = ftell(input)) < 0 || fseek(input, 0, SEEK_SET)) return 4;
@@ -21,7 +22,8 @@ int main(int argc, char **argv) {
     fclose(input);
     if (!mtw_direct_exe_transform(&context, bytes, (size_t)size,
                                   argv[2][0] - '0', argv[3][0] - '0',
-                                  argc == 6 ? argv[4][0] - '0' : 0,
+                                  argc >= 6 ? argv[4][0] - '0' : 0,
+                                  argc == 7 ? argv[5][0] - '0' : 0,
                                   &result, &length, &error)) {
         fprintf(stderr, "%s: %s\n", error.code ? error.code : "unknown",
                 error.message ? error.message : "");

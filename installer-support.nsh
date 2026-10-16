@@ -388,6 +388,8 @@ Function ${PREFIX}WriteEngineRequest
     FileWriteUTF16LE $RequestHandle "scroll_fix=$ScrollSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "sprite_fix=$SpriteSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "tutorial_fix=$TutorialSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "parchment_fix=$ParchmentSelected$\r$\n"
+    FileWriteUTF16LE $RequestHandle "name_fix=$NameSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "fast_moves_fix=$FastSelected$\r$\n"
     FileWriteUTF16LE $RequestHandle "battle_icon_fix=$BattleIconSelected$\r$\n"
     ${If} ${Errors}
@@ -511,7 +513,7 @@ Function InstallWithAdministratorPermission
     ${EndIf}
     DetailPrint "Windows permission is needed to update an older patch entry."
     ; NSIS /D= must be last and unquoted, including paths with spaces.
-    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /TERRAINFIX=$TerrainSelected /SCROLLFIX=$ScrollSelected /SPRITEFIX=$SpriteSelected /TUTORIALFIX=$TutorialSelected /FASTMOVESFIX=$FastSelected /BATTLEICONFIX=$BattleIconSelected /D=$INSTDIR'
+    StrCpy $ElevationArguments '/S /REQUIREOWNER=$RequiredOwnerSid /LOGDIR="$LogDirectory\elevated" /TERRAINFIX=$TerrainSelected /SCROLLFIX=$ScrollSelected /SPRITEFIX=$SpriteSelected /TUTORIALFIX=$TutorialSelected /PARCHMENTFIX=$ParchmentSelected /NAMEFIX=$NameSelected /FASTMOVESFIX=$FastSelected /BATTLEICONFIX=$BattleIconSelected /D=$INSTDIR'
     StrLen $0 $ElevationArguments
     ${If} $0 >= 1023
         StrCpy $InstallError "The administrator command is too long. Close setup and use Run as administrator."

@@ -121,6 +121,8 @@ Var SpriteCheck
 Var SpriteSelected
 Var TutorialCheck
 Var TutorialSelected
+Var ParchmentCheck
+Var ParchmentSelected
 Var BattleIconCheck
 Var BattleIconSelected
 Var FastCheck
@@ -145,6 +147,8 @@ Var DiscordButton
 Var KofiBadgeImage
 Var DiscordBadgeImage
 Var FinishBadgeHoverState
+Var NameCheck
+Var NameSelected
 
 !include "installer-support.nsh"
 
@@ -160,6 +164,8 @@ Function .onInit
     SetOutPath "$PLUGINSDIR"
     File /oname=compatibility.bmp "${SOURCE_DIR}\assets\compatibility.bmp"
     File /oname=campaign-scrolling.bmp "${SOURCE_DIR}\assets\campaign-scrolling.bmp"
+    File /oname=character-parchment.bmp "${SOURCE_DIR}\assets\character-parchment.bmp"
+    File /oname=name-and-title.bmp "${SOURCE_DIR}\assets\name-and-title.bmp"
     File /oname=sprite-clipping.bmp "${SOURCE_DIR}\assets\sprite-clipping.bmp"
     File /oname=campaign-tutorial-resolution.bmp "${SOURCE_DIR}\assets\campaign-tutorial-resolution.bmp"
     File /oname=battle-unit-icons.bmp "${SOURCE_DIR}\assets\battle-unit-icons.bmp"
@@ -185,6 +191,8 @@ Function .onInit
     StrCpy $ScrollSelected "1"
     StrCpy $SpriteSelected "1"
     StrCpy $TutorialSelected "1"
+    StrCpy $ParchmentSelected "1"
+    StrCpy $NameSelected "1"
     StrCpy $BattleIconSelected "1"
     StrCpy $FastSelected "0"
     StrCpy $0 ""
@@ -235,6 +243,26 @@ Function .onInit
         StrCpy $TutorialSelected "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_tutorialfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/PARCHMENTFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $ParchmentSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $ParchmentSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_parchmentfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/NAMEFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $NameSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $NameSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_namefix_option value=$0"
         Call FailInstallation
     ${EndIf}
     StrCpy $0 ""
@@ -632,6 +660,20 @@ compatibilityInteractive:
         ${NSD_Check} $BattleIconCheck
     ${EndIf}
     ${NSD_OnClick} $BattleIconCheck PreviewBattleIcon
+    ${NSD_CreateCheckbox} 12 244 295 24 "${PRODUCT_PARCHMENT_COMPONENT_NAME}"
+    Pop $ParchmentCheck
+    !insertmacro SET_TAHOMA $ParchmentCheck $PatchPageFont
+    ${If} $ParchmentSelected == "1"
+        ${NSD_Check} $ParchmentCheck
+    ${EndIf}
+    ${NSD_OnClick} $ParchmentCheck PreviewParchment
+    ${NSD_CreateCheckbox} 12 274 295 24 "${PRODUCT_NAME_COMPONENT_NAME}"
+    Pop $NameCheck
+    !insertmacro SET_TAHOMA $NameCheck $PatchPageFont
+    ${If} $NameSelected == "1"
+        ${NSD_Check} $NameCheck
+    ${EndIf}
+    ${NSD_OnClick} $NameCheck PreviewName
     ${NSD_CreateGroupBox} 0 338 320 154 "Optional"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
@@ -699,6 +741,18 @@ Function PreviewTutorial
     Call SetPreview
 FunctionEnd
 
+Function PreviewParchment
+    Pop $0
+    StrCpy $R0 "parchment"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewName
+    Pop $0
+    StrCpy $R0 "name"
+    Call SetPreview
+FunctionEnd
+
 Function PreviewFast
     Pop $0
     StrCpy $R0 "fast"
@@ -741,6 +795,8 @@ Function PreviewFromCursor
     !insertmacro CHECK_PREVIEW_HOVER $SpriteCheck "sprite"
     !insertmacro CHECK_PREVIEW_HOVER $TutorialCheck "tutorial"
     !insertmacro CHECK_PREVIEW_HOVER $BattleIconCheck "battle-icon"
+    !insertmacro CHECK_PREVIEW_HOVER $ParchmentCheck "parchment"
+    !insertmacro CHECK_PREVIEW_HOVER $NameCheck "name"
     !insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"
 FunctionEnd
 
@@ -755,7 +811,19 @@ Function SetPreview
         StrCpy $PreviewImage ""
     ${EndIf}
 
-    ${If} $R0 == "battle-icon"
+    ${If} $R0 == "parchment"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_PARCHMENT_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Restores the parchment background behind character attributes."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\character-parchment.bmp"
+    ${ElseIf} $R0 == "name"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_NAME_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Corrects incorrect character names and titles for the Sicilian and Welsh factions."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\name-and-title.bmp"
+    ${ElseIf} $R0 == "battle-icon"
         ${NSD_SetText} $PreviewTitle "${PRODUCT_BATTLE_ICON_COMPONENT_NAME}"
         ${NSD_SetText} $PreviewText "Fixes unit portraits disappearing from battle unit cards after Alt+Tab."
         ${NSD_SetText} $PreviewWarningText ""
@@ -793,7 +861,12 @@ Function SetPreview
         StrCpy $1 "$PLUGINSDIR\compatibility.bmp"
     ${EndIf}
 
-    ${NSD_SetImage} $PreviewBitmap "$1" $PreviewImage
+    ${If} $1 == ""
+        ShowWindow $PreviewBitmap ${SW_HIDE}
+    ${Else}
+        ShowWindow $PreviewBitmap ${SW_SHOW}
+        ${NSD_SetImage} $PreviewBitmap "$1" $PreviewImage
+    ${EndIf}
 FunctionEnd
 
 Function BrowseTarget
@@ -827,6 +900,16 @@ Function CompatibilityPageBack
     StrCpy $TutorialSelected "0"
     ${If} $0 == ${BST_CHECKED}
         StrCpy $TutorialSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $ParchmentCheck $0
+    StrCpy $ParchmentSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ParchmentSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $NameCheck $0
+    StrCpy $NameSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $NameSelected "1"
     ${EndIf}
     ${NSD_GetState} $BattleIconCheck $0
     StrCpy $BattleIconSelected "0"
@@ -864,6 +947,16 @@ Function CompatibilityPageLeave
     ${If} $0 == ${BST_CHECKED}
         StrCpy $TutorialSelected "1"
     ${EndIf}
+    ${NSD_GetState} $ParchmentCheck $0
+    StrCpy $ParchmentSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ParchmentSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $NameCheck $0
+    StrCpy $NameSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $NameSelected "1"
+    ${EndIf}
     ${NSD_GetState} $BattleIconCheck $0
     StrCpy $BattleIconSelected "0"
     ${If} $0 == ${BST_CHECKED}
@@ -878,6 +971,8 @@ Function CompatibilityPageLeave
     ${AndIf} $ScrollSelected != "1"
     ${AndIf} $SpriteSelected != "1"
     ${AndIf} $TutorialSelected != "1"
+    ${AndIf} $ParchmentSelected != "1"
+    ${AndIf} $NameSelected != "1"
     ${AndIf} $BattleIconSelected != "1"
     ${AndIf} $FastSelected != "1"
         MessageBox MB_OK|MB_ICONEXCLAMATION "Select at least one fix to continue."
@@ -991,6 +1086,10 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $LogLine "sprite_clipping_fix_selected=$SpriteSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "campaign_tutorial_resolution_fix_selected=$TutorialSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "character_parchment_fix_selected=$ParchmentSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "name_and_title_corrections_selected=$NameSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "fast_computer_moves_option_selected=$FastSelected"
     Call WriteDiagnostic

@@ -204,6 +204,38 @@ def test_tutorial_resolution_is_a_recommended_independent_choice() -> None:
     assert 'File /oname=campaign-tutorial-resolution.bmp' in text
 
 
+def test_character_parchment_is_a_recommended_independent_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["parchment_component_name"] == "Character Parchment Fix"
+    assert 'StrCpy $ParchmentSelected "1"' in text
+    assert '${NSD_CreateCheckbox} 12 244 295 24 "${PRODUCT_PARCHMENT_COMPONENT_NAME}"' in text
+    assert '"/PARCHMENTFIX="' in text
+    assert 'parchment_fix=$ParchmentSelected' in text
+    assert 'StrCpy $ParchmentSelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
+    assert '${NSD_GetState} $ParchmentCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $ParchmentCheck "parchment"' in text
+    assert 'Character Parchment Fix' in (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def test_name_corrections_are_a_separate_recommended_choice_and_parchment_has_preview() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    assert product["name_component_name"] == "Name and Title Fix"
+    assert 'Sicilian and English name corrections are included with any selected fix' not in text
+    assert '${NSD_CreateCheckbox} 12 274 295 24 "${PRODUCT_NAME_COMPONENT_NAME}"' in text
+    assert '${NSD_GetState} $NameCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $NameCheck "name"' in text
+    assert 'name_fix=$NameSelected' in (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
+    assert '/NAMEFIX=$NameSelected' in (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
+    assert 'File /oname=character-parchment.bmp' in text
+    assert 'StrCpy $1 "$PLUGINSDIR\\character-parchment.bmp"' in text
+    assert 'Restores the parchment background behind character attributes.' in text
+    assert 'File /oname=name-and-title.bmp' in text
+    assert 'StrCpy $1 "$PLUGINSDIR\\name-and-title.bmp"' in text
+    assert 'Corrects incorrect character names and titles for the Sicilian and Welsh factions.' in text
+
+
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:
     text = script_text()
     assert '--request "$NativeDirectory\\request.ini"' in text

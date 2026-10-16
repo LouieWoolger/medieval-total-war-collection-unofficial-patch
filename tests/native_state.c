@@ -366,6 +366,12 @@ int wmain(int argc, wchar_t **argv) {
               "R197 proxy remains identifiable for upgrade");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_TERRAIN_FAST_PROXY_HASH)),
               "R200 Terrain and Fast proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R202_TERRAIN_ICON_HASH), "r202"),
+              "R202 proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R201_TERRAIN_ICON_HASH)),
+              "Released R201 proxy cannot become a clean original baseline");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R202_TERRAIN_ICON_HASH)),
+              "R202 proxy cannot become a clean original baseline");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;
@@ -374,6 +380,21 @@ int wmain(int argc, wchar_t **argv) {
         decision = medieval_baseline_decision("D3D9.dll", &current, "r185", current.sha256);
         check(!decision.preserve_current && decision.archive_current,
               "older patched runtime cannot become clean original");
+        strcpy(current.sha256, MEDIEVAL_R201_TERRAIN_ICON_HASH);
+        decision = medieval_baseline_decision("D3D9.dll", &current,
+                                             medieval_known_d3d9_mode(current.sha256),
+                                             MEDIEVAL_R202_TERRAIN_ICON_HASH);
+        check(!decision.preserve_current && decision.archive_current &&
+              !strcmp(decision.baseline_kind, "older-patch-archived"),
+              "released R201 proxy with lost receipt is archived rather than restored");
+        strcpy(current.sha256, MEDIEVAL_R202_TERRAIN_ICON_HASH);
+        decision = medieval_baseline_decision("D3D9.dll", &current,
+                                             medieval_known_d3d9_mode(current.sha256),
+                                             MEDIEVAL_R202_TERRAIN_ICON_HASH);
+        check(!decision.preserve_current && decision.archive_current &&
+              !strcmp(decision.baseline_kind, "older-patch-archived"),
+              "current R202 proxy with lost receipt is archived rather than restored");
+        memset(current.sha256, 'A', 64);
         decision = medieval_baseline_decision("dgVoodoo.conf", &current, "r185", "BBBB");
         check(decision.preserve_current && decision.archive_current,
               "personal configuration preserved and archived");

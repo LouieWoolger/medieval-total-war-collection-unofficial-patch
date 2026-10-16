@@ -103,12 +103,12 @@ try {
         $reports[$entry.Name] = $destination
     }
     $selection = Get-GameTestSelection
-    $reports['sprite_exe'] = Invoke-PytestStage 'sprite_exe' @('tests/test_sprite_exe_patch.py')
+    $reports['sprite_exe'] = Invoke-PytestStage 'sprite_exe' @('tests/test_sprite_exe_patch.py','tests/test_ui_exe_patch.py')
     [xml]$spriteSuite = Get-Content -LiteralPath $reports['sprite_exe'] -Raw -Encoding UTF8
     $spriteCounts = $spriteSuite.testsuites.testsuite
-    # pytest counts unittest subtests in the suite total, while JUnit emits one
-    # testcase element per method. Require all four methods and no failed subtests.
-    if (@($spriteCounts.testcase).Count -ne 4 -or [int]$spriteCounts.tests -lt 4 -or
+    # pytest counts Sprite unittest subtests in the suite total, while JUnit
+    # emits one testcase per method. Require four Sprite and four UI cases.
+    if (@($spriteCounts.testcase).Count -ne 8 -or [int]$spriteCounts.tests -lt 8 -or
         [int]$spriteCounts.skipped -ne 0 -or
         [int]$spriteCounts.failures -ne 0 -or [int]$spriteCounts.errors -ne 0) {
         throw 'The exact-binary Sprite EXE tests must run without skips or failures.'

@@ -49,6 +49,7 @@ static inline int mtw_verify_runtime(MedievalEngine *m, size_t file_count, Patch
     size_t i;
     for (i = 0; i < file_count; ++i) {
         PatchFileRecord actual;
+        if (i >= 7u && !m->options.name_fix) continue;
         MTW_TRY(mtw_relative_record(m, medieval_payload_names[i], &actual, e));
         if (!patch_record_equal(&actual, &m->payload_records[i]))
             return mtw_fail(m, e, "verification_failed", "Installed runtime verification failed for %s.", medieval_payload_names[i]);
@@ -275,9 +276,12 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     unsigned char *rebased_original_bytes = NULL;
     size_t rebased_original_length = 0;
     int retire_originals[MEDIEVAL_FILE_COUNT] = {0}, retire_legacy = 0, repair = previous != NULL;
+    int prior_name_data = repair && !previous->legacy && !previous->old_v2 &&
+                          !previous->old_v3 && !previous->old_v4 && !previous->old_v5 &&
+                          (previous->name_fix_enabled || m->options.name_fix);
     const char *mode;
     char id[37], utc[32], relative[192], name[160];
-    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 6, 4, 2, 1, 3, 0};
+    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 6, 7, 8, 4, 2, 1, 3, 0};
     MTW_TRY(mtw_observe(m, e));
     if (repair && !m->options.terrain_fix)
         for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i)
@@ -301,6 +305,8 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             mtw_boolean(d, receipt, "scroll_fix_enabled", m->options.scroll_fix, e) &&
             mtw_boolean(d, receipt, "sprite_fix_enabled", m->options.sprite_fix, e) &&
             mtw_boolean(d, receipt, "tutorial_fix_enabled", m->options.tutorial_fix, e) &&
+            mtw_boolean(d, receipt, "parchment_fix_enabled", m->options.parchment_fix, e) &&
+            mtw_boolean(d, receipt, "name_fix_enabled", m->options.name_fix, e) &&
             mtw_boolean(d, receipt, "fast_moves_fix_enabled", m->options.fast_moves_fix, e) &&
             mtw_boolean(d, receipt, "battle_icon_fix_enabled", m->options.battle_icon_fix, e) &&
             mtw_text(d, receipt, "sprite_delivery", "direct-exe", e));
@@ -406,7 +412,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             !mtw_exe_variant_from_hash(current_exe.sha256, (size_t)current_exe.length, &current_variant))
             return mtw_fail(m, e, "unsupported_executable", "The current EXE is not an exact supported state.");
         if (!repair || previous->legacy || previous->old_v2) {
-            if (current_variant.scroll || current_variant.sprite || current_variant.tutorial)
+            if (current_variant.scroll || current_variant.sprite || current_variant.tutorial || current_variant.ui)
                 return mtw_fail(m, e, "unsupported_executable",
                                 "A direct-fix EXE without a matching receipt cannot be adopted as an original.");
             original_exe_record = current_exe;
@@ -444,7 +450,8 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
                                current_variant.laa &&
                                current_variant.scroll == prior_installed_variant.scroll &&
                                current_variant.sprite == prior_installed_variant.sprite &&
-                               current_variant.tutorial == prior_installed_variant.tutorial;
+                               current_variant.tutorial == prior_installed_variant.tutorial &&
+                               current_variant.ui == prior_installed_variant.ui;
                 if (!eligible)
                     return mtw_fail(m, e, "unsupported_executable",
                                     "The managed EXE changed beyond a supported LAA toggle. No files were changed.");
@@ -468,24 +475,26 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
                         mtw_archive_source(m, sources, &count, "pre-laa-original-Medieval_TW.exe",
                                            MEDIEVAL_STATE_NAME "/originals/Medieval_TW.exe", e));
             }
-            if (original_variant.scroll || original_variant.sprite || original_variant.tutorial)
+            if (original_variant.scroll || original_variant.sprite || original_variant.tutorial || original_variant.ui)
                 return mtw_fail(m, e, "unsupported_executable",
                                 "The managed original EXE is not a supported stock state.");
         }
-        if (!m->options.scroll_fix && !m->options.sprite_fix && !m->options.tutorial_fix)
+        if (!m->options.scroll_fix && !m->options.sprite_fix && !m->options.tutorial_fix && !m->options.parchment_fix)
             m->payload_records[5] = original_exe_record;
         else if (current_variant.scroll == m->options.scroll_fix &&
                  current_variant.sprite == m->options.sprite_fix &&
                  current_variant.tutorial == m->options.tutorial_fix &&
+                 current_variant.ui == m->options.parchment_fix &&
                  current_variant.laa == original_variant.laa)
             m->payload_records[5] = current_exe;
         else {
-            wanted_exe = mtw_exe_variant_for_options(
+            wanted_exe = mtw_exe_variant_for_options_ui(
                 (unsigned int)m->options.scroll_fix,
                 (unsigned int)m->options.sprite_fix,
                 (unsigned int)m->options.tutorial_fix,
                 original_variant.laa,
-                original_variant.laa ? "recompute" : "base");
+                original_variant.laa ? "recompute" : "base",
+                (unsigned int)m->options.parchment_fix);
             if (!wanted_exe)
                 return mtw_fail(m, e, "invalid_payload", "The desired EXE identity is unavailable.");
             m->payload_records[5].exists = 1;
@@ -538,7 +547,80 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         MTW_TRY(mtw_text(d, locale_rec, "installed_sha256", m->payload_records[6].sha256, e) &&
                 mtw_number(d, locale_rec, "installed_length", (int64_t)m->payload_records[6].length, e));
     }
+    /* Keep one original per whole data file. The two NAMES.TXT corrections
+       share a single receipt row, staged output and removal action. */
+    for (i = 7u; i < MEDIEVAL_FILE_COUNT; ++i) {
+        PatchFileRecord current, reserved, baseline;
+        JsonValue *rec = json_get(files, medieval_payload_names[i]);
+        wchar_t *live = mtw_live(m, medieval_payload_names[i], e);
+        char *before = NULL;
+        unsigned char *checked = NULL;
+        size_t before_length = 0, checked_length = 0;
+        const char *basename = i == 7u ? "DEFAULT_HEROES.TXT" : "NAMES.TXT";
+        int prior_data = prior_name_data;
+        MTW_TRY(live && mtw_record(m, live, &current, e));
+        if (!current.exists)
+            return mtw_fail(m, e, "unsupported_data", "Required %s is missing. Restore the original game file before installing; no character data was changed.", medieval_payload_names[i]);
+        baseline = prior_data ? previous->files[i].original : current;
+        if (m->options.name_fix &&
+            (!mtw_game_data_supported_record(&baseline, i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES) ||
+             current.length > MTW_NAMES_FIXED_SIZE))
+            return mtw_fail(m, e, "unsupported_data", "Name corrections require an exact supported original %s. Preserve this file and review any game-data mod before retrying.", medieval_payload_names[i]);
+        /* Validate the live supported input before creating an archive. An
+           unselected name component leaves arbitrary existing text alone. */
+        if (m->options.name_fix &&
+            (!patch_file_read(&m->guard, live, MTW_NAMES_FIXED_SIZE,
+                              &m->memory, &before, &before_length, e) ||
+             !mtw_game_data_transform(&m->memory, (const unsigned char *)before,
+                                      before_length, i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES,
+                                      &checked, &checked_length, e))) {
+            patch_context_free(&m->memory, before);
+            return 0;
+        }
+        patch_context_free(&m->memory, before);
+        patch_context_free(&m->memory, checked);
+        if (prior_data) {
+            const MedievalFileState *prior = &previous->files[i];
+            if (!patch_record_equal(&current, &prior->installed) &&
+                !patch_record_equal(&current, &prior->original)) {
+                snprintf(name, sizeof name, "changed-%s", basename);
+                MTW_TRY(mtw_archive_source(m, sources, &count, name, medieval_payload_names[i], e));
+            }
+        } else {
+            rec = json_new(d, JSON_OBJECT, e);
+            snprintf(relative, sizeof relative, "originals/%s", basename);
+            MTW_TRY(rec && mtw_boolean(d, rec, "existed", 1, e) &&
+                    mtw_text(d, rec, "original_sha256", current.sha256, e) &&
+                    mtw_number(d, rec, "original_length", (int64_t)current.length, e) &&
+                    mtw_text(d, rec, "snapshot_relative", relative, e) &&
+                    json_set(d, rec, "sidecar_relative", json_new(d, JSON_NULL, e), e) &&
+                    mtw_boolean(d, rec, "sidecar_created", 0, e) &&
+                    mtw_text(d, rec, "baseline_kind", "preserved-character-data", e) &&
+                    json_set(d, files, medieval_payload_names[i], rec, e));
+            original_sources[i] = live;
+            snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", basename);
+            MTW_TRY(mtw_relative_record(m, relative, &reserved, e));
+            if (reserved.exists) {
+                snprintf(name, sizeof name, "previous-state-%s", basename);
+                MTW_TRY(mtw_archive_source(m, sources, &count, name, relative, e));
+            }
+        }
+        m->payload_records[i] = baseline;
+        if (m->options.name_fix) {
+            m->payload_records[i].length = i == 7u ? MTW_HEROES_FIXED_SIZE : MTW_NAMES_FIXED_SIZE;
+            memcpy(m->payload_records[i].sha256,
+                   i == 7u ? MTW_HEROES_FIXED_SHA256 : MTW_NAMES_FIXED_SHA256, 65);
+        }
+        MTW_TRY(mtw_text(d, rec, "installed_sha256", m->payload_records[i].sha256, e) &&
+                mtw_number(d, rec, "installed_length", (int64_t)m->payload_records[i].length, e));
+    }
     MTW_TRY(mtw_archive(m, sources, count, "Installation migration or changed managed files", e) && mtw_fault(m, "after-preservation", e));
+    /* A repair that creates no new archive must keep the previous archive
+       discoverable in the receipt and result. The archive itself is retained. */
+    if (repair && !m->recovery_archive) {
+        const char *prior_archive = mtw_s(previous->json, "recovery_archive");
+        if (*prior_archive) m->recovery_archive = (char *)prior_archive;
+    }
     mtw_utc(utc);
     MTW_TRY(mtw_text(d, receipt, "completed_utc", utc, e) && mtw_text(d, receipt, "recovery_archive", m->recovery_archive ? m->recovery_archive : "", e) &&
             json_seal(d, receipt, e) && medieval_receipt_validate(d, receipt, &m->identity, 0, &typed, e) &&
@@ -554,6 +636,8 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         i = original_order[k];
         if (!original_sources[i]) continue;
         if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
+        else if (i == 7u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_HEROES.TXT");
+        else if (i == 8u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/NAMES.TXT");
         else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
         MTW_INSTALL(mtw_transaction_add_file(m, &t, relative, original_sources[i], e));
     }
@@ -584,18 +668,22 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         PatchFileRecord staged;
         wchar_t *live_exe = mtw_live(m, "Medieval_TW.exe", e);
         wchar_t *next_exe = mtw_path(m, t.directory, "next-exe.bin", e);
-        if (!m->options.scroll_fix && !m->options.sprite_fix && !m->options.tutorial_fix) {
+        if (!m->options.scroll_fix && !m->options.sprite_fix && !m->options.tutorial_fix && !m->options.parchment_fix) {
             wchar_t *original_exe = original_sources[5] ? original_sources[5] :
                 mtw_path(m, m->state, typed.files[5].snapshot_relative, e);
             MTW_INSTALL(original_exe && mtw_fault(m, "before-stage-exe", e) &&
                         mtw_transaction_add_file(m, &t, "Medieval_TW.exe", original_exe, e));
         } else {
             MTW_INSTALL(live_exe && next_exe &&
-                        patch_file_read(&m->guard, live_exe, MTW_SCROLL_SPRITE_SIZE,
+                        /* The UI hook appends one PE section page to the
+                           largest Scroll+Sprite variant. Bound rereads to
+                           that exact supported maximum for reinstall. */
+                        patch_file_read(&m->guard, live_exe, MTW_SCROLL_SPRITE_SIZE + MTW_UI_PAGE,
                                         &m->memory, &before_bytes, &before_length, e) &&
                         mtw_direct_exe_transform(&m->memory, (const unsigned char *)before_bytes,
                                                   before_length, m->options.scroll_fix,
                                                   m->options.sprite_fix, m->options.tutorial_fix,
+                                                  m->options.parchment_fix,
                                                   &next_bytes, &next_length, e) &&
                         mtw_fault(m, "before-stage-exe", e) &&
                         patch_file_write_new(&m->guard, next_exe, next_bytes, next_length, e) &&
@@ -604,7 +692,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         raw = json_get(json_get(t.json, "actions")->last, "after");
         MTW_INSTALL(medieval_file_record(raw, &staged, e) &&
                     patch_record_equal(&staged, &typed.files[5].installed));
-        if (m->options.scroll_fix || m->options.sprite_fix || m->options.tutorial_fix)
+        if (m->options.scroll_fix || m->options.sprite_fix || m->options.tutorial_fix || m->options.parchment_fix)
             MTW_INSTALL(mtw_record(m, next_exe, &staged, e) &&
                         patch_file_remove(&m->guard, next_exe, &staged, e));
         patch_context_free(&m->memory, before_bytes);
@@ -649,6 +737,44 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             MTW_INSTALL(mtw_record(m, source, &staged, e) &&
                         patch_file_remove(&m->guard, source, &staged, e));
         }
+    }
+    for (i = 7u; i < MEDIEVAL_FILE_COUNT; ++i) {
+        PatchFileRecord staged;
+        char *before = NULL;
+        unsigned char *next = NULL;
+        size_t before_length = 0, next_length = 0;
+        wchar_t *live = mtw_live(m, medieval_payload_names[i], e);
+        wchar_t *staged_path = mtw_path(m, t.directory,
+                                        i == 7u ? "next-default-heroes.bin" : "next-names.bin", e);
+        if (!m->options.name_fix) {
+            /* Data files become unmanaged when this component is off. On an
+               upgrade from a selected receipt, restore the prior original in
+               a separate action before emitting the v7 deselected receipt. */
+            if (prior_name_data) {
+                wchar_t *source = mtw_path(m, m->state, previous->files[i].snapshot_relative, e);
+                MTW_INSTALL(source && mtw_transaction_add_file(m, &t, medieval_payload_names[i], source, e));
+                raw = json_get(json_get(t.json, "actions")->last, "after");
+                MTW_INSTALL(medieval_file_record(raw, &staged, e) &&
+                            patch_record_equal(&staged, &typed.files[i].installed));
+            }
+            continue;
+        }
+        MTW_INSTALL(live && staged_path &&
+                    patch_file_read(&m->guard, live, MTW_NAMES_FIXED_SIZE,
+                                    &m->memory, &before, &before_length, e) &&
+                    mtw_game_data_transform(&m->memory, (const unsigned char *)before,
+                                            before_length,
+                                            i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES,
+                                            &next, &next_length, e) &&
+                    patch_file_write_new(&m->guard, staged_path, next, next_length, e) &&
+                    mtw_transaction_add_file(m, &t, medieval_payload_names[i], staged_path, e));
+        raw = json_get(json_get(t.json, "actions")->last, "after");
+        MTW_INSTALL(medieval_file_record(raw, &staged, e) &&
+                    patch_record_equal(&staged, &typed.files[i].installed) &&
+                    mtw_record(m, staged_path, &staged, e) &&
+                    patch_file_remove(&m->guard, staged_path, &staged, e));
+        patch_context_free(&m->memory, before);
+        patch_context_free(&m->memory, next);
     }
     MTW_INSTALL(mtw_fault(m, "before-stage-uninstaller", e) && mtw_transaction_add_file(m, &t, MEDIEVAL_UNINSTALL_NAME, m->options.uninstaller, e));
     raw = json_get(json_get(t.json, "actions")->last, "after");
@@ -849,6 +975,7 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
             medieval_registry_ownership(&m->identity, &registry, receipt->installation_id, e));
     for (i = 0; i < medieval_receipt_file_count(receipt); ++i) {
         const MedievalFileState *f = &receipt->files[i];
+        if (i >= 7u && !receipt->name_fix_enabled && !receipt->old_v6) continue;
         MTW_TRY(mtw_relative_record(m, f->name, &current, e));
         if (i == 5u && current.exists &&
             strcmp(current.sha256, f->installed.sha256) &&
@@ -866,7 +993,9 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
         if (current.exists && strcmp(current.sha256, f->installed.sha256) &&
             (!f->original.exists || strcmp(current.sha256, f->original.sha256)))
             MTW_TRY(mtw_archive_source(m, sources, &count,
-                                       i == 6u ? "changed-CHANGES.TXT" : f->name,
+                                       i == 6u ? "changed-CHANGES.TXT" :
+                                       i == 7u ? "changed-DEFAULT_HEROES.TXT" :
+                                       i == 8u ? "changed-NAMES.TXT" : f->name,
                                        f->name, e));
     }
     uninstaller = mtw_live(m, MEDIEVAL_UNINSTALL_NAME, e);
@@ -880,6 +1009,7 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
     MTW_REMOVE(mtw_fault(m, "before-stage-originals", e));
     for (i = 0; i < medieval_receipt_file_count(receipt); ++i) {
         const MedievalFileState *f = &receipt->files[i];
+        if (i >= 7u && !receipt->name_fix_enabled && !receipt->old_v6) continue;
         wchar_t *source = f->original.exists ? mtw_path(m, m->state, f->snapshot_relative, e) : NULL;
         PatchFileRecord after;
         if (f->original.exists && !source) goto failed;
@@ -1082,7 +1212,7 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
             return mtw_fail(m, e, "invalid_payload", "Embedded payload verification failed for %s.", medieval_payload_names[i]);
         m->payload_records[i] = actual;
     }
-    desired_exe = mtw_exe_variant_for_options(
+    desired_exe = mtw_exe_variant_for_options_ui(
         (unsigned int)m->options.scroll_fix,
         (unsigned int)m->options.sprite_fix,
         (unsigned int)m->options.tutorial_fix,
@@ -1090,8 +1220,10 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
         exe_identity.laa ?
             (exe_identity.scroll == m->options.scroll_fix &&
              exe_identity.sprite == m->options.sprite_fix &&
-             exe_identity.tutorial == m->options.tutorial_fix ?
-                 exe_identity.checksum_style : "recompute") : "base");
+             exe_identity.tutorial == m->options.tutorial_fix &&
+             exe_identity.ui == m->options.parchment_fix ?
+                 exe_identity.checksum_style : "recompute") : "base",
+        (unsigned int)m->options.parchment_fix);
     if (!desired_exe)
         return mtw_fail(m, e, "invalid_payload", "The supported EXE identity table is incomplete.");
     m->payload_records[5].exists = 1;
@@ -1147,7 +1279,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
     m.options = *options; m.outcome = outcome; m.executable_pin = m.log_handle = INVALID_HANDLE_VALUE;
     if (!m.options.selection_provided) {
         m.options.terrain_fix = 1; m.options.sprite_fix = 1;
-        m.options.tutorial_fix = 1; m.options.battle_icon_fix = 1;
+        m.options.tutorial_fix = 1; m.options.parchment_fix = 1; m.options.name_fix = 1; m.options.battle_icon_fix = 1;
     }
     outcome->rollback = "not-needed"; outcome->restoration = "not-started"; outcome->exit_code = 2;
     if (!options->target || !*options->target || !options->payload || !*options->payload || !options->version ||
@@ -1157,7 +1289,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
     }
     if (mtw_is(options->operation, "Install") && !m.options.terrain_fix &&
         !m.options.scroll_fix && !m.options.sprite_fix &&
-        !m.options.tutorial_fix && !m.options.fast_moves_fix && !m.options.battle_icon_fix) {
+        !m.options.tutorial_fix && !m.options.parchment_fix && !m.options.name_fix && !m.options.fast_moves_fix && !m.options.battle_icon_fix) {
         mtw_fail(&m, e, "invalid_selection", "Select at least one fix before installing."); goto done;
     }
     m.warnings = json_new(&m.document, JSON_ARRAY, e);
@@ -1193,6 +1325,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
                 m.payload_records[verify_index] = receipt.files[verify_index].installed;
             if (!receipt.old_v2 &&
                 !medieval_boolean(receipt.json, "terrain_fix_enabled", &m.options.terrain_fix, e)) goto done;
+            m.options.name_fix = receipt.name_fix_enabled;
         }
         if (!mtw_verify_runtime(&m, present ? medieval_receipt_file_count(&receipt) : MEDIEVAL_FILE_COUNT, e) ||
             (present && !receipt.legacy && !mtw_verify_installed(&m, &receipt, e))) goto done;

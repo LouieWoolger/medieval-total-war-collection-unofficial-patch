@@ -38,6 +38,8 @@ Function un.onInit
     StrCpy $ScrollSelected "0"
     StrCpy $SpriteSelected "1"
     StrCpy $TutorialSelected "0"
+    StrCpy $ParchmentSelected "0"
+    StrCpy $NameSelected "0"
     StrCpy $FastSelected "0"
     StrCpy $BattleIconSelected "1"
     StrCpy $OperationName "removal"

@@ -12,6 +12,8 @@
   "scroll_component_name": "Campaign Map Scroll Fix",
   "sprite_component_name": "Pre-battle Screen Crash Fix",
   "tutorial_component_name": "Campaign Tutorial Resolution Fix",
+  "parchment_component_name": "Character Parchment Fix",
+  "name_component_name": "Name and Title Fix",
   "battle_icon_component_name": "Battle Unit Portrait Fix",
   "fast_component_name": "Fast Computer Moves Option",
   "discord_url": "https://discord.gg/zKbDADqWRC",

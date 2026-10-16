@@ -18,6 +18,14 @@ EXPECTED_ASSETS = {
         388854,
         "504DFA880F0C98A2E4BD7168C02A9237F89A70FCAAE08D70D364A42E214B5B6E",
     ),
+    "character-parchment.bmp": (
+        388854,
+        "B3E4A4E2EC0F1CA559D29AE79CD2D798291546BA5AE423E39D5DB800767D5149",
+    ),
+    "name-and-title.bmp": (
+        388854,
+        "4BD8309BE32D7CE3098A03A84BC0F9513B0A9BA7F03B4FBCE97D09BE6296F268",
+    ),
     "sprite-clipping.bmp": (
         388854,
         "945FF6E4CAF7974B4CF67875930152470ED1E93B8EAF47C927D68FC30626FA81",
@@ -86,6 +94,8 @@ def test_nsis_bitmaps_have_exact_dimensions_and_format() -> None:
         "welcome-finish.bmp": (164, 314),
         "compatibility.bmp": (480, 270),
         "campaign-scrolling.bmp": (480, 270),
+        "character-parchment.bmp": (480, 270),
+        "name-and-title.bmp": (480, 270),
         "sprite-clipping.bmp": (480, 270),
         "campaign-tutorial-resolution.bmp": (480, 270),
         "battle-unit-icons.bmp": (480, 270),

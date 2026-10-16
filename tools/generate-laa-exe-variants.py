@@ -18,6 +18,10 @@ SPRITE_SPEC = importlib.util.spec_from_file_location(
     "mtw_sprite_exe_patch", ROOT / "tools" / "build-sprite-exe-patch.py")
 SPRITE = importlib.util.module_from_spec(SPRITE_SPEC)
 SPRITE_SPEC.loader.exec_module(SPRITE)
+UI_SPEC = importlib.util.spec_from_file_location(
+    "mtw_ui_exe_patch", ROOT / "tools" / "build-ui-exe-patch.py")
+UI = importlib.util.module_from_spec(UI_SPEC)
+UI_SPEC.loader.exec_module(UI)
 pe_checksum = SPRITE.pe_checksum
 STYLES = ("base", "retain", "zero", "recompute")
 STATES = ((0, 0), (1, 0), (0, 1), (1, 1))
@@ -85,23 +89,40 @@ def build_variants(stock: bytes) -> dict[tuple[int, int, int, str], bytes]:
 
 
 def build_records(stock: bytes) -> list[dict]:
-    variants = build_variants(stock)
+    variants = build_ui_variants(stock)
     result = []
     for tutorial in (0, 1):
         for scroll, sprite in STATES:
-            base = variants[(scroll, sprite, tutorial, "base")]
-            _, checksum_offset, _, _ = pe_fields(base)
-            canonical_checksum = struct.unpack_from("<I", base, checksum_offset)[0]
-            for style in STYLES:
-                data = variants[(scroll, sprite, tutorial, style)]
-                _, _, image_size, _ = pe_fields(data)
-                result.append({
-                    "scroll": scroll, "sprite": sprite, "tutorial": tutorial, "style": style,
-                    "laa": int(style != "base"), "length": len(data),
-                    "image_size": image_size, "canonical_checksum": canonical_checksum,
-                    "checksum": struct.unpack_from("<I", data, checksum_offset)[0],
-                    "sha256": sha256(data),
-                })
+            for ui in (0, 1):
+                base = variants[(scroll, sprite, tutorial, "base", ui)]
+                _, checksum_offset, _, _ = pe_fields(base)
+                canonical_checksum = struct.unpack_from("<I", base, checksum_offset)[0]
+                for style in STYLES:
+                    data = variants[(scroll, sprite, tutorial, style, ui)]
+                    _, _, image_size, _ = pe_fields(data)
+                    result.append({
+                        "scroll": scroll, "sprite": sprite, "tutorial": tutorial,
+                        "ui": ui, "style": style,
+                        "laa": int(style != "base"), "length": len(data),
+                        "image_size": image_size, "canonical_checksum": canonical_checksum,
+                        "checksum": struct.unpack_from("<I", data, checksum_offset)[0],
+                        "sha256": sha256(data),
+                    })
+    return result
+
+
+def build_ui_variants(stock: bytes) -> dict[tuple[int, int, int, str, int], bytes]:
+    """Extend all 32 legacy exact states with independently selectable R-06."""
+    prior = build_variants(stock)
+    result = {}
+    for (scroll, sprite, tutorial, style), original in prior.items():
+        corrected = UI.add_ui(original, style)
+        if UI.strip_ui(corrected, struct.unpack_from("<I", original, 0xD8)[0], style) != original:
+            raise AssertionError("UI transform did not restore its original exact state")
+        result[(scroll, sprite, tutorial, style, 0)] = original
+        result[(scroll, sprite, tutorial, style, 1)] = corrected
+    if len({sha256(data) for data in result.values()}) != 64:
+        raise AssertionError("UI executable variants did not have unique exact identities")
     return result
 
 
@@ -121,6 +142,7 @@ def emit_header(records: list[dict]) -> str:
         "    unsigned char scroll;",
         "    unsigned char sprite;",
         "    unsigned char tutorial;",
+        "    unsigned char ui;",
         "    unsigned char laa;",
         "    const char *checksum_style;",
         "} MtwExeVariant;",
@@ -131,7 +153,7 @@ def emit_header(records: list[dict]) -> str:
             f'    {{"{rec["sha256"]}", {rec["length"]}u, '
             f'0x{rec["image_size"]:08X}u, 0x{rec["canonical_checksum"]:08X}u, '
             f'{rec["scroll"]}u, {rec["sprite"]}u, {rec["tutorial"]}u, '
-            f'{rec["laa"]}u, "{rec["style"]}"}},')
+            f'{rec["ui"]}u, {rec["laa"]}u, "{rec["style"]}"}},')
     lines += [
         "};",
         "static inline int mtw_exe_variant_from_hash(const char *sha256_hex,",
@@ -156,7 +178,7 @@ def emit_header(records: list[dict]) -> str:
         "    for (i = 0u; i < sizeof(mtw_exe_variants) / sizeof(mtw_exe_variants[0]); ++i) {",
         "        const MtwExeVariant *v = &mtw_exe_variants[i];",
         "        if (v->scroll == scroll && v->sprite == sprite &&",
-        "            v->tutorial == tutorial && v->laa == laa &&",
+        "            v->tutorial == tutorial && !v->ui && v->laa == laa &&",
         "            !strcmp(v->checksum_style, style)) return v;",
         "    }",
         "    return NULL;",
@@ -164,6 +186,19 @@ def emit_header(records: list[dict]) -> str:
         "static inline const MtwExeVariant *mtw_exe_variant_for_state(",
         "    unsigned int scroll, unsigned int sprite, unsigned int laa, const char *style) {",
         "    return mtw_exe_variant_for_options(scroll, sprite, 0u, laa, style);",
+        "}",
+        "static inline const MtwExeVariant *mtw_exe_variant_for_options_ui(",
+        "    unsigned int scroll, unsigned int sprite, unsigned int tutorial,",
+        "    unsigned int laa, const char *style, unsigned int ui) {",
+        "    size_t i;",
+        "    if (!style || ui > 1u) return NULL;",
+        "    for (i = 0u; i < sizeof(mtw_exe_variants) / sizeof(mtw_exe_variants[0]); ++i) {",
+        "        const MtwExeVariant *v = &mtw_exe_variants[i];",
+        "        if (v->scroll == scroll && v->sprite == sprite &&",
+        "            v->tutorial == tutorial && v->laa == laa && v->ui == ui &&",
+        "            !strcmp(v->checksum_style, style)) return v;",
+        "    }",
+        "    return NULL;",
         "}",
         "#endif",
     ]
@@ -181,7 +216,7 @@ def main() -> None:
     args.header.parent.mkdir(parents=True, exist_ok=True)
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
     args.header.write_text(emit_header(records), encoding="ascii", newline="\n")
-    args.manifest.write_text(json.dumps({"schema": "mtw-laa-exe-variants-v1",
+    args.manifest.write_text(json.dumps({"schema": "mtw-laa-ui-exe-variants-v2",
                                          "stock_sha256": sha256(stock),
                                          "variants": records}, indent=2) + "\n", encoding="utf-8")
 

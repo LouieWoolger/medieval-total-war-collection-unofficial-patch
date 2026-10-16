@@ -18,7 +18,7 @@
 typedef struct {
     const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
-    int terrain_fix, scroll_fix, sprite_fix, tutorial_fix, fast_moves_fix, battle_icon_fix, selection_provided;
+    int terrain_fix, scroll_fix, sprite_fix, tutorial_fix, parchment_fix, name_fix, fast_moves_fix, battle_icon_fix, selection_provided;
 } MedievalOptions;
 typedef struct {
     JsonDocument document;
@@ -48,7 +48,7 @@ typedef struct {
     wchar_t *state, *transaction_path;
     JsonValue *payload, *warnings;
     PatchFileRecord payload_records[MEDIEVAL_FILE_COUNT], receipt_record;
-    MedievalObservation observations[24];
+    MedievalObservation observations[3 * MEDIEVAL_FILE_COUNT + 3];
     size_t observation_count;
     char *recovery_archive;
 } MedievalEngine;
@@ -117,7 +117,21 @@ static inline int mtw_relative_record(MedievalEngine *m, const char *name, Patch
     return mtw_record(m, mtw_path(m, m->guard.canonical, name, e), r, e);
 }
 static inline int mtw_directory_exists(const wchar_t *p) {
-    DWORD a = p ? GetFileAttributesW(p) : INVALID_FILE_ATTRIBUTES;
+    PatchContext context = {0};
+    PatchError error = {0};
+    wchar_t *native = NULL;
+    DWORD a;
+    if (!p) return 0;
+    /* These paths can exceed MAX_PATH after the preparation suffix is added.
+       The guarded file layer already uses this native prefix. If allocation
+       fails, treat presence as uncertain so callers do not silently discard
+       a possible recovery directory. */
+    if (!patch_native_path(&context, p, &native, &error)) {
+        patch_context_close(&context);
+        return 1;
+    }
+    a = GetFileAttributesW(native);
+    patch_context_close(&context);
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 static inline int mtw_parent_create(MedievalEngine *m, const wchar_t *p, PatchError *e) {
@@ -216,9 +230,13 @@ static inline int mtw_observe(MedievalEngine *m, PatchError *e) {
         if (!kind) snprintf(relative, sizeof relative, "%s", medieval_payload_names[i]);
         else if (kind == 1) {
             if (i == 6u) strcpy(relative, "CHANGES.TXT.unofficial-patch.bak");
+            else if (i == 7u) strcpy(relative, "DEFAULT_HEROES.TXT.unofficial-patch.bak");
+            else if (i == 8u) strcpy(relative, "NAMES.TXT.unofficial-patch.bak");
             else snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
         } else {
             if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
+            else if (i == 7u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_HEROES.TXT");
+            else if (i == 8u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/NAMES.TXT");
             else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
         }
         o->path = mtw_live(m, relative, e);
@@ -387,6 +405,7 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
                                    const MedievalReceipt *retained, const char *status, PatchError *e) {
     size_t k;
     if (actual->old_v3 != retained->old_v3 || actual->old_v4 != retained->old_v4 ||
+        actual->old_v5 != retained->old_v5 || actual->old_v6 != retained->old_v6 ||
         medieval_receipt_file_count(actual) != medieval_receipt_file_count(retained) ||
         strcmp(actual->installation_id, retained->installation_id) || strcmp(actual->status, status) ||
         strcmp(actual->uninstaller_sha256, retained->uninstaller_sha256) ||
@@ -420,6 +439,22 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
             if (!medieval_boolean(actual->json, "tutorial_fix_enabled", &a, e) ||
                 !medieval_boolean(retained->json, "tutorial_fix_enabled", &b, e)) return 0;
             if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained tutorial selection.");
+        }
+        if (!!json_get(actual->json, "parchment_fix_enabled") !=
+            !!json_get(retained->json, "parchment_fix_enabled"))
+            return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained character parchment selection.");
+        if (json_get(actual->json, "parchment_fix_enabled")) {
+            if (!medieval_boolean(actual->json, "parchment_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "parchment_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained character parchment selection.");
+        }
+        if (!!json_get(actual->json, "name_fix_enabled") !=
+            !!json_get(retained->json, "name_fix_enabled"))
+            return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained name selection.");
+        if (json_get(actual->json, "name_fix_enabled")) {
+            if (!medieval_boolean(actual->json, "name_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "name_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained name selection.");
         }
         if (!!json_get(actual->json, "battle_icon_fix_enabled") !=
             !!json_get(retained->json, "battle_icon_fix_enabled"))
@@ -703,6 +738,62 @@ static inline int mtw_transaction_rollback(MedievalEngine *m, MedievalTransactio
             mtw_log(m, "rollback=verified", e) && mtw_fault(m, "rollback-after-restoration", e));
     return mtw_transaction_clear(m, t, e);
 }
+/* A preparation has no durable journal yet. Retire only copies recorded in
+   its in-memory actions, and leave unfamiliar or changed content in place. */
+static inline int mtw_transaction_clear_preparing(MedievalEngine *m, MedievalTransaction *t, PatchError *e) {
+    const JsonValue *actions = t->json ? json_get(t->json, "actions") : NULL, *action;
+    PatchFileRecord recorded, current;
+    wchar_t *path;
+    size_t index, side;
+    int unknown;
+    if (!t->directory || !mtw_directory_exists(t->directory)) return 1;
+    MTW_TRY(patch_guard_directory(&m->guard, t->directory, 0, e));
+    if (actions && actions->type != JSON_ARRAY)
+        return mtw_fail(m, e, "cleanup_pending", "Unpublished preparation metadata changed; its files were retained.");
+    for (action = actions ? actions->child : NULL, index = 0; action; action = action->next, ++index) {
+        if (strcmp(mtw_s(action, "kind"), "file")) continue;
+        for (side = 0; side < 2; ++side) {
+            MTW_TRY(medieval_file_record(json_get(action, side ? "after" : "before"), &recorded, e));
+            path = mtw_staged(m, t, side ? "after" : "before", index, e);
+            MTW_TRY(mtw_record(m, path, &current, e));
+            if (!patch_record_equal(&current, &recorded))
+                return mtw_fail(m, e, "cleanup_pending", "An unpublished transaction copy changed; it was retained.");
+        }
+    }
+    path = mtw_path(m, t->directory, "journal.json", e);
+    MTW_TRY(mtw_record(m, path, &current, e));
+    if (current.exists && !patch_record_equal(&current, &t->journal_record))
+        return mtw_fail(m, e, "cleanup_pending", "An unrecognized preparation journal was retained.");
+    for (action = actions ? actions->child : NULL, index = 0; action; action = action->next, ++index) {
+        if (strcmp(mtw_s(action, "kind"), "file")) continue;
+        for (side = 0; side < 2; ++side) {
+            MTW_TRY(medieval_file_record(json_get(action, side ? "after" : "before"), &recorded, e));
+            path = mtw_staged(m, t, side ? "after" : "before", index, e);
+            MTW_TRY(mtw_record(m, path, &current, e));
+            if (!patch_record_equal(&current, &recorded))
+                return mtw_fail(m, e, "cleanup_pending", "An unpublished transaction copy changed during cleanup; it was retained.");
+            if (current.exists) MTW_TRY(patch_file_remove(&m->guard, path, &current, e));
+        }
+    }
+    if (t->journal_record.exists) {
+        path = mtw_path(m, t->directory, "journal.json", e);
+        MTW_TRY(mtw_record(m, path, &current, e));
+        if (!patch_record_equal(&current, &t->journal_record))
+            return mtw_fail(m, e, "cleanup_pending", "The preparation journal changed during cleanup; it was retained.");
+        if (current.exists) MTW_TRY(patch_file_remove(&m->guard, path, &current, e));
+    }
+    MTW_TRY(mtw_remove_empty(m, mtw_path(m, t->directory, "before", e), e) &&
+            mtw_remove_empty(m, mtw_path(m, t->directory, "after", e), e) &&
+            mtw_unknown_children(m, t->directory, 0, &unknown, e));
+    if (unknown)
+        return mtw_fail(m, e, "cleanup_pending", "Unrecognized unpublished preparation content was retained.");
+    MTW_TRY(mtw_remove_empty(m, t->directory, e));
+    if (mtw_directory_exists(t->directory))
+        return mtw_fail(m, e, "cleanup_pending", "The empty preparation directory could not be retired.");
+    /* Retirement is complete even if a diagnostic log write later fails. */
+    (void)mtw_log(m, "preparation_cleanup=verified", e);
+    return 1;
+}
 static inline int mtw_transaction_failure(MedievalEngine *m, MedievalTransaction *t, PatchError *e) {
     /* A file-layer recovery_required means publication/retirement itself is
        uncertain. Stop here: retain the journal and the guard's named original
@@ -725,6 +816,17 @@ static inline int mtw_transaction_failure(MedievalEngine *m, MedievalTransaction
                      first[0] ? first : (e && e->message ? e->message : "Operation stopped."),
                      recovery.message ? recovery.message : "Recovery failed.");
         } else memcpy(m->outcome->detail, first, sizeof first);
+    } else if (!t->published && t->directory) {
+        PatchError cleanup = {0};
+        if (!mtw_transaction_clear_preparing(m, t, &cleanup)) {
+            char first[2048];
+            memcpy(first, m->outcome->detail, sizeof first);
+            m->outcome->rollback = "incomplete";
+            snprintf(m->outcome->detail, sizeof m->outcome->detail,
+                     "%.1200s Unpublished preparation content was retained in the game folder for review: %.500s",
+                     first[0] ? first : (e && e->message ? e->message : "Operation stopped."),
+                     cleanup.message ? cleanup.message : "Preparation cleanup failed.");
+        }
     }
     return 0;
 }

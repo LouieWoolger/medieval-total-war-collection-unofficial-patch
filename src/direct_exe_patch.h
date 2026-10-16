@@ -32,6 +32,8 @@ static inline uint32_t mtw_direct_checksum(const unsigned char *data, size_t len
     return (uint32_t)((sum & 0xFFFFULL) + length);
 }
 
+#include "ui_exe_patch.h"
+
 static inline int mtw_direct_strip_sprite(PatchContext *context,
                                            const unsigned char *source, size_t source_length,
                                            int scroll, unsigned char **result,
@@ -259,7 +261,7 @@ static inline int mtw_direct_exe_transform_base(PatchContext *context,
 /* Normalize a verified tutorial state to its exact old identity, run the
    established Scroll/Sprite transform, then apply the six-byte tutorial
    redirection. Every intermediate and final state has a pinned full hash. */
-static inline int mtw_direct_exe_transform(PatchContext *context,
+static inline int mtw_direct_exe_transform_legacy(PatchContext *context,
                                            const unsigned char *source, size_t source_length,
                                            int desired_scroll, int desired_sprite,
                                            int desired_tutorial,
@@ -390,6 +392,73 @@ failed:
     if (normalized) patch_context_free(context, normalized);
     if (transformed) patch_context_free(context, transformed);
     return 0;
+}
+
+/* R-06 is a final independent section transform. Normalize an incoming UI
+   state before the existing Scroll/Sprite/Tutorial/LAA machinery, then append
+   the selected UI state. Every intermediate and final byte image is pinned. */
+static inline int mtw_direct_exe_transform(PatchContext *context,
+                                           const unsigned char *source, size_t source_length,
+                                           int desired_scroll, int desired_sprite,
+                                           int desired_tutorial, int desired_ui,
+                                           unsigned char **result, size_t *result_length,
+                                           PatchError *error) {
+    MtwExeVariant source_variant, intermediate_variant;
+    const unsigned char *base = source;
+    unsigned char *stripped = NULL, *intermediate = NULL;
+    size_t base_length = source_length, intermediate_length = 0u;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0u;
+    if (!context || !source || !result || !result_length ||
+        (desired_ui != 0 && desired_ui != 1)) {
+        patch_error_set(error, "invalid_argument", "Invalid UI EXE transform arguments.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+        patch_error_set(error, "unsupported_executable", "The game EXE is not an exact supported state.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (source_variant.ui) {
+        if (!mtw_ui_strip(context, source, source_length, &source_variant,
+                          &stripped, &base_length, error)) return 0;
+        base = stripped;
+    }
+    if (!mtw_direct_exe_transform_legacy(context, base, base_length,
+                                         desired_scroll, desired_sprite,
+                                         desired_tutorial,
+                                         &intermediate, &intermediate_length, error)) {
+        if (stripped) patch_context_free(context, stripped);
+        return 0;
+    }
+    if (stripped) patch_context_free(context, stripped);
+    if (!desired_ui) {
+        *result = intermediate;
+        *result_length = intermediate_length;
+        return 1;
+    }
+    if (!patch_sha256_bytes(context, intermediate, intermediate_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, intermediate_length, &intermediate_variant) ||
+        intermediate_variant.ui) {
+        patch_error_set(error, "transform_mismatch", "The pre-UI executable is not pinned.", ERROR_INVALID_DATA);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_ui_add(context, intermediate, intermediate_length, &intermediate_variant,
+                    result, result_length, error)) {
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    patch_context_free(context, intermediate);
+    return 1;
 }
 
 /* Rebase a verified pre-patch stock snapshot after a user independently sets
