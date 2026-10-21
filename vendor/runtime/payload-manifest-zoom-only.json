@@ -1,0 +1,28 @@
+{
+  "schema": "unofficial-medieval-total-war-patch-payload-v1",
+  "component": "Persistent Campaign Zoom Option",
+  "runtime_identity": "R290-zoom-tooltip-zoom-only",
+  "dgvoodoo_version": "none",
+  "target_executable": {
+    "name": "Medieval_TW.exe",
+    "sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+  },
+  "files": {
+    "D3D9.dll": {
+      "length": 144896,
+      "sha256": "9C76E1241A1ABFBCB15AADE8CE74511F170FF9EA2754A9C23DE61B0DBE48A0BF",
+      "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
+    }
+  },
+  "locked_settings": null,
+  "forbidden_runtime_files": [
+    "D3D8.dll",
+    "Medieval.Cfg",
+    "Medieval_TW.exe",
+    "~tmp.vrp"
+  ],
+  "scroll_fix_enabled": false,
+  "sprite_fix_enabled": false,
+  "battle_icon_fix_enabled": false,
+  "zoom_fix_enabled": true
+}

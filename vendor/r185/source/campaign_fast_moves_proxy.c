@@ -3,22 +3,32 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d9.h>
+#include "credits_flash_fix.h"
 
 #ifndef MTW_ENABLE_FAST_MOVES
 #define MTW_ENABLE_FAST_MOVES 1
 #endif
+#ifndef MTW_ENABLE_ZOOM
+#define MTW_ENABLE_ZOOM 0
+#endif
 #ifndef MTW_ENABLE_BATTLE_ICON_FIX
 #define MTW_ENABLE_BATTLE_ICON_FIX 0
 #endif
-#if (MTW_ENABLE_FAST_MOVES != 0 && MTW_ENABLE_FAST_MOVES != 1) || \
-    (MTW_ENABLE_BATTLE_ICON_FIX != 0 && MTW_ENABLE_BATTLE_ICON_FIX != 1)
+#ifndef MTW_ENABLE_CREDITS_FLASH_FIX
+#define MTW_ENABLE_CREDITS_FLASH_FIX 0
+#endif
+#if (MTW_ENABLE_ZOOM != 0 && MTW_ENABLE_ZOOM != 1) || \
+    (MTW_ENABLE_FAST_MOVES != 0 && MTW_ENABLE_FAST_MOVES != 1) || \
+    (MTW_ENABLE_BATTLE_ICON_FIX != 0 && MTW_ENABLE_BATTLE_ICON_FIX != 1) || \
+    (MTW_ENABLE_CREDITS_FLASH_FIX != 0 && MTW_ENABLE_CREDITS_FLASH_FIX != 1)
 #error Feature-only proxy choices must be zero or one.
 #endif
-#if !MTW_ENABLE_FAST_MOVES && !MTW_ENABLE_BATTLE_ICON_FIX
+#if !MTW_ENABLE_FAST_MOVES && !MTW_ENABLE_ZOOM && !MTW_ENABLE_BATTLE_ICON_FIX && \
+    !MTW_ENABLE_CREDITS_FLASH_FIX
 #error Feature-only proxy must provide at least one selected fix.
 #endif
 
-#if MTW_ENABLE_FAST_MOVES
+#if MTW_ENABLE_FAST_MOVES || MTW_ENABLE_ZOOM
 int mtw_campaign_fast_moves_install(void);
 #endif
 #if MTW_ENABLE_BATTLE_ICON_FIX
@@ -44,7 +54,10 @@ IDirect3D9 *WINAPI Direct3DCreate9(UINT sdk_version) {
     }
     result = factory(sdk_version);
     if (result) {
-#if MTW_ENABLE_FAST_MOVES
+#if MTW_ENABLE_CREDITS_FLASH_FIX
+        (void)mtw_credits_flash_install_once();
+#endif
+#if MTW_ENABLE_FAST_MOVES || MTW_ENABLE_ZOOM
         (void)mtw_campaign_fast_moves_install();
 #endif
 #if MTW_ENABLE_BATTLE_ICON_FIX

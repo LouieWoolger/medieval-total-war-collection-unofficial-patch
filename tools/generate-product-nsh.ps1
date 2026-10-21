@@ -35,6 +35,10 @@ $defines = [ordered]@{
     PRODUCT_NAME_COMPONENT_NAME = [string]$product.name_component_name
     PRODUCT_BATTLE_ICON_COMPONENT_NAME = [string]$product.battle_icon_component_name
     PRODUCT_FAST_COMPONENT_NAME = [string]$product.fast_component_name
+    PRODUCT_ECONOMY_COMPONENT_NAME = [string]$product.economy_component_name
+    PRODUCT_KEY_COMPONENT_NAME = [string]$product.key_component_name
+    PRODUCT_ZOOM_COMPONENT_NAME = [string]$product.zoom_component_name
+    PRODUCT_CREDITS_COMPONENT_NAME = [string]$product.credits_component_name
     PRODUCT_DISCORD_URL = [string]$product.discord_url
     PRODUCT_KOFI_URL = [string]$product.kofi_url
 }

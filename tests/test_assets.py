@@ -42,6 +42,22 @@ EXPECTED_ASSETS = {
         388854,
         "223B10F33D0033FC91E395DD1D0E06397942F1C28A7CE32424EF68CAFDB679DE",
     ),
+    "unit-balance.bmp": (
+        388854,
+        "2533E2910CED21C1C1F26E6A228FCE9317EA45F9A02D96FCC7FDE4B87F281647",
+    ),
+    "campaign-zoom-option.bmp": (
+        388854,
+        "8D17FB8F0998961AC086E48398B8A5098EC8EF9E4FEE2EB65836F54298A941E9",
+    ),
+    "credits-illustration.bmp": (
+        388854,
+        "BBF16BFB77284E8CA03F4948C66681991AAD498961356BEBD13B743B4B959E7C",
+    ),
+    "keybinding-customisation.bmp": (
+        388854,
+        "48C8B3B9429C4C7E7E94C019E45ED2162C9246C174C55CF7D1AD1A3BDCACDFB1",
+    ),
     "discord-badge-hover.bmp": (
         11702,
         "73BCF5C4A9D130C40EE1AD1D0DE818137B27C18738D64DF46F65C33E318C252D",
@@ -100,6 +116,10 @@ def test_nsis_bitmaps_have_exact_dimensions_and_format() -> None:
         "campaign-tutorial-resolution.bmp": (480, 270),
         "battle-unit-icons.bmp": (480, 270),
         "fast-computer-moves.bmp": (480, 270),
+        "unit-balance.bmp": (480, 270),
+        "campaign-zoom-option.bmp": (480, 270),
+        "credits-illustration.bmp": (480, 270),
+        "keybinding-customisation.bmp": (480, 270),
         "discord-badge.bmp": (138, 28),
         "discord-badge-hover.bmp": (138, 28),
         "kofi-badge.bmp": (138, 28),

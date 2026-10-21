@@ -372,6 +372,25 @@ int wmain(int argc, wchar_t **argv) {
               "Released R201 proxy cannot become a clean original baseline");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R202_TERRAIN_ICON_HASH)),
               "R202 proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R288_TERRAIN_ICON_HASH),
+                      "r288-key-customisation"), "current Credits-off proxy classification");
+        check(!medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R288_TERRAIN_ICON_HASH)),
+              "current Credits-off proxy is not historical");
+        check(!strcmp(medieval_known_d3d9_mode(
+                          "AADC364E2C602B82586ED6328E6CA4DA40167E1F031F74941F462BEE68C046F2"),
+                      "r237-key-customisation"), "previous key proxy remains identifiable");
+        check(medieval_old_patch("r237-key-customisation"),
+              "previous key proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_credits_proxy_variants[0].sha256),
+                      "r290-credits"), "current Credits-on proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R289_ZOOM_ONLY_HASH),
+                      "r289-persistent-zoom"), "previous zoom proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R289_ZOOM_ONLY_HASH)),
+              "previous zoom proxy cannot become a clean original baseline");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_r289_credits_proxy_variants[8].sha256),
+                      "r289-credits-old"), "previous Credits-on proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_previous_credits_proxy_variants[0].sha256),
+                      "r287-credits"), "previous Credits-on proxy classification");
         check(!*medieval_known_d3d9_mode("unknown"), "unknown wrapper refused");
         current.exists = 1;
         current.length = 42;

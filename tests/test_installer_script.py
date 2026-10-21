@@ -14,6 +14,60 @@ def script_text() -> str:
         SCRIPT, ROOT / "installer-support.nsh", ROOT / "installer-uninstall.nsh"))
 
 
+def control_rect(text: str, kind: str, label: str) -> tuple[int, int, int, int]:
+    match = re.search(
+        rf'\$\{{NSD_Create{kind}\}}\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+"{re.escape(label)}"',
+        text,
+    )
+    assert match, f"Missing {kind} control: {label}"
+    return tuple(map(int, match.groups()))
+
+
+def test_patch_choices_fit_inside_their_group_borders() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    recommended = control_rect(text, "GroupBox", "Recommended")
+    optional = control_rect(text, "GroupBox", "Optional")
+    preview = control_rect(text, "GroupBox", "Preview")
+    assert recommended[1] + recommended[3] + 8 <= optional[1]
+    for group in (recommended, optional, preview):
+        assert group[1] + group[3] + 8 <= 500, "Group border extends into the page edge"
+
+    preview_block = re.search(
+        r'\$\{NSD_CreateGroupBox\}[^\n]*"Preview"(.*?)StrCpy \$PreviewImage',
+        text,
+        re.DOTALL,
+    )
+    assert preview_block
+    preview_children = re.findall(
+        r'\$\{NSD_Create(?:Bitmap|Label)\}\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+""',
+        preview_block.group(1),
+    )
+    assert len(preview_children) == 4
+    px, py, pw, ph = preview
+    for child in preview_children:
+        x, y, width, height = map(int, child)
+        assert px + 8 <= x and x + width + 8 <= px + pw
+        assert py + 8 <= y and y + height + 8 <= py + ph, "Preview content covers its border"
+
+    for group, labels in (
+        (recommended, (
+            "${PRODUCT_COMPONENT_NAME}", "${PRODUCT_SCROLL_COMPONENT_NAME}",
+            "${PRODUCT_SPRITE_COMPONENT_NAME}", "${PRODUCT_TUTORIAL_COMPONENT_NAME}",
+            "${PRODUCT_BATTLE_ICON_COMPONENT_NAME}", "${PRODUCT_PARCHMENT_COMPONENT_NAME}",
+            "${PRODUCT_NAME_COMPONENT_NAME}", "${PRODUCT_CREDITS_COMPONENT_NAME}",
+        )),
+        (optional, (
+            "${PRODUCT_FAST_COMPONENT_NAME}", "${PRODUCT_ZOOM_COMPONENT_NAME}",
+            "${PRODUCT_ECONOMY_COMPONENT_NAME}", "${PRODUCT_KEY_COMPONENT_NAME}",
+        )),
+    ):
+        gx, gy, gw, gh = group
+        for label in labels:
+            x, y, width, height = control_rect(text, "Checkbox", label)
+            assert gx < x and x + width < gx + gw, label
+            assert gy < y and y + height + 8 <= gy + gh, label
+
+
 def test_identity_is_centralized_and_unicode_mui2_metadata_is_complete() -> None:
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
     text = script_text()
@@ -69,6 +123,26 @@ def test_detection_uses_evidenced_gog_and_steam_paths_plus_manual_browse() -> No
     assert "libraryfolders.vdf" in text
     assert "Total War Medieval 1 Gold" in text
     assert "SHOGUN" not in "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";")).upper()
+
+
+def test_credits_and_key_choices_are_hydrated_from_validated_receipt_unless_explicit() -> None:
+    installer = SCRIPT.read_text(encoding="utf-8")
+    helper = (ROOT / "src/medieval_fix_patcher.c").read_text(encoding="utf-8")
+    lifecycle = (ROOT / "src/lifecycle.h").read_text(encoding="utf-8")
+    assert "Function HydrateSavedChoices" in installer
+    assert "Call DetectGamePath\n    ${EndIf}\n    Call HydrateSavedChoices" in installer
+    assert "${If} $CreditsExplicit == \"1\"" in installer
+    assert "${AndIf} $KeyExplicit == \"1\"" in installer
+    assert 'StrCpy $KeyExplicit "1"' in installer.split("Function PreviewKey", 1)[1].split("FunctionEnd", 1)[0]
+    assert 'credits_preference=0 key_preference=0' in installer
+    assert "error=saved_choices_inspect_failed" in installer
+    assert 'kernel32::GetFileAttributesW(w "$R0")' in installer
+    assert "Call HydrateSavedChoices" in installer.split("Function BrowseTarget", 1)[1].split("FunctionEnd", 1)[0]
+    assert "Call HydrateSavedChoices" in installer.split("Function CompatibilityPageLeave", 1)[1].split("FunctionEnd", 1)[0]
+    assert 'credits_preference=%d key_preference=%d' in helper
+    assert 'mtw_boolean(&m.document, result, "credits_flash_fix_enabled"' in lifecycle
+    assert 'mtw_boolean(&m.document, result, "key_fix_enabled"' in lifecycle
+    assert 'StrCpy $CreditsSelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
 
 
 def test_steam_detection_precedes_gog_across_registry_views() -> None:
@@ -176,7 +250,7 @@ def test_fast_computer_moves_is_an_independent_optional_choice() -> None:
     text = script_text()
     assert product["fast_component_name"] == "Fast Computer Moves Option"
     assert 'StrCpy $FastSelected "0"' in text
-    assert '${NSD_CreateCheckbox} 12 370 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"' in text
+    control_rect(text, "Checkbox", "${PRODUCT_FAST_COMPONENT_NAME}")
     assert '"/FASTMOVESFIX="' in text
     assert '${NSD_GetState} $FastCheck' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"' in text
@@ -202,6 +276,55 @@ def test_tutorial_resolution_is_a_recommended_independent_choice() -> None:
     assert '!insertmacro CHECK_PREVIEW_HOVER $TutorialCheck "tutorial"' in text
     assert '${NSD_SetText} $PreviewText "Fixes the campaign tutorial resetting your strategy map resolution to 800x600."' in text
     assert 'File /oname=campaign-tutorial-resolution.bmp' in text
+
+
+def test_unit_balance_is_an_optional_independent_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    support = (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
+    assert product["economy_component_name"] == "120-Man Unit Balance Fix"
+    assert 'StrCpy $EconomySelected "0"' in text
+    control_rect(text, "Checkbox", "${PRODUCT_ECONOMY_COMPONENT_NAME}")
+    assert '${NSD_GetState} $EconomyCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $EconomyCheck "economy"' in text
+    assert 'If you switch this option with paid orders in progress, cancelling them may refund a different amount.' not in text
+    assert 'Saved campaign orders may block removal' not in text
+    assert 'File /oname=unit-balance.bmp' in text
+    assert 'StrCpy $1 "$PLUGINSDIR\\unit-balance.bmp"' in text
+    assert 'economy_fix=$EconomySelected' in support
+    assert '/ECONOMYFIX=$EconomySelected' in support
+    assert 'StrCpy $EconomySelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
+
+
+def test_campaign_zoom_is_an_independent_optional_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    support = (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
+    assert product["zoom_component_name"] == "Persistent Campaign Zoom Option"
+    assert 'StrCpy $ZoomSelected "0"' in text
+    control_rect(text, "Checkbox", "${PRODUCT_ZOOM_COMPONENT_NAME}")
+    assert '${NSD_GetState} $ZoomCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $ZoomCheck "zoom"' in text
+    assert 'File /oname=campaign-zoom-option.bmp' in text
+    assert 'zoom_fix=$ZoomSelected' in support
+    assert '/ZOOMFIX=$ZoomSelected' in support
+    assert 'StrCpy $ZoomSelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
+
+
+def test_keybinding_customisation_is_an_independent_optional_choice() -> None:
+    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
+    text = script_text()
+    support = (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
+    assert product["key_component_name"] == "Extended Keybinding Support"
+    assert 'StrCpy $KeySelected "0"' in text
+    control_rect(text, "Checkbox", "${PRODUCT_KEY_COMPONENT_NAME}")
+    assert '${NSD_GetState} $KeyCheck' in text
+    assert '!insertmacro CHECK_PREVIEW_HOVER $KeyCheck "key"' in text
+    assert 'File /oname=keybinding-customisation.bmp' in text
+    assert 'StrCpy $1 "$PLUGINSDIR\\keybinding-customisation.bmp"' in text
+    assert 'key_fix=$KeySelected' in support
+    assert '/KEYFIX=$KeySelected' in support
+    assert 'StrCpy $KeySelected "0"' in (ROOT / "installer-uninstall.nsh").read_text(encoding="utf-8")
 
 
 def test_character_parchment_is_a_recommended_independent_choice() -> None:

@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R202-scroll-sprite-off-fast",
+  "runtime_identity": "R290-zoom-tooltip-scroll-sprite-off-fast",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 212992,
-      "sha256": "18ABF59CC3D739ADCEE0A54FFFDCC054877F44ED23ADDA104B45BD1E186B8BD2",
-      "provenance": "Source-built R202 PE32 proxy from vendor/r185/source with exact supported executable identity checks; independently selected battle unit icon recovery, Terrain Movement Fix and Fast Computer Moves hooks are enabled only in their named variant."
+      "length": 247296,
+      "sha256": "DE5269832BA4CA8BFED6FC2E6F8EEB2013A3926B71084336E39DE4F9D7F1EF7D",
+      "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

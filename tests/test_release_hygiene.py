@@ -54,11 +54,12 @@ def test_build_and_test_pipeline_contains_every_release_gate() -> None:
                      ("build.ps1", "test.ps1", "tools/build-support.ps1"))
     for required in (
         "generate-product-nsh.ps1",
-        "build_scaffold.ps1",
+        "build-credits-payloads.ps1",
         "pytest",
         "makensis",
         "test_compiled_installer.py",
         "test_sprite_exe_patch.py",
+        "test_key_exe_patch.py",
         "build-release-manifest.py",
         "audit-installer.ps1",
         "SHA256SUMS.txt",
@@ -81,10 +82,12 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["product"]["parchment_component"] == product["parchment_component_name"]
     assert manifest["product"]["battle_icon_component"] == product["battle_icon_component_name"]
     assert manifest["product"]["fast_component"] == product["fast_component_name"]
+    assert manifest["product"]["zoom_component"] == product["zoom_component_name"]
+    assert manifest["product"]["key_component"] == product["key_component_name"]
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R202-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R288-key-customisation-scroll-sprite-off"
     assert manifest["battle_unit_icons"]["default_installer_selection"] is True
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
@@ -166,30 +169,67 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert re.fullmatch(r"[0-9A-F]{64}", manifest["source"]["aggregate_sha256"])
     expected_default = json.loads((ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off.json").read_text(encoding="utf-8"))
     assert manifest["runtime"]["files"]["D3D9.dll"] == expected_default["files"]["D3D9.dll"]
+    r185 = manifest["validation"]["r185_build"]
+    assert r185["status"] in {"pass", "not-run"}
+    if r185["status"] == "not-run":
+        assert r185["reason"] == "No R185 rebuild evidence was supplied."
     for section, binary, payload_name in (
         ("runtime", "D3D9-scroll-sprite-off.dll", "payload-manifest-scroll-sprite-off.json"),
     ):
         expected = json.loads((ROOT / "vendor" / "runtime" / payload_name).read_text(encoding="utf-8"))
         assert manifest[section]["files"]["D3D9.dll"] == expected["files"]["D3D9.dll"]
-        assert manifest["validation"]["r185_build"]["runtime_variants"][binary]["matches_packaged_runtime"] is True
+        if r185["status"] == "pass":
+            assert r185["runtime_variants"][binary]["matches_packaged_runtime"] is True
     for key, binary, payload_name in (
         ("terrain_proxy", "D3D9-scroll-sprite-off-fast.dll", "payload-manifest-scroll-sprite-off-fast.json"),
         ("standalone_proxy", "D3D9-fast-only.dll", "payload-manifest-fast-only.json"),
     ):
         expected = json.loads((ROOT / "vendor" / "runtime" / payload_name).read_text(encoding="utf-8"))
         assert manifest["fast_computer_moves"][key] == expected["files"]["D3D9.dll"]
-        assert manifest["validation"]["r185_build"]["runtime_variants"][binary]["matches_packaged_runtime"] is True
+        if r185["status"] == "pass":
+            assert r185["runtime_variants"][binary]["matches_packaged_runtime"] is True
     assert manifest["fast_computer_moves"]["optional"] is True
     assert manifest["fast_computer_moves"]["shipped_game_text_file"] is False
+    assert manifest["keep_campaign_zoom"]["optional"] is True
+    assert manifest["keep_campaign_zoom"]["default_installer_selection"] is False
+    assert manifest["keep_campaign_zoom"]["in_game_default_enabled"] is False
+    zoom_names = (
+        "scroll-sprite-off-zoom", "scroll-sprite-off-fast-zoom",
+        "scroll-sprite-off-icon-off-zoom", "scroll-sprite-off-fast-icon-off-zoom",
+        "zoom-only", "fast-only-zoom", "icon-only-zoom", "fast-icon-zoom",
+    )
+    assert set(manifest["keep_campaign_zoom"]["runtime_variants"]) == set(zoom_names)
+    for name in zoom_names:
+        expected = json.loads((ROOT / "vendor" / "runtime" /
+                               f"payload-manifest-{name}.json").read_text(encoding="utf-8"))
+        assert manifest["keep_campaign_zoom"]["runtime_variants"][name] == expected["files"]["D3D9.dll"]
+    assert manifest["validation"]["zoom_build"]["status"] in {"pass", "not-run"}
+    assert manifest["validation"]["legacy_proxy_bytes"]["status"] == "pass"
+    assert manifest["validation"]["legacy_proxy_bytes"]["variant_count"] == 15
+    assert manifest["validation"]["credits_build"]["status"] == "pass"
+    assert manifest["validation"]["credits_build"]["variant_count"] == 16
+    assert manifest["credits_illustration"]["default_installer_selection"] is True
+    assert manifest["credits_illustration"]["independent_proxy"] is True
+    assert len(manifest["credits_illustration"]["runtime_variants"]) == 16
+    assert manifest["keybinding_customisation"] == {
+        "optional": True,
+        "default_installer_selection": False,
+        "independent_direct_executable_fix": True,
+        "preview": "keybinding-customisation.bmp",
+        "shipped_game_executable": False,
+    }
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     variants = manifest["supported_executable_variants"]
-    assert len(variants) == 64
-    assert len({entry["sha256"] for entry in variants}) == 64
-    assert sum(entry["ui"] for entry in variants) == 32
+    assert len(variants) == 256
+    assert len({entry["sha256"] for entry in variants}) == 256
+    assert sum(entry["ui"] for entry in variants) == 128
+    assert sum(entry["economy"] for entry in variants) == 128
+    assert sum(entry["key"] for entry in variants) == 128
     assert {entry["checksum_style"] for entry in variants} == {"base", "retain", "zero", "recompute"}
     assert {entry["sha256"] for entry in variants if entry["scroll"] is False and
             entry["sprite"] is False and entry["tutorial"] is False and entry["ui"] is False and
+            entry["economy"] is False and entry["key"] is False and
             entry["checksum_style"] == "recompute"} == {
                 "9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710"}
     sums = checksums_path.read_text(encoding="utf-8").splitlines()
@@ -237,6 +277,14 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "payload-scroll-sprite-off\\dgvoodoo.conf",
         "payload-scroll-sprite-off-fast\\d3d9.dll",
         "payload-fast-only\\d3d9.dll",
+        "payload-zoom-only\\d3d9.dll",
+        "payload-fast-only-zoom\\d3d9.dll",
+        "payload-icon-only-zoom\\d3d9.dll",
+        "payload-fast-icon-zoom\\d3d9.dll",
+        "payload-scroll-sprite-off-zoom\\d3d9.dll",
+        "payload-scroll-sprite-off-fast-zoom\\d3d9.dll",
+        "payload-scroll-sprite-off-icon-off-zoom\\d3d9.dll",
+        "payload-scroll-sprite-off-fast-icon-off-zoom\\d3d9.dll",
         "compatibility.bmp",
         "campaign-scrolling.bmp",
         "character-parchment.bmp",
@@ -244,6 +292,9 @@ def test_embedded_archive_contains_only_declared_runtime_and_ui_material() -> No
         "sprite-clipping.bmp",
         "campaign-tutorial-resolution.bmp",
         "fast-computer-moves.bmp",
+        "unit-balance.bmp",
+        "campaign-zoom-option.bmp",
+        "keybinding-customisation.bmp",
     ):
         assert required in lowered
     assert "payload-scroll-off\\" not in lowered

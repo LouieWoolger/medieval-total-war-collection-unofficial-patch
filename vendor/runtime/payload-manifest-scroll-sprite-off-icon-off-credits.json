@@ -1,0 +1,54 @@
+{
+  "schema": "unofficial-medieval-total-war-patch-payload-v1",
+  "component": "Credits Flash Fix",
+  "runtime_identity": "R288-credits-key-customisation-scroll-sprite-off-icon-off",
+  "dgvoodoo_version": "2.87.5",
+  "target_executable": {
+    "name": "Medieval_TW.exe",
+    "sha256": "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+  },
+  "files": {
+    "D3D9.dll": {
+      "length": 232960,
+      "sha256": "5026C0DD242A13877632CE8E62960638916CB4B741E80924AA2EB1FC23903DB2",
+      "provenance": "Source-built PE32 D3D9 proxy with an exact supported executable SHA-256 and length guard; the Credits illustration sequencing repair is enabled only when selected."
+    },
+    "dgVoodoo_D3D9.dll": {
+      "length": 482304,
+      "sha256": "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2",
+      "provenance": "dgVoodoo2 v2.87.5 MS/x86/D3D9.dll"
+    },
+    "ddraw.dll": {
+      "length": 255488,
+      "sha256": "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E",
+      "provenance": "dgVoodoo2 v2.87.5 MS/x86/DDraw.dll"
+    },
+    "D3DImm.dll": {
+      "length": 208384,
+      "sha256": "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E",
+      "provenance": "dgVoodoo2 v2.87.5 MS/x86/D3DImm.dll"
+    },
+    "dgVoodoo.conf": {
+      "length": 21971,
+      "sha256": "8B6068BDF5404BCA6424E42CDC6E8EA91BD084503523170C7198B9F3A9C224D0",
+      "provenance": "official dgVoodoo2 v2.87.5 default with pinned Medieval D3D11, scaling, window, and memory settings"
+    }
+  },
+  "locked_settings": {
+    "Resampling": "lanczos-3",
+    "ScalingMode": "stretched_ar",
+    "FullscreenAttributes": "fake",
+    "FastVideoMemoryAccess": "true",
+    "FPSLimit": "0"
+  },
+  "forbidden_runtime_files": [
+    "D3D8.dll",
+    "Medieval.Cfg",
+    "Medieval_TW.exe",
+    "~tmp.vrp"
+  ],
+  "scroll_fix_enabled": false,
+  "sprite_fix_enabled": false,
+  "battle_icon_fix_enabled": false,
+  "credits_flash_fix_enabled": true
+}

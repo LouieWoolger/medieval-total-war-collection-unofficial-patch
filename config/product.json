@@ -16,6 +16,10 @@
   "name_component_name": "Name and Title Fix",
   "battle_icon_component_name": "Battle Unit Portrait Fix",
   "fast_component_name": "Fast Computer Moves Option",
+  "economy_component_name": "120-Man Unit Balance Fix",
+  "key_component_name": "Extended Keybinding Support",
+  "zoom_component_name": "Persistent Campaign Zoom Option",
+  "credits_component_name": "Credits Flash Fix",
   "discord_url": "https://discord.gg/zKbDADqWRC",
   "kofi_url": "https://ko-fi.com/louiewoolger"
 }

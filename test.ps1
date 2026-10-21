@@ -103,15 +103,16 @@ try {
         $reports[$entry.Name] = $destination
     }
     $selection = Get-GameTestSelection
-    $reports['sprite_exe'] = Invoke-PytestStage 'sprite_exe' @('tests/test_sprite_exe_patch.py','tests/test_ui_exe_patch.py')
+    $reports['sprite_exe'] = Invoke-PytestStage 'sprite_exe' @('tests/test_sprite_exe_patch.py','tests/test_ui_exe_patch.py','tests/test_economy_exe_patch.py','tests/test_key_exe_patch.py')
     [xml]$spriteSuite = Get-Content -LiteralPath $reports['sprite_exe'] -Raw -Encoding UTF8
     $spriteCounts = $spriteSuite.testsuites.testsuite
     # pytest counts Sprite unittest subtests in the suite total, while JUnit
-    # emits one testcase per method. Require four Sprite and four UI cases.
-    if (@($spriteCounts.testcase).Count -ne 8 -or [int]$spriteCounts.tests -lt 8 -or
+    # emits one testcase per method. Require four Sprite, four UI, four economy
+    # and seven key cases, so a skipped key test cannot pass the release gate.
+    if (@($spriteCounts.testcase).Count -ne 19 -or [int]$spriteCounts.tests -lt 19 -or
         [int]$spriteCounts.skipped -ne 0 -or
         [int]$spriteCounts.failures -ne 0 -or [int]$spriteCounts.errors -ne 0) {
-        throw 'The exact-binary Sprite EXE tests must run without skips or failures.'
+        throw 'The exact-binary Sprite, UI, economy and key EXE tests must run without skips or failures.'
     }
     $reports['lifecycle'] = Invoke-PytestStage 'lifecycle' $selection.lifecycle
     foreach ($entry in @{legacy_cpp='MTW_LEGACY_CPP_HELPER';legacy_v2='MTW_LEGACY_V2_SOURCE';
@@ -136,6 +137,12 @@ try {
         '--audit',$audit,'--native-build',$record.inputs.nativeBuildReport.path,'--lifecycle-fault-tests')
     if ($record.inputs.PSObject.Properties['r185Evidence']) {
         $manifestArguments += @('--r185-build-manifest',$record.inputs.r185Evidence.path)
+    }
+    if ($record.inputs.PSObject.Properties['zoomBuildManifest']) {
+        $manifestArguments += @('--zoom-build-manifest',$record.inputs.zoomBuildManifest.path)
+    }
+    if ($record.inputs.PSObject.Properties['creditsBuildManifest']) {
+        $manifestArguments += @('--credits-build-manifest',$record.inputs.creditsBuildManifest.path)
     }
     foreach ($entry in $reports.GetEnumerator()) { $manifestArguments += @('--test-result',($entry.Key + '=' + $entry.Value)) }
     Invoke-LoggedCommand $python $manifestArguments 'game-manifest.log'

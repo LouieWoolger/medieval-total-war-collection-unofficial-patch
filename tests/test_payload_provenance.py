@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,7 +10,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (206336, "E8E09A4404E9604666916E29B2A31D8F2F718ABDC549F952F3A85930E39E35E2"),
+    "D3D9.dll": (232960, "E0FCBA01968F5A2D870B993D77A0DC85F9AFBB033182423524418A4CD94627B0"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -30,9 +31,38 @@ OFFICIAL_DGVOODOO_2875 = {
     "D3DImm.dll": "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E",
 }
 
+ZOOM_VARIANTS = {
+    "scroll-sprite-off-zoom": (True, False, False, True, "MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-fast-zoom": (True, False, False, True, "MEDIEVAL_R290_TERRAIN_FAST_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R290_TERRAIN_NO_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-fast-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R290_TERRAIN_FAST_NO_ICON_ZOOM_HASH"),
+    "zoom-only": (False, False, False, False, "MEDIEVAL_R290_ZOOM_ONLY_HASH"),
+    "fast-only-zoom": (False, False, False, False, "MEDIEVAL_R290_FAST_ZOOM_HASH"),
+    "icon-only-zoom": (False, False, False, True, "MEDIEVAL_R290_ICON_ZOOM_HASH"),
+    "fast-icon-zoom": (False, False, False, True, "MEDIEVAL_R290_FAST_ICON_ZOOM_HASH"),
+}
+CREDITS_VARIANTS = (
+    "scroll-sprite-off", "scroll-sprite-off-fast", "fast-only",
+    "scroll-sprite-off-icon-off", "scroll-sprite-off-fast-icon-off",
+    "icon-only", "fast-icon", *ZOOM_VARIANTS, "credits-only",
+)
+
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+def test_campaign_zoom_runtime_recognizes_current_locale() -> None:
+    locale_source = (ROOT / "src" / "campaign_locale_patch.h").read_text(encoding="utf-8")
+    runtime_source = (R185 / "source" / "campaign_fast_moves.c").read_text(encoding="utf-8")
+    for locale_name, runtime_name in (
+        ("MTW_CAMPAIGN_LOCALE_ZOOM_SHA256", "MTW_LOCALE_ZOOM_HASH"),
+        ("MTW_CAMPAIGN_LOCALE_FAST_ZOOM_SHA256", "MTW_LOCALE_FAST_ZOOM_HASH"),
+    ):
+        locale = re.search(rf'^#define {locale_name} "([0-9A-F]{{64}})"$', locale_source, re.MULTILINE)
+        runtime = re.search(rf'^#define {runtime_name} "([0-9A-F]{{64}})"$', runtime_source, re.MULTILINE)
+        assert locale is not None and runtime is not None
+        assert runtime.group(1) == locale.group(1)
 
 
 def test_runtime_payload_is_exact_and_complete() -> None:
@@ -52,6 +82,17 @@ def test_runtime_payload_is_exact_and_complete() -> None:
         "payload-manifest-scroll-sprite-off-icon-off.json",
         "payload-manifest-scroll-sprite-off-fast-icon-off.json",
         "payload-manifest-icon-only.json", "payload-manifest-fast-icon.json",
+    } | {
+        name
+        for suffix in ZOOM_VARIANTS
+        for name in (f"D3D9-{suffix}.dll", f"payload-manifest-{suffix}.json")
+    } | {
+        name
+        for suffix in CREDITS_VARIANTS
+        for name in (("D3D9-credits-only.dll" if suffix == "credits-only"
+                      else f"D3D9-{suffix}-credits.dll"),
+                     ("payload-manifest-credits-only.json" if suffix == "credits-only"
+                      else f"payload-manifest-{suffix}-credits.json"))
     }
     assert set(manifest["files"]) == set(EXPECTED_RUNTIME)
     for name, (length, digest) in EXPECTED_RUNTIME.items():
@@ -85,9 +126,9 @@ def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope(
     state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
     for manifest_name, dll_name, terrain, receipt_hash_name in (
         ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
-         True, "MEDIEVAL_R202_TERRAIN_FAST_ICON_HASH"),
+         True, "MEDIEVAL_R290_TERRAIN_FAST_ICON_HASH"),
         ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
-         False, "MEDIEVAL_R202_FAST_ONLY_PROXY_HASH"),
+         False, "MEDIEVAL_R290_FAST_ONLY_HASH"),
     ):
         manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
         dll = RUNTIME / dll_name
@@ -97,6 +138,77 @@ def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope(
         assert (f'#define {receipt_hash_name} '
                 f'"{manifest["files"]["D3D9.dll"]["sha256"]}"') in state
         assert set(manifest["files"]) == (set(EXPECTED_RUNTIME) if terrain else {"D3D9.dll"})
+
+
+def test_optional_zoom_payloads_match_exact_proxy_receipts_and_backend_scope() -> None:
+    state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
+    hashes = set()
+    for suffix, (terrain, scroll, sprite, icon, receipt_hash_name) in ZOOM_VARIANTS.items():
+        manifest = json.loads((RUNTIME / f"payload-manifest-{suffix}.json").read_text(encoding="utf-8"))
+        dll = RUNTIME / f"D3D9-{suffix}.dll"
+        digest = sha256(dll)
+        hashes.add(digest)
+        assert manifest["zoom_fix_enabled"] is True
+        assert manifest["scroll_fix_enabled"] is scroll
+        assert manifest["sprite_fix_enabled"] is sprite
+        assert manifest["battle_icon_fix_enabled"] is icon
+        assert manifest["target_executable"]["sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
+        assert manifest["files"]["D3D9.dll"]["sha256"] == digest
+        assert manifest["files"]["D3D9.dll"]["length"] == dll.stat().st_size
+        assert (f'#define {receipt_hash_name} "{digest}"') in state
+        assert set(manifest["files"]) == (set(EXPECTED_RUNTIME) if terrain else {"D3D9.dll"})
+        assert manifest["locked_settings"] == (LOCKED_CONFIG if terrain else None)
+    assert len(hashes) == len(ZOOM_VARIANTS)
+
+
+def test_optional_credits_payloads_preserve_off_bytes_and_scope() -> None:
+    hashes = set()
+    for suffix in CREDITS_VARIANTS:
+        standalone = suffix == "credits-only"
+        manifest_name = ("payload-manifest-credits-only.json" if standalone
+                         else f"payload-manifest-{suffix}-credits.json")
+        binary_name = ("D3D9-credits-only.dll" if standalone
+                       else f"D3D9-{suffix}-credits.dll")
+        manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
+        binary = RUNTIME / binary_name
+        assert manifest["credits_flash_fix_enabled"] is True
+        assert manifest["files"]["D3D9.dll"]["sha256"] == sha256(binary)
+        assert manifest["files"]["D3D9.dll"]["length"] == binary.stat().st_size
+        hashes.add(sha256(binary))
+        assert set(manifest["files"]) == (
+            set(EXPECTED_RUNTIME) if suffix.startswith("scroll-sprite-off") else {"D3D9.dll"}
+        )
+        if not standalone:
+            off = json.loads((RUNTIME / f"payload-manifest-{suffix}.json").read_text(encoding="utf-8"))
+            off_binary = RUNTIME / f"D3D9-{suffix}.dll"
+            assert off.get("credits_flash_fix_enabled", False) is False
+            assert off["files"]["D3D9.dll"]["sha256"] == sha256(off_binary)
+            assert off["files"]["D3D9.dll"]["length"] == off_binary.stat().st_size
+            assert off["files"]["D3D9.dll"]["sha256"] != manifest["files"]["D3D9.dll"]["sha256"]
+    assert len(hashes) == len(CREDITS_VARIANTS)
+
+
+def test_credits_native_hash_table_matches_all_packaged_variants(tmp_path: Path) -> None:
+    import importlib.util
+
+    script = ROOT / "tools" / "validate-credits-hash-table.py"
+    spec = importlib.util.spec_from_file_location("validate_credits_hash_table", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    header = ROOT / "include" / "credits_payload_hashes.h"
+    module.verify(header, RUNTIME)
+    stale = tmp_path / "stale-hashes.h"
+    current_hash = json.loads((RUNTIME / "payload-manifest-scroll-sprite-off-credits.json").read_text(
+        encoding="utf-8"))["files"]["D3D9.dll"]["sha256"]
+    original = header.read_text(encoding="utf-8")
+    assert f'"{current_hash}"' in original
+    stale.write_text(original.replace(
+        f'"{current_hash}"',
+        '"0000000000000000000000000000000000000000000000000000000000000000"', 1),
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="native identity table differs"):
+        module.verify(stale, RUNTIME)
 
 
 def test_historical_proxy_variants_remain_identifiable_for_migration() -> None:

@@ -33,6 +33,8 @@ static inline uint32_t mtw_direct_checksum(const unsigned char *data, size_t len
 }
 
 #include "ui_exe_patch.h"
+#include "economy_exe_patch.h"
+#include "key_exe_patch.h"
 
 static inline int mtw_direct_strip_sprite(PatchContext *context,
                                            const unsigned char *source, size_t source_length,
@@ -454,6 +456,142 @@ static inline int mtw_direct_exe_transform(PatchContext *context,
     }
     if (!mtw_ui_add(context, intermediate, intermediate_length, &intermediate_variant,
                     result, result_length, error)) {
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    patch_context_free(context, intermediate);
+    return 1;
+}
+
+/* E-02 is appended after the established Scroll/Sprite/Tutorial/UI chain.
+   Strip a verified incoming economy section first so all older transforms
+   operate on their already pinned byte states, then append the requested
+   economy state. */
+static inline int mtw_direct_exe_transform_options(PatchContext *context,
+                                            const unsigned char *source, size_t source_length,
+                                            int desired_scroll, int desired_sprite,
+                                            int desired_tutorial, int desired_ui,
+                                            int desired_economy,
+                                            unsigned char **result, size_t *result_length,
+                                            PatchError *error) {
+    MtwExeVariant source_variant, intermediate_variant;
+    const unsigned char *base = source;
+    unsigned char *stripped = NULL, *intermediate = NULL;
+    size_t base_length = source_length, intermediate_length = 0u;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0u;
+    if (!context || !source || !result || !result_length ||
+        (desired_economy != 0 && desired_economy != 1)) {
+        patch_error_set(error, "invalid_argument", "Invalid economy EXE transform arguments.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+        patch_error_set(error, "unsupported_executable", "The game EXE is not an exact supported state.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (source_variant.economy) {
+        if (!mtw_economy_strip(context, source, source_length, &source_variant,
+                               &stripped, &base_length, error)) return 0;
+        base = stripped;
+    }
+    if (!mtw_direct_exe_transform(context, base, base_length,
+                                   desired_scroll, desired_sprite,
+                                   desired_tutorial, desired_ui,
+                                   &intermediate, &intermediate_length, error)) {
+        if (stripped) patch_context_free(context, stripped);
+        return 0;
+    }
+    if (stripped) patch_context_free(context, stripped);
+    if (!desired_economy) {
+        *result = intermediate;
+        *result_length = intermediate_length;
+        return 1;
+    }
+    if (!patch_sha256_bytes(context, intermediate, intermediate_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, intermediate_length, &intermediate_variant) ||
+        intermediate_variant.economy) {
+        patch_error_set(error, "transform_mismatch", "The pre-economy executable is not pinned.", ERROR_INVALID_DATA);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_economy_add(context, intermediate, intermediate_length,
+                          &intermediate_variant, result, result_length, error)) {
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    patch_context_free(context, intermediate);
+    return 1;
+}
+
+/* K-01 follows all older PE32 options. Strip a verified incoming key section
+   before transforming those options, then append the requested key state. */
+static inline int mtw_direct_exe_transform_with_key(PatchContext *context,
+                                            const unsigned char *source, size_t source_length,
+                                            int desired_scroll, int desired_sprite,
+                                            int desired_tutorial, int desired_ui,
+                                            int desired_economy, int desired_key,
+                                            unsigned char **result, size_t *result_length,
+                                            PatchError *error) {
+    MtwExeVariant source_variant, intermediate_variant;
+    const unsigned char *base = source;
+    unsigned char *stripped = NULL, *intermediate = NULL;
+    size_t base_length = source_length, intermediate_length = 0u;
+    char digest[65];
+    if (result) *result = NULL;
+    if (result_length) *result_length = 0u;
+    if (!context || !source || !result || !result_length ||
+        (desired_key != 0 && desired_key != 1)) {
+        patch_error_set(error, "invalid_argument", "Invalid key EXE transform arguments.", ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!patch_sha256_bytes(context, source, source_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, source_length, &source_variant)) {
+        patch_error_set(error, "unsupported_executable", "The game EXE is not an exact supported state.", ERROR_INVALID_DATA);
+        return 0;
+    }
+    if (source_variant.key) {
+        if (!mtw_key_strip(context, source, source_length, &source_variant,
+                           &stripped, &base_length, error)) return 0;
+        base = stripped;
+    }
+    if (!mtw_direct_exe_transform_options(context, base, base_length,
+                                           desired_scroll, desired_sprite,
+                                           desired_tutorial, desired_ui, desired_economy,
+                                           &intermediate, &intermediate_length, error)) {
+        if (stripped) patch_context_free(context, stripped);
+        return 0;
+    }
+    if (stripped) patch_context_free(context, stripped);
+    if (!desired_key) {
+        *result = intermediate;
+        *result_length = intermediate_length;
+        return 1;
+    }
+    if (!patch_sha256_bytes(context, intermediate, intermediate_length, digest)) {
+        patch_error_set(error, context->error.code, context->error.message, context->error.win32);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_exe_variant_from_hash(digest, intermediate_length, &intermediate_variant) ||
+        intermediate_variant.key) {
+        patch_error_set(error, "transform_mismatch", "The pre-key executable is not pinned.", ERROR_INVALID_DATA);
+        patch_context_free(context, intermediate);
+        return 0;
+    }
+    if (!mtw_key_add(context, intermediate, intermediate_length,
+                      &intermediate_variant, result, result_length, error)) {
         patch_context_free(context, intermediate);
         return 0;
     }

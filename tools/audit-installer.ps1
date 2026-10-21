@@ -47,8 +47,26 @@ $runtimeVariants = [ordered]@{
     'payload-scroll-sprite-off-fast-icon-off' = $runtimeNames
     'payload-icon-only' = @('payload-manifest.json','D3D9.dll')
     'payload-fast-icon' = @('payload-manifest.json','D3D9.dll')
+    'payload-scroll-sprite-off-zoom' = $runtimeNames
+    'payload-scroll-sprite-off-fast-zoom' = $runtimeNames
+    'payload-scroll-sprite-off-icon-off-zoom' = $runtimeNames
+    'payload-scroll-sprite-off-fast-icon-off-zoom' = $runtimeNames
+    'payload-zoom-only' = @('payload-manifest.json','D3D9.dll')
+    'payload-fast-only-zoom' = @('payload-manifest.json','D3D9.dll')
+    'payload-icon-only-zoom' = @('payload-manifest.json','D3D9.dll')
+    'payload-fast-icon-zoom' = @('payload-manifest.json','D3D9.dll')
 }
-$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','character-parchment.bmp','name-and-title.bmp','sprite-clipping.bmp','campaign-tutorial-resolution.bmp','battle-unit-icons.bmp','fast-computer-moves.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
+$creditsVariants = @('scroll-sprite-off','scroll-sprite-off-fast','fast-only',
+    'scroll-sprite-off-icon-off','scroll-sprite-off-fast-icon-off','icon-only','fast-icon',
+    'scroll-sprite-off-zoom','scroll-sprite-off-fast-zoom',
+    'scroll-sprite-off-icon-off-zoom','scroll-sprite-off-fast-icon-off-zoom',
+    'zoom-only','fast-only-zoom','icon-only-zoom','fast-icon-zoom')
+foreach ($name in $creditsVariants) {
+    $base = 'payload-' + $name
+    $runtimeVariants[$base + '-credits'] = $runtimeVariants[$base]
+}
+$runtimeVariants['payload-credits-only'] = @('payload-manifest.json','D3D9.dll')
+$uiNames = @('compatibility.bmp','campaign-scrolling.bmp','character-parchment.bmp','name-and-title.bmp','sprite-clipping.bmp','campaign-tutorial-resolution.bmp','battle-unit-icons.bmp','fast-computer-moves.bmp','unit-balance.bmp','campaign-zoom-option.bmp','keybinding-customisation.bmp','credits-illustration.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
 $common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
 $common += @(foreach ($variant in $runtimeVariants.Keys) {

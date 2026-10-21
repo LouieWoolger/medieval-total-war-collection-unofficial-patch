@@ -1,4 +1,10 @@
-Unofficial Medieval: Total War Collection Patch core runtime R202 local candidate
+Unofficial Medieval: Total War Collection Patch core runtime R288 local candidate
+
+R288 rebuilds the Credits-off and Credits-on graphics proxies for the optional
+Keybinding Customisation Fix executable identities, including Space and Backspace.
+The two Credits selections
+have distinct source-built DLLs; credits hooks are compiled only into Credits-on.
+Previous R202, R203, and R287 identities remain recognized for upgrades.
 
 R202 recognizes the independently selected Character Parchment Fix executable state.
 R201 exposed Battle Unit Portrait Fix as an independently selected installer option.
@@ -68,8 +74,9 @@ Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
-The runtime is gated to the 64 exact Medieval_TW.exe SHA-256 identities in
-include/mtw_exe_variants.h: eight verified direct-fix states, each with or
-without Character Parchment Fix, in unmodified and three LAA checksum forms.
+The runtime is gated to the 256 exact Medieval_TW.exe SHA-256 identities in
+include/mtw_exe_variants.h, covering independently selected direct fixes,
+Character Parchment Fix, 120-Man Unit Balance Fix, Keybinding Customisation
+Fix, and the verified original/LAA checksum forms.
 The reported LAA stock identity is
 9FDA59114FB470C6E2E65AC37019D044BB775EF4B76E00E6585D790B129E3710.

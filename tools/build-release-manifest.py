@@ -14,11 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSET_NAMES = (
     "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp", "character-parchment.bmp",
     "name-and-title.bmp",
-    "sprite-clipping.bmp", "campaign-tutorial-resolution.bmp", "battle-unit-icons.bmp", "fast-computer-moves.bmp",
+    "sprite-clipping.bmp", "campaign-tutorial-resolution.bmp", "battle-unit-icons.bmp", "fast-computer-moves.bmp", "unit-balance.bmp", "campaign-zoom-option.bmp", "keybinding-customisation.bmp", "credits-illustration.bmp",
     "discord-badge.bmp", "discord-badge-hover.bmp", "kofi-badge.bmp",
     "kofi-badge-hover.bmp",
 )
 ENGINE_NAMES = ("medieval_fix_patcher.exe",)
+PROXY_VARIANTS = (
+    "scroll-sprite-off", "scroll-sprite-off-fast", "fast-only",
+    "scroll-sprite-off-icon-off", "scroll-sprite-off-fast-icon-off",
+    "icon-only", "fast-icon", "scroll-sprite-off-zoom",
+    "scroll-sprite-off-fast-zoom", "scroll-sprite-off-icon-off-zoom",
+    "scroll-sprite-off-fast-icon-off-zoom", "zoom-only",
+    "fast-only-zoom", "icon-only-zoom", "fast-icon-zoom",
+)
 STAGES = ("project_contracts", "native_guard", "sprite_exe", "lifecycle", "compiled_installer", "legacy_migration",
           "legacy_cpp", "legacy_v2", "historical_state", "release_hygiene")
 
@@ -70,22 +78,23 @@ def supported_executable_variants() -> list[dict]:
     header = (ROOT / "include" / "mtw_exe_variants.h").read_text(encoding="ascii")
     pattern = re.compile(
         r'^\s*\{"([0-9A-F]{64})", (\d+)u, 0x([0-9A-F]{8})u, '
-        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, '
+        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, '
         r'"(base|retain|zero|recompute)"\},$', re.MULTILINE)
     entries = []
     for match in pattern.finditer(header):
-        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, ui, laa, style = match.groups()
+        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, ui, economy, key, laa, style = match.groups()
         entries.append({
             "sha256": digest, "length": int(length),
             "image_size": int(image_size, 16),
             "canonical_checksum": int(canonical_checksum, 16),
             "scroll": bool(int(scroll)), "sprite": bool(int(sprite)),
             "tutorial": bool(int(tutorial)), "ui": bool(int(ui)),
+            "economy": bool(int(economy)), "key": bool(int(key)),
             "laa": bool(int(laa)), "checksum_style": style,
         })
-    states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["ui"],
+    states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["ui"], entry["economy"], entry["key"],
                entry["checksum_style"]) for entry in entries}
-    if len(entries) != 64 or len(states) != 64 or len({entry["sha256"] for entry in entries}) != 64:
+    if len(entries) != 256 or len(states) != 256 or len({entry["sha256"] for entry in entries}) != 256:
         raise ValueError("The shared EXE identity table is incomplete or ambiguous.")
     if any(entry["laa"] != (entry["checksum_style"] != "base") for entry in entries):
         raise ValueError("The shared EXE identity table has inconsistent LAA metadata.")
@@ -185,6 +194,79 @@ def r185_result(path: Path | None, variant_hashes: dict[str, str]) -> dict:
         "runtime_variants": variants,
         "native_component_test_count": len(tests), "smoke_loader_exit": evidence.get("smoke_loader_exit"),
     }
+
+
+def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
+    """Check pinned Credits-OFF bytes and source-built Credits-ON bytes separately."""
+    runtime = ROOT / "vendor" / "runtime"
+    for name in PROXY_VARIANTS:
+        manifest = load_json(runtime / f"payload-manifest-{name}.json")
+        packaged = file_record(runtime / f"D3D9-{name}.dll")
+        if packaged != {key: manifest["files"]["D3D9.dll"][key] for key in ("sha256", "length")}:
+            raise ValueError(f"Pinned Credits-OFF proxy differs from its manifest: {name}")
+        if manifest.get("credits_flash_fix_enabled", False):
+            raise ValueError(f"Credits-OFF manifest enables the Credits hook: {name}")
+    legacy = {"status": "pass", "variant_count": len(PROXY_VARIANTS),
+              "verification": "Packaged Credits-OFF bytes match their pinned runtime manifests."}
+    if credits_build is None:
+        return legacy, {"status": "not-run", "reason": "No Credits-ON source build evidence was supplied."}
+    evidence = load_json(credits_build)
+    variants = evidence.get("variants", [])
+    expected = set(PROXY_VARIANTS) | {"credits-only"}
+    if (evidence.get("schema") != "mtw-credits-payload-build-v1"
+            or len(variants) != len(expected)
+            or {entry.get("name") for entry in variants} != expected):
+        raise ValueError("Credits payload build evidence is incomplete.")
+    source_inputs = evidence.get("source_inputs", {})
+    required = {"tools/build-credits-payloads.ps1", "tools/build-zoom-payloads.ps1",
+                "vendor/r185/source/credits_flash_fix.c",
+                "vendor/r185/source/combined_proxy.c",
+                "vendor/r185/source/campaign_fast_moves_proxy.c",
+                "include/mtw_exe_variants.h"}
+    if not isinstance(source_inputs, dict) or not required.issubset(source_inputs):
+        raise ValueError("Credits build source identities are incomplete.")
+    for relative, recorded in source_inputs.items():
+        source = (ROOT / relative).resolve()
+        if (Path(relative).is_absolute() or not source.is_relative_to(ROOT)
+                or file_record(source) != recorded):
+            raise ValueError(f"Credits build source differs from checkout: {relative}")
+    if evidence.get("executable_variant_table_sha256") != sha256(ROOT / "include/mtw_exe_variants.h"):
+        raise ValueError("Credits build executable identity table differs from checkout.")
+    for entry in variants:
+        name = entry["name"]
+        terrain = name.startswith("scroll-sprite-off")
+        fast = "fast" in name
+        icon = ("icon-off" not in name) if terrain else ("icon" in name)
+        zoom = "zoom" in name
+        if name == "credits-only":
+            terrain = fast = icon = zoom = False
+        if any(bool(entry[field]) != expected for field, expected in
+               (("terrain", terrain), ("fast", fast), ("icon", icon), ("zoom", zoom))):
+            raise ValueError(f"Credits build option flags differ from the variant name: {name}")
+        manifest_name = ("payload-manifest-credits-only.json" if name == "credits-only"
+                         else f"payload-manifest-{name}-credits.json")
+        manifest = load_json(runtime / manifest_name)
+        proxy = runtime / entry["filename"]
+        expected_filename = ("D3D9-credits-only.dll" if name == "credits-only"
+                             else f"D3D9-{name}-credits.dll")
+        if (entry["filename"] != expected_filename or not entry.get("credits")
+                or not manifest.get("credits_flash_fix_enabled")
+                or bool(manifest.get("zoom_fix_enabled", False)) != zoom
+                or bool(manifest.get("battle_icon_fix_enabled", False)) != icon
+                or bool(manifest.get("scroll_fix_enabled", True))
+                or bool(manifest.get("sprite_fix_enabled", True))):
+            raise ValueError(f"Credits build variant flags differ: {name}")
+        packaged = file_record(proxy)
+        if (packaged["sha256"] != entry["sha256"] or packaged["length"] != entry["length"]
+                or packaged != {key: manifest["files"]["D3D9.dll"][key]
+                                for key in ("sha256", "length")}):
+            raise ValueError(f"Credits build differs from packaged runtime: {name}")
+        if set(manifest["files"]) != ({"D3D9.dll"} if not entry["terrain"] else
+                                      {"D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf"}):
+            raise ValueError(f"Credits runtime backend scope differs: {name}")
+    return legacy, {"status": "pass", "report": credits_build.name,
+                    "report_sha256": sha256(credits_build), "variant_count": len(variants),
+                    "verification": "All Credits-ON proxy hashes, source inputs, and runtime manifests match."}
 
 
 def game_test_result(validation: dict) -> dict:
@@ -301,6 +383,8 @@ def main() -> int:
     parser.add_argument("--audit-native-helper", type=Path)
     parser.add_argument("--audit", type=Path)
     parser.add_argument("--r185-build-manifest", type=Path)
+    parser.add_argument("--zoom-build-manifest", type=Path)
+    parser.add_argument("--credits-build-manifest", type=Path)
     parser.add_argument("--test-result", action="append", default=[], metavar="STAGE=JUNIT_XML")
     parser.add_argument("--lifecycle-fault-tests", action="store_true")
     args = parser.parse_args()
@@ -332,6 +416,50 @@ def main() -> int:
     fast_icon_off_payload = load_json(ROOT / "vendor/runtime/payload-manifest-scroll-sprite-off-fast-icon-off.json")
     icon_only_payload = load_json(ROOT / "vendor/runtime/payload-manifest-icon-only.json")
     fast_icon_payload = load_json(ROOT / "vendor/runtime/payload-manifest-fast-icon.json")
+    zoom_names = (
+        "scroll-sprite-off-zoom", "scroll-sprite-off-fast-zoom",
+        "scroll-sprite-off-icon-off-zoom", "scroll-sprite-off-fast-icon-off-zoom",
+        "zoom-only", "fast-only-zoom", "icon-only-zoom", "fast-icon-zoom",
+    )
+    zoom_payloads = {
+        name: load_json(ROOT / "vendor/runtime" / f"payload-manifest-{name}.json")
+        for name in zoom_names
+    }
+    zoom_build = {"status": "not-run"}
+    if args.zoom_build_manifest:
+        zoom_evidence = load_json(args.zoom_build_manifest)
+        variants = zoom_evidence.get("variants", [])
+        if (zoom_evidence.get("schema") != "mtw-zoom-payload-build-v1"
+                or len(variants) != len(zoom_names)
+                or {entry.get("name") for entry in variants} != set(zoom_names)):
+            raise ValueError("Zoom payload build evidence is incomplete.")
+        source_inputs = zoom_evidence.get("source_inputs", {})
+        required_zoom_sources = {
+            "tools/build-zoom-payloads.ps1",
+            "vendor/r185/source/campaign_fast_moves.c",
+            "vendor/r185/source/campaign_fast_moves_proxy.c",
+            "vendor/r185/source/combined_proxy.c",
+            "vendor/r185/source/build_scaffold.ps1",
+            "include/mtw_exe_variants.h",
+        }
+        if not isinstance(source_inputs, dict) or not required_zoom_sources.issubset(source_inputs):
+            raise ValueError("Zoom build source identities are incomplete.")
+        for relative, recorded_source in source_inputs.items():
+            source_path = (ROOT / relative).resolve()
+            if (Path(relative).is_absolute() or not source_path.is_relative_to(ROOT)
+                    or file_record(source_path) != recorded_source):
+                raise ValueError(f"Zoom build source differs from current checkout: {relative}")
+        for entry in variants:
+            name = entry["name"]
+            recorded = zoom_payloads[name]["files"]["D3D9.dll"]
+            packaged = file_record(ROOT / "vendor/runtime" / f"D3D9-{name}.dll")
+            if (entry.get("sha256") != recorded["sha256"] or entry.get("length") != recorded["length"]
+                    or packaged["sha256"] != recorded["sha256"]
+                    or packaged["length"] != recorded["length"]):
+                raise ValueError(f"Zoom build evidence differs from packaged runtime: {name}")
+        zoom_build = {"status": "pass", "report": args.zoom_build_manifest.name,
+                      "report_sha256": sha256(args.zoom_build_manifest),
+                      "variant_count": len(variants)}
     payload = scroll_sprite_off_payload
     validation = {stage: not_run("No JUnit evidence was supplied.") for stage in STAGES}
     supplied = set()
@@ -358,6 +486,8 @@ def main() -> int:
             ("D3D9-fast-icon.dll", fast_icon_payload),
         )},
     )
+    validation["zoom_build"] = zoom_build
+    validation["legacy_proxy_bytes"], validation["credits_build"] = proxy_payload_result(args.credits_build_manifest)
     audit = load_json(args.audit) if args.audit else None
     if audit and (audit.get("result") != "pass" or audit.get("sha256") != sha256(installer)):
         raise ValueError("Installer audit is not a passing result for this candidate.")
@@ -370,6 +500,11 @@ def main() -> int:
         raise ValueError("Native C99/GCC helper build provenance and symbol audit are required.")
     required_sources = {"src/medieval_fix_patcher.c", "src/medieval_fix_patcher.rc", "src/medieval_fix_patcher.manifest"}
     required_sources.update("src/" + path.name for path in (ROOT / "src").glob("*.h"))
+    required_sources.update({"include/credits_payload_hashes.h",
+                             "include/credits_payload_previous_hashes.h",
+                             "include/credits_payload_r288_hashes.h",
+                             "include/credits_payload_r289_hashes.h",
+                             "include/mtw_exe_variants.h"})
     if set(native_build.get("source_inputs", {})) != required_sources:
         raise ValueError("Native helper provenance must identify all and only the C backend inputs.")
     flags = native_build.get("flags", [])
@@ -396,7 +531,11 @@ def main() -> int:
                      "tutorial_component": product["tutorial_component_name"],
                      "parchment_component": product["parchment_component_name"],
                      "battle_icon_component": product["battle_icon_component_name"],
-                     "fast_component": product["fast_component_name"]},
+                     "fast_component": product["fast_component_name"],
+                     "economy_component": product["economy_component_name"],
+                     "zoom_component": product.get("zoom_component_name", "Persistent Campaign Zoom Option"),
+                     "key_component": product["key_component_name"],
+                     "credits_component": product["credits_component_name"]},
         "installer": {"filename": installer.name, **file_record(installer),
                       "signature": audit["authenticode"] if audit else "not-verified"},
         "uninstaller": {"filename": product["uninstaller_filename"], "location": "game-root",
@@ -425,6 +564,28 @@ def main() -> int:
             "stock_english_sha256": "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
             "enabled_english_sha256": "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B",
             "shipped_game_text_file": False,
+        },
+        "keep_campaign_zoom": {
+            "optional": True,
+            "default_installer_selection": False,
+            "in_game_default_enabled": False,
+            "stock_english_sha256": "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC",
+            "zoom_only_english_sha256": "F2724F3F76CABB6289C327229988CEADF04D1D820BFBC0E8D7BDE52207FBC3D3",
+            "fast_and_zoom_english_sha256": "F8A6A90167B5E2DD90B1482E9FB5BFBC5B1A64FA2DB4949A84C859BE46B2E78D",
+            "runtime_variants": {name: variant["files"]["D3D9.dll"] for name, variant in zoom_payloads.items()},
+            "shipped_game_text_file": False,
+        },
+        "credits_illustration": {
+            "optional": True,
+            "default_installer_selection": True,
+            "independent_proxy": True,
+            "runtime_variants": {
+                name: load_json(ROOT / "vendor/runtime" /
+                                ("payload-manifest-credits-only.json" if name == "credits-only"
+                                 else f"payload-manifest-{name}-credits.json"))["files"]["D3D9.dll"]
+                for name in (*PROXY_VARIANTS, "credits-only")
+            },
+            "gameplay_verified": False,
         },
         "character_data_corrections": {
             "independent_component": True,
@@ -459,7 +620,7 @@ def main() -> int:
             "default_installer_selection": True,
             "stock_tutorial_only_sha256": next(entry["sha256"] for entry in supported_executable_variants()
                                                if not entry["scroll"] and not entry["sprite"] and
-                                               entry["tutorial"] and not entry["ui"] and
+                                               entry["tutorial"] and not entry["ui"] and not entry["economy"] and not entry["key"] and
                                                entry["checksum_style"] == "base"),
             "patch_offset": 0x306A5C,
             "patch_length": 6,
@@ -470,8 +631,22 @@ def main() -> int:
             "independent_direct_executable_fix": True,
             "ui_only_sha256": next(entry["sha256"] for entry in supported_executable_variants()
                                    if not entry["scroll"] and not entry["sprite"] and
-                                   not entry["tutorial"] and entry["ui"] and
+                                   not entry["tutorial"] and entry["ui"] and not entry["economy"] and not entry["key"] and
                                    entry["checksum_style"] == "base"),
+            "shipped_game_executable": False,
+        },
+        "unit_balance": {
+            "default_installer_selection": False,
+            "economy_reference_size": "Small",
+            "active_unit_size": "Huge",
+            "independent_direct_executable_fix": True,
+            "shipped_game_executable": False,
+        },
+        "keybinding_customisation": {
+            "optional": True,
+            "default_installer_selection": False,
+            "independent_direct_executable_fix": True,
+            "preview": "keybinding-customisation.bmp",
             "shipped_game_executable": False,
         },
         "assets": {name: file_record(ROOT / "assets" / name) for name in ASSET_NAMES},

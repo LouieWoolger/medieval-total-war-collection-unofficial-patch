@@ -22,14 +22,14 @@ static int medieval_version_valid(const char *s) {
 static int medieval_field(const wchar_t *s, int request) {
     static const wchar_t *const command[] = {L"--operation", L"--target", L"--payload", L"--version",
         L"--installer", L"--uninstaller", L"--log", L"--request", L"--test-fault", L"--output", L"--require-owner",
-        L"--terrain-fix", L"--scroll-fix", L"--sprite-fix", L"--fast-moves-fix", L"--tutorial-fix", L"--battle-icon-fix", L"--parchment-fix", L"--name-fix"};
+        L"--terrain-fix", L"--scroll-fix", L"--sprite-fix", L"--fast-moves-fix", L"--tutorial-fix", L"--battle-icon-fix", L"--parchment-fix", L"--name-fix", L"--economy-fix", L"--zoom-fix", L"--credits-fix", L"--key-fix"};
     static const wchar_t *const aliases[] = {L"-Operation", L"-Target", L"-PayloadDirectory", L"-InstallerVersion",
         L"-InstallerPath", L"-UninstallerSource", L"-LogPath", L"-RequestPath", L"-TestFault", L"-OutputMode", L"-RequireOwner",
-        L"-TerrainFix", L"-ScrollFix", L"-SpriteFix", L"-FastMovesFix", L"-TutorialFix", L"-BattleIconFix", L"-ParchmentFix", L"-NameFix"};
+        L"-TerrainFix", L"-ScrollFix", L"-SpriteFix", L"-FastMovesFix", L"-TutorialFix", L"-BattleIconFix", L"-ParchmentFix", L"-NameFix", L"-EconomyFix", L"-ZoomFix", L"-CreditsFix", L"-KeyFix"};
     static const wchar_t *const fields[] = {L"operation", L"target", L"payload", L"version", L"installer", L"uninstaller", L"log",
-        L"require_owner", L"terrain_fix", L"scroll_fix", L"sprite_fix", L"fast_moves_fix", L"tutorial_fix", L"battle_icon_fix", L"parchment_fix", L"name_fix"};
+        L"require_owner", L"terrain_fix", L"scroll_fix", L"sprite_fix", L"fast_moves_fix", L"tutorial_fix", L"battle_icon_fix", L"parchment_fix", L"name_fix", L"economy_fix", L"zoom_fix", L"credits_fix", L"key_fix"};
     size_t i;
-    for (i = 0; i < (request ? 16U : 19U); ++i)
+    for (i = 0; i < (request ? 20U : 23U); ++i)
         if (request ? !wcscmp(s, fields[i]) : (!wcscmp(s, command[i]) || !wcscmp(s, aliases[i])))
             return request && i >= 7 ? (int)i + 3 : (int)i;
     return -1;
@@ -59,6 +59,10 @@ static int medieval_option_set(PatchContext *c, MedievalOptions *o, int field, c
     case 16: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->battle_icon_fix = text[0] - '0'; o->selection_provided = 1; break;
     case 17: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->parchment_fix = text[0] - '0'; o->selection_provided = 1; break;
     case 18: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->name_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 19: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->economy_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 20: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->zoom_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 21: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->credits_fix = text[0] - '0'; o->selection_provided = 1; break;
+    case 22: if (strcmp(text, "0") && strcmp(text, "1")) return 0; o->key_fix = text[0] - '0'; o->selection_provided = 1; break;
     default: return 0;
     }
     return 1;
@@ -156,6 +160,14 @@ int wmain(int argc, wchar_t **argv) {
             emitted = patch_diagnostics_printf(&output, "Preserved files: %s\n", mtw_s(outcome.result, "recovery_archive"));
         if (emitted && *mtw_s(outcome.result, "recovery_file"))
             emitted = patch_diagnostics_printf(&output, "Preserved original: %s\n", mtw_s(outcome.result, "recovery_file"));
+        if (emitted && !exit_code && mtw_is(options.operation, "Inspect")) {
+            const JsonValue *credits = json_get(outcome.result, "credits_flash_fix_enabled");
+            const JsonValue *key = json_get(outcome.result, "key_fix_enabled");
+            if (credits && key && credits->type == JSON_BOOL && key->type == JSON_BOOL)
+                emitted = patch_diagnostics_printf(&output,
+                    "credits_preference=%d key_preference=%d\n",
+                    credits->boolean ? 1 : 0, key->boolean ? 1 : 0);
+        }
     } else if (output_handle && output_handle != INVALID_HANDLE_VALUE && outcome.result &&
                json_write_canonical(&outcome.document, &text, &length, &formatting)) {
         emitted = patch_diagnostics_emit(&output, text, length) && patch_diagnostics_emit(&output, "\n", 1);

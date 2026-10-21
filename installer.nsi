@@ -100,7 +100,7 @@ Page custom CompatibilityPageCreate CompatibilityPageLeave
 
 !define MUI_UNABORTWARNING
 !define MUI_CUSTOMFUNCTION_UNABORT un.LogUserAbort
-!define MUI_UNCONFIRMPAGE_TEXT_TOP "Only patch files will be removed. Your game, saves and other files will be kept."
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "Only patch files will be removed; your game and saves will be kept."
 !define MUI_UNCONFIRMPAGE_TEXT_LOCATION "Game folder:"
 !define MUI_PAGE_HEADER_SUBTEXT ""
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -127,6 +127,19 @@ Var BattleIconCheck
 Var BattleIconSelected
 Var FastCheck
 Var FastSelected
+Var EconomyCheck
+Var EconomySelected
+Var KeyCheck
+Var KeySelected
+Var KeyExplicit
+Var KeyBeforeHydrate
+Var ZoomCheck
+Var ZoomSelected
+Var CreditsCheck
+Var CreditsSelected
+Var CreditsExplicit
+Var ChoicesHydratedTarget
+Var CreditsBeforeHydrate
 Var PreviewBitmap
 Var PreviewImage
 Var PreviewTitle
@@ -170,6 +183,10 @@ Function .onInit
     File /oname=campaign-tutorial-resolution.bmp "${SOURCE_DIR}\assets\campaign-tutorial-resolution.bmp"
     File /oname=battle-unit-icons.bmp "${SOURCE_DIR}\assets\battle-unit-icons.bmp"
     File /oname=fast-computer-moves.bmp "${SOURCE_DIR}\assets\fast-computer-moves.bmp"
+    File /oname=unit-balance.bmp "${SOURCE_DIR}\assets\unit-balance.bmp"
+    File /oname=keybinding-customisation.bmp "${SOURCE_DIR}\assets\keybinding-customisation.bmp"
+    File /oname=campaign-zoom-option.bmp "${SOURCE_DIR}\assets\campaign-zoom-option.bmp"
+    File /oname=credits-illustration.bmp "${SOURCE_DIR}\assets\credits-illustration.bmp"
     File /oname=discord-badge.bmp "${SOURCE_DIR}\assets\discord-badge.bmp"
     File /oname=discord-badge-hover.bmp "${SOURCE_DIR}\assets\discord-badge-hover.bmp"
     File /oname=kofi-badge.bmp "${SOURCE_DIR}\assets\kofi-badge.bmp"
@@ -195,6 +212,13 @@ Function .onInit
     StrCpy $NameSelected "1"
     StrCpy $BattleIconSelected "1"
     StrCpy $FastSelected "0"
+    StrCpy $EconomySelected "0"
+    StrCpy $KeySelected "0"
+    StrCpy $KeyExplicit "0"
+    StrCpy $ZoomSelected "0"
+    StrCpy $CreditsSelected "1"
+    StrCpy $CreditsExplicit "0"
+    StrCpy $ChoicesHydratedTarget ""
     StrCpy $0 ""
     ${GetOptions} $CommandOptions "/TERRAINFIX=" $0
     ${If} $0 == "0"
@@ -233,6 +257,50 @@ Function .onInit
         StrCpy $FastSelected "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_fastmovesfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/ECONOMYFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $EconomySelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $EconomySelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_economyfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/KEYFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $KeySelected "0"
+        StrCpy $KeyExplicit "1"
+    ${ElseIf} $0 == "1"
+        StrCpy $KeySelected "1"
+        StrCpy $KeyExplicit "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_keyfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/ZOOMFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $ZoomSelected "0"
+    ${ElseIf} $0 == "1"
+        StrCpy $ZoomSelected "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_zoomfix_option value=$0"
+        Call FailInstallation
+    ${EndIf}
+    StrCpy $0 ""
+    ${GetOptions} $CommandOptions "/CREDITSFIX=" $0
+    ${If} $0 == "0"
+        StrCpy $CreditsSelected "0"
+        StrCpy $CreditsExplicit "1"
+    ${ElseIf} $0 == "1"
+        StrCpy $CreditsSelected "1"
+        StrCpy $CreditsExplicit "1"
+    ${ElseIf} $0 != ""
+        StrCpy $InstallError "error=invalid_creditsfix_option value=$0"
         Call FailInstallation
     ${EndIf}
     StrCpy $0 ""
@@ -287,6 +355,84 @@ Function .onInit
     ${If} $1 == 0
         Call DetectGamePath
     ${EndIf}
+    Call HydrateSavedChoices
+FunctionEnd
+
+Function HydrateSavedChoices
+    ; Saved choices survive repair/upgrade. The native Inspect result comes
+    ; from a fully validated, sealed receipt; NSIS never parses receipt JSON
+    ; as authority. Explicit command-line and UI choices win independently.
+    ${If} $ChoicesHydratedTarget == $INSTDIR
+        Return
+    ${EndIf}
+    ${If} $CreditsExplicit == "1"
+    ${AndIf} $KeyExplicit == "1"
+        Return
+    ${EndIf}
+    StrCpy $ChoicesHydratedTarget "$INSTDIR"
+    ; NSIS IfFileExists can miss a validated receipt once a selected folder
+    ; pushes its full path past MAX_PATH. Probe the exact receipt through an
+    ; extended Win32 path so an existing OFF choice is never silently reset.
+    StrCpy $R0 "$INSTDIR"
+    StrCpy $R1 "$R0" 4
+    ${If} $R1 != "\\?\"
+        StrCpy $R1 "$R0" 2
+        ${If} $R1 == "\\"
+            StrCpy $R0 "$R0" "" 2
+            StrCpy $R0 "\\?\UNC\$R0"
+        ${Else}
+            StrCpy $R0 "\\?\$R0"
+        ${EndIf}
+    ${EndIf}
+    StrCpy $R0 "$R0\.unofficial-medieval-total-war-patch\install-manifest.json"
+    System::Call 'kernel32::GetFileAttributesW(w "$R0") i.r0 ?e'
+    Pop $1
+    ${If} $0 == -1
+    ${AndIf} $1 == 2
+        ${If} $CreditsExplicit != "1"
+            StrCpy $CreditsSelected "1"
+        ${EndIf}
+        ${If} $KeyExplicit != "1"
+            StrCpy $KeySelected "0"
+        ${EndIf}
+        Call SelectEnginePayload
+        Return
+    ${ElseIf} $0 == -1
+    ${AndIf} $1 == 3
+        ${If} $CreditsExplicit != "1"
+            StrCpy $CreditsSelected "1"
+        ${EndIf}
+        ${If} $KeyExplicit != "1"
+            StrCpy $KeySelected "0"
+        ${EndIf}
+        Call SelectEnginePayload
+        Return
+    ${ElseIf} $0 == -1
+        StrCpy $InstallError "error=saved_choices_receipt_probe_failed native_error=$1"
+        Call FailInstallation
+    ${EndIf}
+    Call SelectEnginePayload
+    StrCpy $R0 "Inspect"
+    Push $R0
+    Call ExtractEngineResult
+    ${If} $EngineExitCode != "0"
+        StrCpy $InstallError "error=saved_choices_inspect_failed $InstallError"
+        Call FailInstallation
+    ${EndIf}
+    ${If} $EngineOutput != "credits_preference=0 key_preference=0"
+    ${AndIf} $EngineOutput != "credits_preference=0 key_preference=1"
+    ${AndIf} $EngineOutput != "credits_preference=1 key_preference=0"
+    ${AndIf} $EngineOutput != "credits_preference=1 key_preference=1"
+        StrCpy $InstallError "error=saved_choices_missing"
+        Call FailInstallation
+    ${EndIf}
+    ${If} $CreditsExplicit != "1"
+        StrCpy $CreditsSelected "$EngineOutput" 1 19
+    ${EndIf}
+    ${If} $KeyExplicit != "1"
+        StrCpy $KeySelected "$EngineOutput" 1 36
+    ${EndIf}
+    Call SelectEnginePayload
 FunctionEnd
 
 Function RequireComponentPlatform
@@ -341,6 +487,25 @@ Function SelectEnginePayload
         StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-icon-only"
     ${Else}
         StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-fast-only"
+    ${EndIf}
+    ${If} $ZoomSelected == "1"
+        ${If} $TerrainSelected != "1"
+        ${AndIf} $FastSelected != "1"
+        ${AndIf} $BattleIconSelected != "1"
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-zoom-only"
+        ${Else}
+            StrCpy $EnginePayloadDirectory "$EnginePayloadDirectory-zoom"
+        ${EndIf}
+    ${EndIf}
+    ${If} $CreditsSelected == "1"
+        ${If} $TerrainSelected != "1"
+        ${AndIf} $FastSelected != "1"
+        ${AndIf} $ZoomSelected != "1"
+        ${AndIf} $BattleIconSelected != "1"
+            StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-credits-only"
+        ${Else}
+            StrCpy $EnginePayloadDirectory "$EnginePayloadDirectory-credits"
+        ${EndIf}
     ${EndIf}
 FunctionEnd
 
@@ -600,6 +765,7 @@ compatibilityInteractive:
     ${ElseIf} $SavedTargetDir != ""
         StrCpy $INSTDIR "$SavedTargetDir"
     ${EndIf}
+    Call HydrateSavedChoices
 
     !insertmacro MUI_HEADER_TEXT "Select patches" "Recommended options are selected by default. Hover over an option for more information."
     nsDialogs::Create 1018
@@ -622,7 +788,7 @@ compatibilityInteractive:
     !insertmacro SET_TAHOMA $BrowseButton $PatchPageFont
     ${NSD_OnClick} $BrowseButton BrowseTarget
 
-    ${NSD_CreateGroupBox} 0 62 320 264 "Recommended"
+    ${NSD_CreateGroupBox} 0 62 320 280 "Recommended"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
     ${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"
@@ -674,16 +840,44 @@ compatibilityInteractive:
         ${NSD_Check} $NameCheck
     ${EndIf}
     ${NSD_OnClick} $NameCheck PreviewName
-    ${NSD_CreateGroupBox} 0 338 320 154 "Optional"
+    ${NSD_CreateCheckbox} 12 304 295 24 "${PRODUCT_CREDITS_COMPONENT_NAME}"
+    Pop $CreditsCheck
+    !insertmacro SET_TAHOMA $CreditsCheck $PatchPageFont
+    ${If} $CreditsSelected == "1"
+        ${NSD_Check} $CreditsCheck
+    ${EndIf}
+    ${NSD_OnClick} $CreditsCheck PreviewCredits
+    ${NSD_CreateGroupBox} 0 352 320 140 "Optional"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
-    ${NSD_CreateCheckbox} 12 370 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"
+    ${NSD_CreateCheckbox} 12 368 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"
     Pop $FastCheck
     !insertmacro SET_TAHOMA $FastCheck $PatchPageFont
     ${If} $FastSelected == "1"
         ${NSD_Check} $FastCheck
     ${EndIf}
     ${NSD_OnClick} $FastCheck PreviewFast
+    ${NSD_CreateCheckbox} 12 398 295 24 "${PRODUCT_ZOOM_COMPONENT_NAME}"
+    Pop $ZoomCheck
+    !insertmacro SET_TAHOMA $ZoomCheck $PatchPageFont
+    ${If} $ZoomSelected == "1"
+        ${NSD_Check} $ZoomCheck
+    ${EndIf}
+    ${NSD_OnClick} $ZoomCheck PreviewZoom
+    ${NSD_CreateCheckbox} 12 428 295 24 "${PRODUCT_ECONOMY_COMPONENT_NAME}"
+    Pop $EconomyCheck
+    !insertmacro SET_TAHOMA $EconomyCheck $PatchPageFont
+    ${If} $EconomySelected == "1"
+        ${NSD_Check} $EconomyCheck
+    ${EndIf}
+    ${NSD_OnClick} $EconomyCheck PreviewEconomy
+    ${NSD_CreateCheckbox} 12 458 295 24 "${PRODUCT_KEY_COMPONENT_NAME}"
+    Pop $KeyCheck
+    !insertmacro SET_TAHOMA $KeyCheck $PatchPageFont
+    ${If} $KeySelected == "1"
+        ${NSD_Check} $KeyCheck
+    ${EndIf}
+    ${NSD_OnClick} $KeyCheck PreviewKey
     ${NSD_CreateGroupBox} 340 62 506 430 "Preview"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
@@ -692,10 +886,10 @@ compatibilityInteractive:
     ${NSD_CreateLabel} 352 374 480 28 ""
     Pop $PreviewTitle
     !insertmacro SET_TAHOMA $PreviewTitle $PatchPageTitleFont
-    ${NSD_CreateLabel} 352 410 480 56 ""
+    ${NSD_CreateLabel} 352 404 480 54 ""
     Pop $PreviewText
     !insertmacro SET_TAHOMA $PreviewText $PatchPageBodyFont
-    ${NSD_CreateLabel} 352 474 480 24 ""
+    ${NSD_CreateLabel} 352 460 480 24 ""
     Pop $PreviewWarningText
     !insertmacro SET_TAHOMA $PreviewWarningText $PatchPageBodyFont
     SetCtlColors $PreviewWarningText FF0000 F0F0F0
@@ -759,6 +953,32 @@ Function PreviewFast
     Call SetPreview
 FunctionEnd
 
+Function PreviewEconomy
+    Pop $0
+    StrCpy $R0 "economy"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewKey
+    Pop $0
+    StrCpy $KeyExplicit "1"
+    StrCpy $R0 "key"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewZoom
+    Pop $0
+    StrCpy $R0 "zoom"
+    Call SetPreview
+FunctionEnd
+
+Function PreviewCredits
+    Pop $0
+    StrCpy $CreditsExplicit "1"
+    StrCpy $R0 "credits"
+    Call SetPreview
+FunctionEnd
+
 Function PreviewBattleIcon
     Pop $0
     StrCpy $R0 "battle-icon"
@@ -798,6 +1018,10 @@ Function PreviewFromCursor
     !insertmacro CHECK_PREVIEW_HOVER $ParchmentCheck "parchment"
     !insertmacro CHECK_PREVIEW_HOVER $NameCheck "name"
     !insertmacro CHECK_PREVIEW_HOVER $FastCheck "fast"
+    !insertmacro CHECK_PREVIEW_HOVER $EconomyCheck "economy"
+    !insertmacro CHECK_PREVIEW_HOVER $KeyCheck "key"
+    !insertmacro CHECK_PREVIEW_HOVER $ZoomCheck "zoom"
+    !insertmacro CHECK_PREVIEW_HOVER $CreditsCheck "credits"
 FunctionEnd
 
 Function SetPreview
@@ -835,6 +1059,30 @@ Function SetPreview
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\fast-computer-moves.bmp"
+    ${ElseIf} $R0 == "economy"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_ECONOMY_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Rebalances 120-man unit sizes so recruitment cost, upkeep cost, and training time remain consistent with the 60-man unit size setting."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\unit-balance.bmp"
+    ${ElseIf} $R0 == "key"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_KEY_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Allows a wider range of keys to be used in the game's key bindings."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\keybinding-customisation.bmp"
+    ${ElseIf} $R0 == "zoom"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_ZOOM_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Adds an option to the campaign tray. When turned on, it will keep the map zoom level the same after ending year."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\campaign-zoom-option.bmp"
+    ${ElseIf} $R0 == "credits"
+        ${NSD_SetText} $PreviewTitle "${PRODUCT_CREDITS_COMPONENT_NAME}"
+        ${NSD_SetText} $PreviewText "Fixes brief flashes of illustrations during the end credits."
+        ${NSD_SetText} $PreviewWarningText ""
+        ShowWindow $PreviewWarningText ${SW_HIDE}
+        StrCpy $1 "$PLUGINSDIR\credits-illustration.bmp"
     ${ElseIf} $R0 == "tutorial"
         ${NSD_SetText} $PreviewTitle "${PRODUCT_TUTORIAL_COMPONENT_NAME}"
         ${NSD_SetText} $PreviewText "Fixes the campaign tutorial resetting your strategy map resolution to 800x600."
@@ -876,6 +1124,18 @@ Function BrowseTarget
     Pop $2
     ${If} $2 != "error"
         ${NSD_SetText} $TargetText "$2"
+        StrCpy $INSTDIR "$2"
+        Call HydrateSavedChoices
+        ${If} $CreditsSelected == "1"
+            ${NSD_Check} $CreditsCheck
+        ${Else}
+            ${NSD_Uncheck} $CreditsCheck
+        ${EndIf}
+        ${If} $KeySelected == "1"
+            ${NSD_Check} $KeyCheck
+        ${Else}
+            ${NSD_Uncheck} $KeyCheck
+        ${EndIf}
     ${EndIf}
 FunctionEnd
 
@@ -921,12 +1181,61 @@ Function CompatibilityPageBack
     ${If} $0 == ${BST_CHECKED}
         StrCpy $FastSelected "1"
     ${EndIf}
+    ${NSD_GetState} $EconomyCheck $0
+    StrCpy $EconomySelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $EconomySelected "1"
+    ${EndIf}
+    ${NSD_GetState} $KeyCheck $0
+    StrCpy $KeySelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $KeySelected "1"
+    ${EndIf}
+    ${NSD_GetState} $ZoomCheck $0
+    StrCpy $ZoomSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ZoomSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $CreditsCheck $0
+    StrCpy $CreditsSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $CreditsSelected "1"
+    ${EndIf}
     Call RestoreDefaultWizard
 FunctionEnd
 
 Function CompatibilityPageLeave
     ${NSD_GetText} $TargetText $INSTDIR
     StrCpy $SavedTargetDir "$INSTDIR"
+    ${NSD_GetState} $CreditsCheck $CreditsBeforeHydrate
+    ${NSD_GetState} $KeyCheck $KeyBeforeHydrate
+    Call HydrateSavedChoices
+    ${If} $CreditsExplicit != "1"
+        ${If} $CreditsSelected == "1"
+        ${AndIf} $CreditsBeforeHydrate != ${BST_CHECKED}
+            ${NSD_Check} $CreditsCheck
+            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Credits choice. Review the restored selection, then continue."
+            Abort
+        ${ElseIf} $CreditsSelected == "0"
+        ${AndIf} $CreditsBeforeHydrate == ${BST_CHECKED}
+            ${NSD_Uncheck} $CreditsCheck
+            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Credits choice. Review the restored selection, then continue."
+            Abort
+        ${EndIf}
+    ${EndIf}
+    ${If} $KeyExplicit != "1"
+        ${If} $KeySelected == "1"
+        ${AndIf} $KeyBeforeHydrate != ${BST_CHECKED}
+            ${NSD_Check} $KeyCheck
+            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Keybinding choice. Review the restored selection, then continue."
+            Abort
+        ${ElseIf} $KeySelected == "0"
+        ${AndIf} $KeyBeforeHydrate == ${BST_CHECKED}
+            ${NSD_Uncheck} $KeyCheck
+            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Keybinding choice. Review the restored selection, then continue."
+            Abort
+        ${EndIf}
+    ${EndIf}
     ${NSD_GetState} $CompatibilityCheck $0
     StrCpy $TerrainSelected "0"
     ${If} $0 == ${BST_CHECKED}
@@ -967,6 +1276,26 @@ Function CompatibilityPageLeave
     ${If} $0 == ${BST_CHECKED}
         StrCpy $FastSelected "1"
     ${EndIf}
+    ${NSD_GetState} $EconomyCheck $0
+    StrCpy $EconomySelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $EconomySelected "1"
+    ${EndIf}
+    ${NSD_GetState} $KeyCheck $0
+    StrCpy $KeySelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $KeySelected "1"
+    ${EndIf}
+    ${NSD_GetState} $ZoomCheck $0
+    StrCpy $ZoomSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $ZoomSelected "1"
+    ${EndIf}
+    ${NSD_GetState} $CreditsCheck $0
+    StrCpy $CreditsSelected "0"
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $CreditsSelected "1"
+    ${EndIf}
     ${If} $TerrainSelected != "1"
     ${AndIf} $ScrollSelected != "1"
     ${AndIf} $SpriteSelected != "1"
@@ -975,6 +1304,10 @@ Function CompatibilityPageLeave
     ${AndIf} $NameSelected != "1"
     ${AndIf} $BattleIconSelected != "1"
     ${AndIf} $FastSelected != "1"
+    ${AndIf} $EconomySelected != "1"
+    ${AndIf} $KeySelected != "1"
+    ${AndIf} $ZoomSelected != "1"
+    ${AndIf} $CreditsSelected != "1"
         MessageBox MB_OK|MB_ICONEXCLAMATION "Select at least one fix to continue."
         Abort
     ${EndIf}
@@ -1092,6 +1425,14 @@ Section "${PRODUCT_COMPONENT_NAME}" MainSection
     StrCpy $LogLine "name_and_title_corrections_selected=$NameSelected"
     Call WriteDiagnostic
     StrCpy $LogLine "fast_computer_moves_option_selected=$FastSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "unit_balance_fix_selected=$EconomySelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "keybinding_customisation_fix_selected=$KeySelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "campaign_zoom_option_selected=$ZoomSelected"
+    Call WriteDiagnostic
+    StrCpy $LogLine "credits_illustration_fix_selected=$CreditsSelected"
     Call WriteDiagnostic
     DetailPrint "Diagnostics: $LogDirectory"
     StrCpy $R0 "Install"

@@ -19,6 +19,8 @@ param(
     [string]$BuildDirectory = '',
     [string]$ArtifactDirectory = '',
     [string]$TestDirectory = '',
+    [string]$ZoomBuildManifest = '',
+    [string]$CreditsBuildManifest = '',
     [switch]$SkipR185Build
 )
 
@@ -107,6 +109,11 @@ function Build-NativeHelper {
     foreach ($path in @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -File | Where-Object { $_.Extension -in @('.c','.h','.rc','.manifest') } | Sort-Object Name)) {
         $nativeSources['src/' + $path.Name] = [ordered]@{sha256=(Get-FileHash -LiteralPath $path.FullName -Algorithm SHA256).Hash;length=$path.Length}
     }
+    foreach ($name in @('credits_payload_hashes.h','credits_payload_previous_hashes.h',
+            'credits_payload_r288_hashes.h','credits_payload_r289_hashes.h','mtw_exe_variants.h')) {
+        $path = Join-Path $root ('include\' + $name)
+        $nativeSources['include/' + $name] = [ordered]@{sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;length=(Get-Item -LiteralPath $path).Length}
+    }
     $nativeToolchain = @()
     foreach ($name in @('cc1.exe','as.exe','ld.exe')) {
         $tool = if ($name -like 'cc1*') { Join-Path $libexec $name } else { Join-Path $compilerBin $name }
@@ -143,15 +150,6 @@ else {
     if (-not (Test-Path -LiteralPath $windres -PathType Leaf)) { $windres = Join-Path $compilerBin 'windres.exe' }
 }
 if (-not (Test-Path -LiteralPath $windres -PathType Leaf)) { throw 'Supply -WindresPath with the MinGW resource compiler.' }
-$payloadVariants = [ordered]@{
-    'D3D9-scroll-sprite-off.dll' = 'payload-manifest-scroll-sprite-off.json'
-    'D3D9-scroll-sprite-off-fast.dll' = 'payload-manifest-scroll-sprite-off-fast.json'
-    'D3D9-fast-only.dll' = 'payload-manifest-fast-only.json'
-    'D3D9-scroll-sprite-off-icon-off.dll' = 'payload-manifest-scroll-sprite-off-icon-off.json'
-    'D3D9-scroll-sprite-off-fast-icon-off.dll' = 'payload-manifest-scroll-sprite-off-fast-icon-off.json'
-    'D3D9-icon-only.dll' = 'payload-manifest-icon-only.json'
-    'D3D9-fast-icon.dll' = 'payload-manifest-fast-icon.json'
-}
 New-Item -ItemType Directory -Path $OutputDirectory,$ArtifactDirectory,$BuildDirectory,$TestDirectory -Force | Out-Null
 $tempDirectory = Join-Path $BuildDirectory ('temp-' + $runId)
 New-Item -ItemType Directory -Path $tempDirectory -ErrorAction Stop | Out-Null
@@ -196,36 +194,21 @@ try {
     $env:MTW_TEST_C_BACKEND = '1'
     & (Join-Path $root 'tools\generate-product-nsh.ps1')
     Invoke-LoggedCommand $python @($manifestScript,'--write-source-snapshot',$sourceSnapshot) 'source-snapshot.log'
+    Invoke-LoggedCommand $python @((Join-Path $root 'tools\validate-credits-hash-table.py')) 'credits-native-hash-table.log'
     Build-NativeHelper
-
+    # Credits-OFF and Credits-ON proxies are built from the same source with
+    # explicit feature flags and verified against separate payload manifests.
     $r185Evidence = ''
     $r185Clang = ''
-    if (-not $SkipR185Build) {
-        # Resolve the same tool as build_scaffold.ps1, including its fallback.
-        $clangCommand = Get-Command clang-cl.exe -ErrorAction SilentlyContinue
-        $r185Clang = if ($clangCommand) { $clangCommand.Source } else { Join-Path $env:ProgramFiles 'LLVM\bin\clang-cl.exe' }
-        if (-not (Test-Path -LiteralPath $r185Clang -PathType Leaf)) { throw 'The R185 clang-cl compiler is missing.' }
-        $r185Build = Join-Path $BuildDirectory ('r185-' + $runId)
-        New-Item -ItemType Directory -Path $r185Build -ErrorAction Stop | Out-Null
-        Push-Location $r185Build
-        try {
-            & (Join-Path $root 'vendor\r185\source\build_scaffold.ps1') -OutputDirectory $r185Build 2>&1 |
-                Tee-Object -FilePath (Join-Path $ArtifactDirectory 'r185-build.log') | Out-Host
-            if ($LASTEXITCODE -ne 0) { throw "R185 build failed: $LASTEXITCODE" }
+    if (-not $CreditsBuildManifest) {
+        $creditsOutput = Join-Path $BuildDirectory ('credits-' + $runId)
+        & (Join-Path $root 'tools\build-credits-payloads.ps1') -OutputDirectory $creditsOutput 2>&1 |
+            Tee-Object -FilePath (Join-Path $ArtifactDirectory 'credits-build.log') | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Credits payload build failed: $LASTEXITCODE" }
+        $CreditsBuildManifest = Join-Path $creditsOutput 'credits-build-manifest.json'
+        if (-not (Test-Path -LiteralPath $CreditsBuildManifest -PathType Leaf)) {
+            throw 'Credits payload build evidence was not generated.'
         }
-        finally { Pop-Location }
-        foreach ($entry in $payloadVariants.GetEnumerator()) {
-            $rebuilt = Join-Path $r185Build ('combined-r154\' + $entry.Key)
-            $packaged = Join-Path $root ('vendor\runtime\' + $entry.Key)
-            $manifest = Get-Content -LiteralPath (Join-Path $root ('vendor\runtime\' + $entry.Value)) -Raw -Encoding UTF8 | ConvertFrom-Json
-            $actual = (Get-FileHash -LiteralPath $rebuilt -Algorithm SHA256).Hash
-            if ($actual -ne $manifest.files.'D3D9.dll'.sha256 -or
-                $actual -ne (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash) {
-                throw "Rebuilt $($entry.Key) bytes do not match the packaged runtime."
-            }
-        }
-        $r185Evidence = Join-Path $ArtifactDirectory 'r185-build-manifest.json'
-        Copy-Item -LiteralPath (Join-Path $r185Build 'BUILD_MANIFEST.json') -Destination $r185Evidence -ErrorAction Stop
     }
 
     Invoke-LoggedCommand $python @($manifestScript,'--verify-source-snapshot',$sourceSnapshot) 'source-before-package.log'
@@ -279,6 +262,8 @@ try {
     $manifestArguments = @($manifestScript,'--installer',$installer,'--output',(Join-Path $OutputDirectory 'RELEASE_MANIFEST.json'),
         '--source-snapshot',$sourceSnapshot,'--tools',$toolReport,'--audit',$audit,'--native-build',$nativeBuildReport)
     if ($r185Evidence) { $manifestArguments += @('--r185-build-manifest',$r185Evidence) }
+    if ($ZoomBuildManifest) { $manifestArguments += @('--zoom-build-manifest',$ZoomBuildManifest) }
+    if ($CreditsBuildManifest) { $manifestArguments += @('--credits-build-manifest',$CreditsBuildManifest) }
     foreach ($entry in $reports.GetEnumerator()) { $manifestArguments += @('--test-result',($entry.Key + '=' + $entry.Value)) }
     Invoke-LoggedCommand $python $manifestArguments 'release-manifest-draft.log'
     Write-Checksums
@@ -304,6 +289,8 @@ try {
         $buildResult.inputs[$entry.Key] = Get-BuildFileRecord $entry.Value
     }
     if ($r185Evidence) { $buildResult.inputs['r185Evidence'] = Get-BuildFileRecord $r185Evidence }
+    if ($ZoomBuildManifest) { $buildResult.inputs['zoomBuildManifest'] = Get-BuildFileRecord $ZoomBuildManifest }
+    if ($CreditsBuildManifest) { $buildResult.inputs['creditsBuildManifest'] = Get-BuildFileRecord $CreditsBuildManifest }
     $buildResult['reports'] = [ordered]@{}
     foreach ($entry in $reports.GetEnumerator()) { $buildResult.reports[$entry.Key] = Get-BuildFileRecord $entry.Value }
     Write-Output "Build complete: $installer"

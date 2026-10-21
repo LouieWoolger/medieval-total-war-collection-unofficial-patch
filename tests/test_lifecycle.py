@@ -86,7 +86,7 @@ def games(tmp_path: Path):
 def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None = None,
         terrain_fix: bool | None = None, scroll_fix: bool | None = None,
         sprite_fix: bool | None = None, parchment_fix: bool | None = False,
-        name_fix: bool | None = None):
+        name_fix: bool | None = None, economy_fix: bool | None = None):
     # This models a supplied package artifact, not a functional NSIS executable.
     # The compiled suite uses WriteUninstaller's actual output instead.
     source = uninstaller or game.parent / "synthetic-uninstaller.bin"
@@ -98,7 +98,7 @@ def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None
                "-UninstallerSource", str(source)]
     for option, selected in (("TerrainFix", terrain_fix), ("ScrollFix", scroll_fix),
                              ("SpriteFix", sprite_fix), ("ParchmentFix", parchment_fix),
-                             ("NameFix", name_fix)):
+                             ("NameFix", name_fix), ("EconomyFix", economy_fix)):
         if selected is not None:
             command.extend(("-" + option, str(int(selected))))
     if terrain_fix is False:
@@ -201,6 +201,7 @@ def test_v6_receipt_upgrades_to_independent_name_selection(games):
     receipt = read_receipt(game)
     receipt["schema"] = "unofficial-medieval-total-war-patch-install-v6"
     receipt.pop("name_fix_enabled")
+    receipt.pop("key_fix_enabled")
     seal(receipt)
     path.write_text(json.dumps(receipt, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     off, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
@@ -283,6 +284,177 @@ def test_character_parchment_selection_is_independent_and_reversible(games):
     assert relevant(game) == before
 
 
+def test_unit_balance_selection_repairs_toggles_and_restores(games):
+    game = games("Unit balance choice")
+    before = relevant(game)
+    personal = game / "SaveGames/personal.cpg"
+    personal_hash = digest(personal)
+    options = dict(terrain_fix=False, scroll_fix=False, sprite_fix=False,
+                   parchment_fix=False, name_fix=False, economy_fix=True)
+    # Existing saves, including ones the installer cannot parse, belong to
+    # the player. They must not prevent choosing or removing Unit Balance.
+    long_save = game / "SaveGames" / (("\u00e9" * 130) + ".cpg")
+    shutil.copy2(personal, long_save)
+    long_hash = digest(long_save)
+    enabled, report = run("Install", game, **options)
+    assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
+    balanced_hash = "61221C667368358D359C3D51D6692FE68729F747EF7B16403A85059B0E9C34DA"
+    assert digest(game / "Medieval_TW.exe") == balanced_hash
+    assert read_receipt(game)["economy_fix_enabled"] is True
+
+    repaired, report = run("Install", game, **options)
+    assert repaired.returncode == 0, (repaired.stdout, repaired.stderr)
+    assert digest(game / "Medieval_TW.exe") == balanced_hash
+
+    disabled, report = run("Install", game, **{**options, "economy_fix": False, "scroll_fix": True})
+    assert disabled.returncode == 0, (disabled.stdout, disabled.stderr)
+    assert read_receipt(game)["economy_fix_enabled"] is False
+    assert digest(game / "Medieval_TW.exe") != balanced_hash
+
+    reenabled, report = run("Install", game, **{**options, "scroll_fix": True})
+    assert reenabled.returncode == 0, (reenabled.stdout, reenabled.stderr)
+    assert read_receipt(game)["economy_fix_enabled"] is True
+    assert digest(game / "Medieval_TW.exe") != balanced_hash
+
+    # An imported save must also remain untouched through a same-mode repair.
+    imported = game / "SaveGames/ImportedAfterSwitch.cpg"
+    shutil.copy2(personal, imported)
+    inspected, report = run("Inspect", game)
+    assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
+    same_mode, report = run("Install", game, **{**options, "scroll_fix": True})
+    assert same_mode.returncode == 0, (same_mode.stdout, same_mode.stderr)
+    assert read_receipt(game)["economy_fix_enabled"] is True
+    imported.unlink()
+
+    restored, report = run("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert digest(personal) == personal_hash
+    assert digest(long_save) == long_hash
+    assert relevant(game) == before
+
+
+def test_missing_exe_restore_with_existing_save(games):
+    game = games("Missing EXE economy recovery")
+    exe = game / "Medieval_TW.exe"
+    original_sha256 = digest(exe)
+    personal = game / "SaveGames/personal.cpg"
+    personal_sha256 = digest(personal)
+
+    installed, report = run("Install", game, terrain_fix=False, scroll_fix=False,
+                            sprite_fix=False, economy_fix=True)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    assert read_receipt(game)["economy_fix_enabled"] is True
+    receipt_path = game / STATE / "install-manifest.json"
+
+    exe.unlink()
+    restored, report = run("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert digest(exe) == original_sha256
+    assert digest(personal) == personal_sha256
+    assert not receipt_path.exists()
+    assert not registry(game)
+
+
+def test_missing_exe_restore_without_economy_change_keeps_personal_save(games):
+    game = games("Missing EXE same economy")
+    exe = game / "Medieval_TW.exe"
+    original_sha256 = digest(exe)
+    personal = game / "SaveGames/personal.cpg"
+    personal_sha256 = digest(personal)
+    installed, report = run("Install", game, terrain_fix=False, scroll_fix=True,
+                            sprite_fix=False, economy_fix=False)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    assert read_receipt(game)["economy_fix_enabled"] is False
+
+    exe.unlink()
+    before = relevant(game)
+    reinstall, report = run("Install", game, terrain_fix=False, scroll_fix=True,
+                            sprite_fix=False, economy_fix=False)
+    assert reinstall.returncode == 2, (reinstall.stdout, reinstall.stderr)
+    assert report["code"] == "target_missing"
+    assert relevant(game) == before
+    restored, report = run("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert digest(exe) == original_sha256
+    assert digest(personal) == personal_sha256
+
+
+def test_present_unknown_exe_still_refuses_restore(games):
+    game = games("Present unknown EXE economy")
+    personal = game / "SaveGames/personal.cpg"
+    personal_sha256 = digest(personal)
+    installed, report = run("Install", game, terrain_fix=False, scroll_fix=False,
+                            sprite_fix=False, economy_fix=True)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+
+    exe = game / "Medieval_TW.exe"
+    changed = bytearray(exe.read_bytes())
+    changed[-1] ^= 1
+    exe.write_bytes(changed)
+    before = relevant(game)
+    receipt_path = game / STATE / "install-manifest.json"
+    receipt_sha256 = digest(receipt_path)
+    registration = registry(game)
+    blocked, report = run("Restore", game)
+    assert blocked.returncode == 2, (blocked.stdout, blocked.stderr)
+    assert report["code"] == "unsupported_executable"
+    assert relevant(game) == before
+    assert digest(receipt_path) == receipt_sha256
+    assert registry(game) == registration
+    assert digest(personal) == personal_sha256
+
+
+def test_present_supported_exe_swap_can_restore_with_existing_save(games):
+    game = games("Supported EXE policy swap")
+    exe = game / "Medieval_TW.exe"
+    stock_bytes = exe.read_bytes()
+    personal = game / "SaveGames/personal.cpg"
+    personal_sha256 = digest(personal)
+    installed, report = run("Install", game, terrain_fix=False, scroll_fix=False,
+                            sprite_fix=False, economy_fix=True)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    receipt_path = game / STATE / "install-manifest.json"
+
+    # Simulate an out-of-band replacement with a *known* stock-price EXE.
+    # Removal is still allowed when the live EXE already equals the original.
+    exe.write_bytes(stock_bytes)
+    restored, report = run("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert exe.read_bytes() == stock_bytes
+    assert digest(personal) == personal_sha256
+    assert not receipt_path.exists()
+
+
+def test_legacy_receipt_reports_migration_with_existing_save(games):
+    game = games("Legacy receipt with existing save")
+    personal = game / "SaveGames/personal.cpg"
+    personal_sha256 = digest(personal)
+    installed, report = run("Install", game, terrain_fix=True, scroll_fix=False,
+                            sprite_fix=False, economy_fix=True)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+
+    receipt_path = game / STATE / "install-manifest.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["schema"] = "unofficial-medieval-total-war-patch-install-v1"
+    receipt["files"] = {name: receipt["files"][name] for name in (
+        "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf", "D3D9.dll")}
+    receipt_path.write_text(json.dumps(receipt, separators=(",", ":")), encoding="utf-8")
+    registration = registry(game)
+    receipt_sha256 = digest(receipt_path)
+
+    for missing_exe in (False, True):
+        if missing_exe:
+            (game / "Medieval_TW.exe").unlink()
+        before = relevant(game)
+        blocked, report = run("Restore", game)
+        assert blocked.returncode == 2, (blocked.stdout, blocked.stderr)
+        assert report["code"] == "migration_required"
+        assert relevant(game) == before
+        assert digest(receipt_path) == receipt_sha256
+        assert registry(game) == registration
+        assert digest(personal) == personal_sha256
+
+
 def test_extended_character_executable_can_be_reinstalled(games):
     game = games("Extended parchment executable reinstall")
     before = relevant(game)
@@ -303,7 +475,7 @@ def test_extended_character_executable_can_be_reinstalled(games):
     assert relevant(game) == before
 
 
-def test_exact_current_proxy_without_receipt_is_archived_as_prior_patch(games):
+def test_exact_current_proxy_without_receipt_is_restored_as_preinstall(games):
     game = games("Receipt lost with current proxy")
     proxy = PAYLOAD / "D3D9.dll"
     shutil.copy2(proxy, game / "D3D9.dll")
@@ -313,16 +485,15 @@ def test_exact_current_proxy_without_receipt_is_archived_as_prior_patch(games):
                     sprite_fix=False, parchment_fix=False)
     assert installed[0].returncode == 0, (installed[0].stdout, installed[0].stderr)
     receipt = read_receipt(game)
-    assert receipt["preinstall_mode"] == "r202"
-    assert receipt["files"]["D3D9.dll"]["existed"] is False
-    archive = Path(receipt["recovery_archive"])
-    assert archive.is_dir()
-    assert digest(archive / "D3D9.dll") == prior_hash
+    assert receipt["preinstall_mode"] == "r288-key-customisation"
+    assert receipt["files"]["D3D9.dll"]["existed"] is True
+    assert receipt["files"]["D3D9.dll"]["baseline_kind"] == "verified-preinstall"
+    assert receipt["files"]["D3D9.dll"]["original_sha256"] == prior_hash
+    assert receipt["recovery_archive"] == ""
 
     removed, report = run("Restore", game)
     assert removed.returncode == 0, (removed.stdout, removed.stderr)
-    assert not (game / "D3D9.dll").exists()
-    assert digest(archive / "D3D9.dll") == prior_hash
+    assert digest(game / "D3D9.dll") == prior_hash
 
 
 @pytest.mark.parametrize("cyd,kilij,heroes_fixed", [
