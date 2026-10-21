@@ -19,10 +19,14 @@ The installer looks for `Medieval_TW.exe`, makes a backup when it needs to chang
 - Character Parchment Fix - Restores the parchment background behind character attributes.
 - Battle Unit Portrait Fix - Fixes unit portraits disappearing from battle unit cards after Alt+Tab.
 - Name and Title Fix - Corrects incorrect character names and titles for the Sicilian and Welsh factions.
+- Credits Flash Fix - Fixes brief flashes of illustrations during the end credits.
 
 **Optional**:
 
 - Fast Computer Moves Option - Adds an option to the campaign tray. When turned off, AI turns play at reduced speed so you can follow where the AI has moved.
+- Persistent Campaign Zoom Option - Adds an option to the campaign tray. When turned on, it will keep the map zoom level the same after ending year.
+- 120-Man Unit Balance Fix - Rebalances 120-man unit sizes so recruitment cost, upkeep cost, and training time remain consistent with the 60-man unit size setting.
+- Extended Keybinding Support - Allows a wider range of keys to be used in the game's key bindings.
 
 ## Requirements
 
