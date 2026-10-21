@@ -125,20 +125,26 @@ def test_detection_uses_evidenced_gog_and_steam_paths_plus_manual_browse() -> No
     assert "SHOGUN" not in "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";")).upper()
 
 
-def test_credits_and_key_choices_are_hydrated_from_validated_receipt_unless_explicit() -> None:
+def test_only_recommended_credits_choice_is_hydrated_from_validated_receipt() -> None:
     installer = SCRIPT.read_text(encoding="utf-8")
     helper = (ROOT / "src/medieval_fix_patcher.c").read_text(encoding="utf-8")
     lifecycle = (ROOT / "src/lifecycle.h").read_text(encoding="utf-8")
-    assert "Function HydrateSavedChoices" in installer
-    assert "Call DetectGamePath\n    ${EndIf}\n    Call HydrateSavedChoices" in installer
+    hydrate = installer.split("Function HydrateSavedCreditsChoice", 1)[1].split("FunctionEnd", 1)[0]
+    assert "Call DetectGamePath\n    ${EndIf}\n    Call HydrateSavedCreditsChoice" in installer
     assert "${If} $CreditsExplicit == \"1\"" in installer
-    assert "${AndIf} $KeyExplicit == \"1\"" in installer
-    assert 'StrCpy $KeyExplicit "1"' in installer.split("Function PreviewKey", 1)[1].split("FunctionEnd", 1)[0]
+    assert '$KeyExplicit' not in installer
+    assert '$KeyBeforeHydrate' not in installer
+    assert '$KeySelected' not in hydrate
+    assert 'StrCpy $CreditsSelected "$EngineOutput" 1 19' in hydrate
     assert 'credits_preference=0 key_preference=0' in installer
     assert "error=saved_choices_inspect_failed" in installer
     assert 'kernel32::GetFileAttributesW(w "$R0")' in installer
-    assert "Call HydrateSavedChoices" in installer.split("Function BrowseTarget", 1)[1].split("FunctionEnd", 1)[0]
-    assert "Call HydrateSavedChoices" in installer.split("Function CompatibilityPageLeave", 1)[1].split("FunctionEnd", 1)[0]
+    browse = installer.split("Function BrowseTarget", 1)[1].split("FunctionEnd", 1)[0]
+    leave = installer.split("Function CompatibilityPageLeave", 1)[1].split("FunctionEnd", 1)[0]
+    assert "Call HydrateSavedCreditsChoice" in browse
+    assert "Call HydrateSavedCreditsChoice" in leave
+    assert '${NSD_Check} $KeyCheck' not in browse
+    assert 'different saved Keybinding choice' not in leave
     assert 'credits_preference=%d key_preference=%d' in helper
     assert 'mtw_boolean(&m.document, result, "credits_flash_fix_enabled"' in lifecycle
     assert 'mtw_boolean(&m.document, result, "key_fix_enabled"' in lifecycle
@@ -317,6 +323,7 @@ def test_keybinding_customisation_is_an_independent_optional_choice() -> None:
     support = (ROOT / "installer-support.nsh").read_text(encoding="utf-8")
     assert product["key_component_name"] == "Extended Keybinding Support"
     assert 'StrCpy $KeySelected "0"' in text
+    assert '${If} $KeySelected == "1"\n        ${NSD_Check} $KeyCheck' in text
     control_rect(text, "Checkbox", "${PRODUCT_KEY_COMPONENT_NAME}")
     assert '${NSD_GetState} $KeyCheck' in text
     assert '!insertmacro CHECK_PREVIEW_HOVER $KeyCheck "key"' in text

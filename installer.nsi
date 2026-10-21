@@ -131,8 +131,6 @@ Var EconomyCheck
 Var EconomySelected
 Var KeyCheck
 Var KeySelected
-Var KeyExplicit
-Var KeyBeforeHydrate
 Var ZoomCheck
 Var ZoomSelected
 Var CreditsCheck
@@ -214,7 +212,6 @@ Function .onInit
     StrCpy $FastSelected "0"
     StrCpy $EconomySelected "0"
     StrCpy $KeySelected "0"
-    StrCpy $KeyExplicit "0"
     StrCpy $ZoomSelected "0"
     StrCpy $CreditsSelected "1"
     StrCpy $CreditsExplicit "0"
@@ -273,10 +270,8 @@ Function .onInit
     ${GetOptions} $CommandOptions "/KEYFIX=" $0
     ${If} $0 == "0"
         StrCpy $KeySelected "0"
-        StrCpy $KeyExplicit "1"
     ${ElseIf} $0 == "1"
         StrCpy $KeySelected "1"
-        StrCpy $KeyExplicit "1"
     ${ElseIf} $0 != ""
         StrCpy $InstallError "error=invalid_keyfix_option value=$0"
         Call FailInstallation
@@ -355,24 +350,23 @@ Function .onInit
     ${If} $1 == 0
         Call DetectGamePath
     ${EndIf}
-    Call HydrateSavedChoices
+    Call HydrateSavedCreditsChoice
 FunctionEnd
 
-Function HydrateSavedChoices
-    ; Saved choices survive repair/upgrade. The native Inspect result comes
-    ; from a fully validated, sealed receipt; NSIS never parses receipt JSON
-    ; as authority. Explicit command-line and UI choices win independently.
+Function HydrateSavedCreditsChoice
+    ; Restore the recommended Credits choice from a validated receipt. Optional
+    ; choices always start unchecked unless explicitly selected this run.
+    ; NSIS never parses receipt JSON as authority.
     ${If} $ChoicesHydratedTarget == $INSTDIR
         Return
     ${EndIf}
     ${If} $CreditsExplicit == "1"
-    ${AndIf} $KeyExplicit == "1"
         Return
     ${EndIf}
     StrCpy $ChoicesHydratedTarget "$INSTDIR"
     ; NSIS IfFileExists can miss a validated receipt once a selected folder
     ; pushes its full path past MAX_PATH. Probe the exact receipt through an
-    ; extended Win32 path so an existing OFF choice is never silently reset.
+    ; extended Win32 path so an existing Credits OFF choice is preserved.
     StrCpy $R0 "$INSTDIR"
     StrCpy $R1 "$R0" 4
     ${If} $R1 != "\\?\"
@@ -392,18 +386,12 @@ Function HydrateSavedChoices
         ${If} $CreditsExplicit != "1"
             StrCpy $CreditsSelected "1"
         ${EndIf}
-        ${If} $KeyExplicit != "1"
-            StrCpy $KeySelected "0"
-        ${EndIf}
         Call SelectEnginePayload
         Return
     ${ElseIf} $0 == -1
     ${AndIf} $1 == 3
         ${If} $CreditsExplicit != "1"
             StrCpy $CreditsSelected "1"
-        ${EndIf}
-        ${If} $KeyExplicit != "1"
-            StrCpy $KeySelected "0"
         ${EndIf}
         Call SelectEnginePayload
         Return
@@ -428,9 +416,6 @@ Function HydrateSavedChoices
     ${EndIf}
     ${If} $CreditsExplicit != "1"
         StrCpy $CreditsSelected "$EngineOutput" 1 19
-    ${EndIf}
-    ${If} $KeyExplicit != "1"
-        StrCpy $KeySelected "$EngineOutput" 1 36
     ${EndIf}
     Call SelectEnginePayload
 FunctionEnd
@@ -765,7 +750,7 @@ compatibilityInteractive:
     ${ElseIf} $SavedTargetDir != ""
         StrCpy $INSTDIR "$SavedTargetDir"
     ${EndIf}
-    Call HydrateSavedChoices
+    Call HydrateSavedCreditsChoice
 
     !insertmacro MUI_HEADER_TEXT "Select patches" "Recommended options are selected by default. Hover over an option for more information."
     nsDialogs::Create 1018
@@ -961,7 +946,6 @@ FunctionEnd
 
 Function PreviewKey
     Pop $0
-    StrCpy $KeyExplicit "1"
     StrCpy $R0 "key"
     Call SetPreview
 FunctionEnd
@@ -1125,16 +1109,11 @@ Function BrowseTarget
     ${If} $2 != "error"
         ${NSD_SetText} $TargetText "$2"
         StrCpy $INSTDIR "$2"
-        Call HydrateSavedChoices
+        Call HydrateSavedCreditsChoice
         ${If} $CreditsSelected == "1"
             ${NSD_Check} $CreditsCheck
         ${Else}
             ${NSD_Uncheck} $CreditsCheck
-        ${EndIf}
-        ${If} $KeySelected == "1"
-            ${NSD_Check} $KeyCheck
-        ${Else}
-            ${NSD_Uncheck} $KeyCheck
         ${EndIf}
     ${EndIf}
 FunctionEnd
@@ -1208,8 +1187,7 @@ Function CompatibilityPageLeave
     ${NSD_GetText} $TargetText $INSTDIR
     StrCpy $SavedTargetDir "$INSTDIR"
     ${NSD_GetState} $CreditsCheck $CreditsBeforeHydrate
-    ${NSD_GetState} $KeyCheck $KeyBeforeHydrate
-    Call HydrateSavedChoices
+    Call HydrateSavedCreditsChoice
     ${If} $CreditsExplicit != "1"
         ${If} $CreditsSelected == "1"
         ${AndIf} $CreditsBeforeHydrate != ${BST_CHECKED}
@@ -1220,19 +1198,6 @@ Function CompatibilityPageLeave
         ${AndIf} $CreditsBeforeHydrate == ${BST_CHECKED}
             ${NSD_Uncheck} $CreditsCheck
             MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Credits choice. Review the restored selection, then continue."
-            Abort
-        ${EndIf}
-    ${EndIf}
-    ${If} $KeyExplicit != "1"
-        ${If} $KeySelected == "1"
-        ${AndIf} $KeyBeforeHydrate != ${BST_CHECKED}
-            ${NSD_Check} $KeyCheck
-            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Keybinding choice. Review the restored selection, then continue."
-            Abort
-        ${ElseIf} $KeySelected == "0"
-        ${AndIf} $KeyBeforeHydrate == ${BST_CHECKED}
-            ${NSD_Uncheck} $KeyCheck
-            MessageBox MB_OK|MB_ICONINFORMATION "The selected game folder has a different saved Keybinding choice. Review the restored selection, then continue."
             Abort
         ${EndIf}
     ${EndIf}

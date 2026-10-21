@@ -261,6 +261,16 @@ def test_compiled_keybinding_choice_installs_toggles_and_restores(tmp_path: Path
                    tutorial_fix=False, parchment_fix=False, name_fix=False,
                    fast_moves_fix=False, battle_icon_fix=False,
                    economy_fix=False, zoom_fix=False, key_fix=True)
+    fresh_default = run_installer(game, **{**options, "scroll_fix": True,
+                                           "fast_moves_fix": None, "economy_fix": None,
+                                           "zoom_fix": None, "key_fix": None})
+    assert fresh_default.returncode == 0, (fresh_default.stdout, fresh_default.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    fresh_receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    for choice in ("fast_moves_fix_enabled", "economy_fix_enabled",
+                   "zoom_fix_enabled", "key_fix_enabled"):
+        assert fresh_receipt[choice] is False
+
     enabled = run_installer(game, **options)
     assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
     assert sha256(game / "Medieval_TW.exe") == key_only_hash
@@ -274,6 +284,14 @@ def test_compiled_keybinding_choice_installs_toggles_and_restores(tmp_path: Path
     assert reenabled.returncode == 0, (reenabled.stdout, reenabled.stderr)
     assert sha256(game / "Medieval_TW.exe") == scroll_key_hash
     assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["key_fix_enabled"] is True
+
+    omitted_on_reinstall = run_installer(game, **{**options, "scroll_fix": True,
+                                                  "credits_fix": None, "key_fix": None})
+    assert omitted_on_reinstall.returncode == 0, (
+        omitted_on_reinstall.stdout, omitted_on_reinstall.stderr)
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["key_fix_enabled"] is False
+
     removed = run_uninstaller(game)
     assert removed.returncode == 0, (removed.stdout, removed.stderr)
     assert snapshot(game) == before
