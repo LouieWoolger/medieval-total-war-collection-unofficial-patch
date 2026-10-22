@@ -19,7 +19,10 @@ $clang = Join-Path $env:ProgramFiles 'LLVM\bin\clang-cl.exe'
 if (-not (Test-Path -LiteralPath $dev) -or -not (Test-Path -LiteralPath $clang)) {
     throw 'The x86 Visual Studio and clang-cl toolchain is required.'
 }
-& $dev -Arch x86 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+if (-not ($env:VSCMD_VER -and $env:VSCMD_ARG_TGT_ARCH -eq 'x86' -and
+        $env:VSCMD_ARG_HOST_ARCH -eq 'x64')) {
+    & $dev -Arch x86 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+}
 $objects = Join-Path $scaffold 'combined-r154'
 $products = Join-Path $output 'payloads'
 New-Item -ItemType Directory -Force -Path $products | Out-Null
@@ -58,8 +61,12 @@ $variants = @(
 $sourceInputs = [ordered]@{}
 $sourceFiles = @(Get-ChildItem -LiteralPath $source,(Join-Path $root 'vendor\dust-fidelity') -File -Recurse)
 $sourceFiles += Get-Item -LiteralPath (Join-Path $root 'include\mtw_exe_variants.h'),$PSCommandPath
+$rootPrefix = [IO.Path]::GetFullPath($root) + [IO.Path]::DirectorySeparatorChar
 foreach ($item in @($sourceFiles | Sort-Object FullName -Unique)) {
-    $relative = [IO.Path]::GetRelativePath($root, $item.FullName).Replace('\','/')
+    if (-not $item.FullName.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A Zoom source input is outside the project root.'
+    }
+    $relative = $item.FullName.Substring($rootPrefix.Length).Replace('\','/')
     $sourceInputs[$relative] = [ordered]@{sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash; length=$item.Length}
 }
 $manifest = [ordered]@{schema='mtw-zoom-payload-build-v1'; source=(Resolve-Path $source).Path;

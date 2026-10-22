@@ -22,7 +22,10 @@ $clang = Join-Path $env:ProgramFiles 'LLVM\bin\clang-cl.exe'
 if (-not (Test-Path -LiteralPath $dev) -or -not (Test-Path -LiteralPath $clang)) {
     throw 'The x86 Visual Studio and clang-cl toolchain is required.'
 }
-& $dev -Arch x86 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+if (-not ($env:VSCMD_VER -and $env:VSCMD_ARG_TGT_ARCH -eq 'x86' -and
+        $env:VSCMD_ARG_HOST_ARCH -eq 'x64')) {
+    & $dev -Arch x86 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+}
 $bridge = Join-Path $output 'credits-only-bridge.obj'
 & $clang /nologo /TC --target=i686-pc-windows-msvc /O2 /W4 /WX /c `
     /DMTW_ENABLE_FAST_MOVES=0 /DMTW_ENABLE_ZOOM=0 /DMTW_ENABLE_BATTLE_ICON_FIX=0 `
@@ -49,8 +52,12 @@ $sourceInputs = [ordered]@{}
 $inputFiles = @(Get-ChildItem -LiteralPath $source,(Join-Path $root 'vendor\dust-fidelity') -File -Recurse)
 $inputFiles += Get-Item -LiteralPath (Join-Path $root 'include\mtw_exe_variants.h'), `
     (Join-Path $root 'tools\build-zoom-payloads.ps1'),$PSCommandPath
+$rootPrefix = [IO.Path]::GetFullPath($root) + [IO.Path]::DirectorySeparatorChar
 foreach ($inputFile in @($inputFiles | Sort-Object FullName -Unique)) {
-    $relative = [IO.Path]::GetRelativePath($root, $inputFile.FullName).Replace('\','/')
+    if (-not $inputFile.FullName.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A Credits source input is outside the project root.'
+    }
+    $relative = $inputFile.FullName.Substring($rootPrefix.Length).Replace('\','/')
     $sourceInputs[$relative] = [ordered]@{
         sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $inputFile.FullName).Hash
         length=$inputFile.Length

@@ -112,7 +112,10 @@ if ($controlHash -ne $expectedAcceptedProxy) {
     throw "Accepted control reproduction failed: $controlHash"
 }
 
-& $vsDevShell -Arch x86 -HostArch amd64 -SkipAutomaticLocation
+if (-not ($env:VSCMD_VER -and $env:VSCMD_ARG_TGT_ARCH -eq 'x86' -and
+        $env:VSCMD_ARG_HOST_ARCH -eq 'x64')) {
+    & $vsDevShell -Arch x86 -HostArch amd64 -SkipAutomaticLocation
+}
 $acceptedObj = Join-Path $combined 'accepted_dust.obj'
 $dustBridgeObj = Join-Path $combined 'dust_565_bridge.obj'
 $minhookBufferObj = Join-Path $combined 'minhook_buffer.obj'
