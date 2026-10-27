@@ -72,7 +72,7 @@ static int medieval_options_parse(PatchContext *c, int argc, wchar_t **argv, Med
     int i, field;
     PatchError nested = {0};
     memset(o, 0, sizeof *o); o->output = "Json";
-    o->terrain_fix = 1; o->scroll_fix = 0; o->sprite_fix = 1; o->battle_icon_fix = 1; o->parchment_fix = 1; o->name_fix = 1;
+    o->terrain_fix = 1; o->scroll_fix = 0; o->sprite_fix = 1; o->battle_icon_fix = 1; o->parchment_fix = 1; o->name_fix = 1; o->marriage_title_fix = 1;
     for (i = 1; i < argc; ++i) {
         field = medieval_field(argv[i], 0);
         if (field < 0 || i + 1 >= argc || (seen & (1U << field))) goto invalid;

@@ -110,7 +110,9 @@ function Build-NativeHelper {
         $nativeSources['src/' + $path.Name] = [ordered]@{sha256=(Get-FileHash -LiteralPath $path.FullName -Algorithm SHA256).Hash;length=$path.Length}
     }
     foreach ($name in @('credits_payload_hashes.h','credits_payload_previous_hashes.h',
-            'credits_payload_r288_hashes.h','credits_payload_r289_hashes.h','mtw_exe_variants.h')) {
+            'credits_payload_r288_hashes.h','credits_payload_r289_hashes.h',
+            'credits_payload_r290_hashes.h','credits_payload_r291_hashes.h',
+            'mtw_exe_variants.h')) {
         $path = Join-Path $root ('include\' + $name)
         $nativeSources['include/' + $name] = [ordered]@{sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;length=(Get-Item -LiteralPath $path).Length}
     }
@@ -226,10 +228,11 @@ try {
     Copy-Item -LiteralPath $audit -Destination (Join-Path $ArtifactDirectory 'INSTALLER_AUDIT.json') -ErrorAction Stop
 
     $reports['project_contracts'] = Invoke-PytestStage 'project_contracts' @(
-        'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_battle_icon_option.py','tests/test_installer_script.py','tests/test_package_audit.py',
+        'tests/test_payload_provenance.py','tests/test_assets.py','tests/test_battle_icon_option.py','tests/test_installer_script.py','tests/test_name_title_component.py','tests/test_package_audit.py',
         'tests/test_build_workflow.py','tests/test_installer_elevation.py',
         'tests/test_dust_flicker_status.py','tests/test_dust_gpu_target_guard.py',
         'tests/test_dust_draw_identity.py','tests/test_dust_rgb565_operation_gate.py',
+        'tests/test_dust_alpha_shader.py','tests/test_dust_atlas_alpha.py',
         'tests/test_menu_focus_shader_provenance.py')
     $selection = Get-GameTestSelection
     $reports['native_guard'] = Invoke-PytestStage 'native_guard' $selection.native_guard

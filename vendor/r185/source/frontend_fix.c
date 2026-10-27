@@ -120,6 +120,8 @@ extern int mtw_dust_simulation_hook_installed(void);
 #define MTW_TOP_LEVEL_MODE_CAMPAIGN 1u
 #define MTW_TOP_LEVEL_MODE_QUICK_BATTLE 12u
 #define MTW_MENU_UPDATE_SURFACE_CALLSITE_RVA 0x00B3E8FCu
+#define MTW_PRIMARY_D3D9_DEVICE_RVA 0x00B44090u
+#define MTW_PRIMARY_D3D9_SOURCE_RVA 0x00B44094u
 
 /* These sites belong to the pinned Medieval_TW.exe SHA-256 in the accepted
  * proxy. They are kept separate from the frontend/presentation hook group. */
@@ -429,6 +431,12 @@ static volatile LONG strategy_duplicate_restore_events;
 static volatile LONG focus_span_substitutions;
 static volatile LONG startup_slow_lane_mutations;
 static volatile LONG reentrant_outer_owner_tid;
+static __declspec(thread) unsigned deployment_stage_sync_armed;
+static volatile LONG deployment_stage_sync_successes;
+static volatile LONG deployment_stage_sync_failures;
+typedef void (__cdecl *mtw_deployment_terrain_draw_fn)(
+    uintptr_t argument1, uintptr_t argument2);
+static mtw_deployment_terrain_draw_fn original_deployment_terrain_draw;
 static volatile LONG reverse_authority_seen;
 static focus_span_rect focus_span_full = {0, 0, 800, 599};
 static volatile LONG diagnostic_event_number;
@@ -4281,6 +4289,116 @@ __declspec(naked) static void intro_backing_return_hook_stub(void) {
 #endif
 
 /*
+ * The deployment backdrop is drawn through a CPU lock of dgVoodoo's reused
+ * primary staging surface. The backend can report a successful GPU readback
+ * while that locked surface still contains the previous campaign map. Copy
+ * the current GPU terrain into that same locked surface before the game draws
+ * units over it. The fast video-memory path remains enabled for the game.
+ */
+static void __cdecl deployment_terrain_draw_hook(
+    uintptr_t argument1, uintptr_t argument2) {
+    unsigned previous = deployment_stage_sync_armed;
+    deployment_stage_sync_armed = 1u;
+    original_deployment_terrain_draw(argument1, argument2);
+    deployment_stage_sync_armed = previous;
+}
+
+__declspec(noinline) static void sync_deployment_stage_after_lock(
+    int32_t lock_result,
+    uintptr_t locked_surface,
+    uintptr_t current_staging_surface,
+    void *bits,
+    int32_t pitch) {
+    DWORD previous_error = GetLastError();
+    uint32_t width = *(volatile uint32_t *)(
+        game_base + MTW_BACKING_WIDTH_RVA);
+    uint32_t height = *(volatile uint32_t *)(
+        game_base + MTW_BACKING_HEIGHT_RVA);
+    IDirect3DDevice9 *device;
+    IDirect3DSurface9 *source;
+    IDirect3DSurface9 *stage;
+    IDirect3DSurface9 *fresh = NULL;
+    D3DSURFACE_DESC source_desc;
+    D3DSURFACE_DESC stage_desc;
+    D3DLOCKED_RECT fresh_rect;
+    int fresh_locked = 0;
+    int copied = 0;
+    int source_unrendered = 0;
+
+    if (!mtw_deployment_stage_should_sync(
+            deployment_stage_sync_armed, lock_result,
+            locked_surface, current_staging_surface,
+            bits, width, height, pitch)) {
+        SetLastError(previous_error);
+        return;
+    }
+    deployment_stage_sync_armed = 0u;
+    device = *(IDirect3DDevice9 *volatile *)(
+        game_base + MTW_PRIMARY_D3D9_DEVICE_RVA);
+    source = *(IDirect3DSurface9 *volatile *)(
+        game_base + MTW_PRIMARY_D3D9_SOURCE_RVA);
+    stage = (IDirect3DSurface9 *)locked_surface;
+    if (device == NULL || source == NULL || stage == NULL ||
+        FAILED(IDirect3DSurface9_GetDesc(source, &source_desc)) ||
+        FAILED(IDirect3DSurface9_GetDesc(stage, &stage_desc)) ||
+        source_desc.Pool != D3DPOOL_DEFAULT ||
+        stage_desc.Pool != D3DPOOL_SYSTEMMEM ||
+        source_desc.Format != D3DFMT_R5G6B5 ||
+        stage_desc.Format != source_desc.Format ||
+        source_desc.Width != width || source_desc.Height != height ||
+        stage_desc.Width != width || stage_desc.Height != height) {
+        goto finished;
+    }
+    if (FAILED(IDirect3DDevice9_CreateOffscreenPlainSurface(
+            device, width, height, source_desc.Format,
+            D3DPOOL_SYSTEMMEM, &fresh, NULL)) || fresh == NULL) {
+        goto finished;
+    }
+    if (FAILED(IDirect3DDevice9_GetRenderTargetData(
+            device, source, fresh))) {
+        goto finished;
+    }
+    memset(&fresh_rect, 0, sizeof(fresh_rect));
+    if (FAILED(IDirect3DSurface9_LockRect(
+            fresh, &fresh_rect, NULL, D3DLOCK_READONLY))) {
+        goto finished;
+    }
+    fresh_locked = 1;
+    __try {
+        if (mtw_deployment_source_looks_rendered(
+                fresh_rect.pBits, fresh_rect.Pitch,
+                width, height)) {
+            copied = mtw_deployment_copy_rows(
+                bits, pitch, fresh_rect.pBits, fresh_rect.Pitch,
+                width, height);
+        } else {
+            source_unrendered = 1;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        copied = 0;
+    }
+
+finished:
+    if (fresh_locked) {
+        (void)IDirect3DSurface9_UnlockRect(fresh);
+    }
+    if (fresh != NULL) {
+        (void)IDirect3DSurface9_Release(fresh);
+    }
+    if (copied) {
+        if (InterlockedIncrement(&deployment_stage_sync_successes) <= 4) {
+            diagnostic_write("deployment terrain staging synchronized r284\r\n");
+        }
+    } else if (InterlockedIncrement(
+                   &deployment_stage_sync_failures) <= 4) {
+        diagnostic_write(source_unrendered ?
+            "deployment terrain staging source unrendered r284\r\n" :
+            "deployment terrain staging synchronization failed r284\r\n");
+    }
+    SetLastError(previous_error);
+}
+
+/*
  * dgVoodoo rearms PAGE_GUARD on the CPU staging allocation returned by the
  * game's full-primary LockRect path. At the first origin access during some
  * End Turn transitions, that guard leaves the next GPU download/upload cycle
@@ -4302,6 +4420,14 @@ __declspec(naked) static void primary_origin_guard_hook_stub(void) {
         push eax
         call mtw_primary_origin_guard_touch
         add esp, 0x10
+        mov eax, dword ptr [esp + 0x1C]
+        push dword ptr [esi + 0x24]
+        push dword ptr [esi + 0x28]
+        push dword ptr [0x00F44098]
+        push dword ptr [esi + 0x04]
+        push eax
+        call sync_deployment_stage_after_lock
+        add esp, 0x14
         popad
         popfd
         mov dword ptr [esi + 0x1C], eax
@@ -4644,6 +4770,10 @@ static int verify_all_hook_signatures(void) {
                game_base + MTW_RESOLUTION_INITIALIZE_CALL_RVA,
                resolution_initialize_call_expected,
                sizeof(resolution_initialize_call_expected)) &&
+           mtw_deployment_terrain_call_supported(
+               (const unsigned char *)(
+                   game_base + MTW_DEPLOYMENT_TERRAIN_DRAW_CALL_RVA),
+               MTW_DEPLOYMENT_TERRAIN_DRAW_CALL_SIZE) &&
            mtw_validate_reentrant_callsites(&reentrant_calls);
 }
 
@@ -5167,6 +5297,8 @@ static int install_all_hooks_transactionally(void) {
         game_base + MTW_PREBATTLE_RESOLUTION_RETURN_RVA;
     uintptr_t primary_origin_guard_target =
         game_base + MTW_PRIMARY_ORIGIN_GUARD_HOOK_RVA;
+    uintptr_t deployment_terrain_call_target =
+        game_base + MTW_DEPLOYMENT_TERRAIN_DRAW_CALL_RVA;
     int capture_installed = 0;
     int restore_installed = 0;
     int commit_installed = 0;
@@ -5176,6 +5308,7 @@ static int install_all_hooks_transactionally(void) {
     int prebattle_entry_installed = 0;
     int prebattle_resolution_return_installed = 0;
     int primary_origin_guard_installed = 0;
+    int deployment_terrain_call_installed = 0;
 
     if (!verify_all_hook_signatures()) return 0;
     build_constructor_expected(constructor_expected);
@@ -5210,6 +5343,9 @@ static int install_all_hooks_transactionally(void) {
         (void *)(backend_base + DGVOODOO_NESTED_ACQUIRE_RVA);
     veh_handled_continue =
         (void *)(backend_base + DGVOODOO_VEH_HANDLED_RVA);
+    original_deployment_terrain_draw =
+        (mtw_deployment_terrain_draw_fn)(
+            game_base + MTW_DEPLOYMENT_TERRAIN_DRAW_TARGET_RVA);
 
     capture_installed = write_rel_jump(capture_target, capture_hook_stub,
                                        capture_expected,
@@ -5372,7 +5508,42 @@ static int install_all_hooks_transactionally(void) {
                          sizeof(capture_expected));
         return 0;
     }
+    deployment_terrain_call_installed = write_rel_call(
+        deployment_terrain_call_target,
+        deployment_terrain_draw_hook,
+        mtw_deployment_terrain_call_expected());
+    if (!deployment_terrain_call_installed) {
+        restore_original(primary_origin_guard_target,
+                         mtw_primary_origin_guard_hook_expected(),
+                         mtw_primary_origin_guard_hook_size());
+        restore_original(prebattle_resolution_return_target,
+                         prebattle_resolution_return_expected,
+                         sizeof(prebattle_resolution_return_expected));
+        restore_original(prebattle_entry_call_target,
+                         prebattle_entry_call_expected,
+                         sizeof(prebattle_entry_call_expected));
+        restore_original(primary_surface_unlock_target,
+                         primary_surface_unlock_expected,
+                         sizeof(primary_surface_unlock_expected));
+        restore_original(reverse_dispatcher_target,
+                         reverse_dispatcher_expected,
+                         sizeof(reverse_dispatcher_expected));
+        restore_original(fallback_call_target, fallback_call_expected,
+                         sizeof(fallback_call_expected));
+        restore_original(constructor_target, constructor_expected,
+                         sizeof(constructor_expected));
+        restore_original(commit_target, commit_expected,
+                         sizeof(commit_expected));
+        restore_original(restore_target, restore_expected,
+                         sizeof(restore_expected));
+        restore_original(capture_target, capture_expected,
+                         sizeof(capture_expected));
+        return 0;
+    }
     if (!install_outer_owned_guard_diversion()) {
+        restore_original(deployment_terrain_call_target,
+                         mtw_deployment_terrain_call_expected(),
+                         MTW_DEPLOYMENT_TERRAIN_DRAW_CALL_SIZE);
         restore_original(primary_origin_guard_target,
                          mtw_primary_origin_guard_hook_expected(),
                          mtw_primary_origin_guard_hook_size());
@@ -5408,6 +5579,8 @@ static int install_all_hooks_transactionally(void) {
     }
     diagnostic_write(
         "primary staging origin-guard lifecycle hook active r268\r\n");
+    diagnostic_write(
+        "deployment terrain staging synchronization active r284\r\n");
     return 1;
 }
 

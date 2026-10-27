@@ -48,7 +48,8 @@ static inline int mtw_verify_runtime(MedievalEngine *m, size_t file_count, Patch
     size_t i;
     for (i = 0; i < file_count; ++i) {
         PatchFileRecord actual;
-        if (i >= 7u && !m->options.name_fix) continue;
+        if (((i == 7u || i == 8u) && !m->options.name_fix) ||
+            (i == 9u && !m->options.marriage_title_fix)) continue;
         MTW_TRY(mtw_relative_record(m, medieval_payload_names[i], &actual, e));
         if (!patch_record_equal(&actual, &m->payload_records[i]))
             return mtw_fail(m, e, "verification_failed", "Installed runtime verification failed for %s.", medieval_payload_names[i]);
@@ -277,10 +278,15 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
     int retire_originals[MEDIEVAL_FILE_COUNT] = {0}, retire_legacy = 0, repair = previous != NULL;
     int prior_name_data = repair && !previous->legacy && !previous->old_v2 &&
                           !previous->old_v3 && !previous->old_v4 && !previous->old_v5 &&
-                          (previous->name_fix_enabled || m->options.name_fix);
+                          medieval_receipt_file_count(previous) > 8u;
+    int prior_name_selected = prior_name_data &&
+                              (previous->name_fix_enabled || m->options.name_fix);
+    int prior_title_data = repair && medieval_receipt_file_count(previous) > 9u;
+    int prior_title_selected = prior_title_data &&
+                               (previous->marriage_title_fix_enabled || m->options.marriage_title_fix);
     const char *mode;
     char id[37], utc[32], relative[192], name[160];
-    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 6, 7, 8, 4, 2, 1, 3, 0};
+    static const size_t original_order[MEDIEVAL_FILE_COUNT] = {5, 6, 7, 8, 9, 4, 2, 1, 3, 0};
     MTW_TRY(mtw_observe(m, e));
     if (repair && !m->options.terrain_fix)
         for (i = 0; i < MEDIEVAL_RUNTIME_COUNT; ++i)
@@ -308,6 +314,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             mtw_boolean(d, receipt, "economy_fix_enabled", m->options.economy_fix, e) &&
             mtw_boolean(d, receipt, "key_fix_enabled", m->options.key_fix, e) &&
             mtw_boolean(d, receipt, "name_fix_enabled", m->options.name_fix, e) &&
+            mtw_boolean(d, receipt, "marriage_title_fix_enabled", m->options.marriage_title_fix, e) &&
             mtw_boolean(d, receipt, "fast_moves_fix_enabled", m->options.fast_moves_fix, e) &&
             mtw_boolean(d, receipt, "zoom_fix_enabled", m->options.zoom_fix, e) &&
             mtw_boolean(d, receipt, "battle_icon_fix_enabled", m->options.battle_icon_fix, e) &&
@@ -569,23 +576,27 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         char *before = NULL;
         unsigned char *checked = NULL;
         size_t before_length = 0, checked_length = 0;
-        const char *basename = i == 7u ? "DEFAULT_HEROES.TXT" : "NAMES.TXT";
-        int prior_data = prior_name_data;
+        const char *basename = i == 7u ? "DEFAULT_HEROES.TXT" :
+                               i == 8u ? "NAMES.TXT" : "DEFAULT_REGION_SPECIFIC.TXT";
+        int prior_data = i == 9u ? prior_title_data : prior_name_data;
+        int selected = i == 9u ? m->options.marriage_title_fix : m->options.name_fix;
+        int kind = i == 7u ? MTW_GAME_DATA_HEROES :
+                   i == 8u ? MTW_GAME_DATA_NAMES : MTW_GAME_DATA_REGION_TITLES;
+        size_t max_size = i == 9u ? MTW_REGION_TITLES_SIZE : MTW_NAMES_FIXED_SIZE;
         MTW_TRY(live && mtw_record(m, live, &current, e));
         if (!current.exists)
             return mtw_fail(m, e, "unsupported_data", "Required %s is missing. Restore the original game file before installing; no character data was changed.", medieval_payload_names[i]);
         baseline = prior_data ? previous->files[i].original : current;
-        if (m->options.name_fix &&
-            (!mtw_game_data_supported_record(&baseline, i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES) ||
-             current.length > MTW_NAMES_FIXED_SIZE))
-            return mtw_fail(m, e, "unsupported_data", "Name corrections require an exact supported original %s. Preserve this file and review any game-data mod before retrying.", medieval_payload_names[i]);
+        if (selected &&
+            (!mtw_game_data_supported_record(&baseline, kind) || current.length > max_size))
+            return mtw_fail(m, e, "unsupported_data", "This text correction requires an exact supported original %s. Preserve this file and review any game-data mod before retrying.", medieval_payload_names[i]);
         /* Validate the live supported input before creating an archive. An
            unselected name component leaves arbitrary existing text alone. */
-        if (m->options.name_fix &&
-            (!patch_file_read(&m->guard, live, MTW_NAMES_FIXED_SIZE,
+        if (selected &&
+            (!patch_file_read(&m->guard, live, max_size,
                               &m->memory, &before, &before_length, e) ||
              !mtw_game_data_transform(&m->memory, (const unsigned char *)before,
-                                      before_length, i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES,
+                                      before_length, kind,
                                       &checked, &checked_length, e))) {
             patch_context_free(&m->memory, before);
             return 0;
@@ -594,7 +605,8 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         patch_context_free(&m->memory, checked);
         if (prior_data) {
             const MedievalFileState *prior = &previous->files[i];
-            if (!patch_record_equal(&current, &prior->installed) &&
+            if ((i == 9u ? prior_title_selected : prior_name_selected) &&
+                !patch_record_equal(&current, &prior->installed) &&
                 !patch_record_equal(&current, &prior->original)) {
                 snprintf(name, sizeof name, "changed-%s", basename);
                 MTW_TRY(mtw_archive_source(m, sources, &count, name, medieval_payload_names[i], e));
@@ -619,10 +631,12 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             }
         }
         m->payload_records[i] = baseline;
-        if (m->options.name_fix) {
-            m->payload_records[i].length = i == 7u ? MTW_HEROES_FIXED_SIZE : MTW_NAMES_FIXED_SIZE;
+        if (selected) {
+            m->payload_records[i].length = i == 7u ? MTW_HEROES_FIXED_SIZE :
+                                           i == 8u ? MTW_NAMES_FIXED_SIZE : MTW_REGION_TITLES_SIZE;
             memcpy(m->payload_records[i].sha256,
-                   i == 7u ? MTW_HEROES_FIXED_SHA256 : MTW_NAMES_FIXED_SHA256, 65);
+                   i == 7u ? MTW_HEROES_FIXED_SHA256 :
+                   i == 8u ? MTW_NAMES_FIXED_SHA256 : MTW_REGION_TITLES_FIXED_SHA256, 65);
         }
         MTW_TRY(mtw_text(d, rec, "installed_sha256", m->payload_records[i].sha256, e) &&
                 mtw_number(d, rec, "installed_length", (int64_t)m->payload_records[i].length, e));
@@ -651,6 +665,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
         else if (i == 7u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_HEROES.TXT");
         else if (i == 8u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/NAMES.TXT");
+        else if (i == 9u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_REGION_SPECIFIC.TXT");
         else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
         MTW_INSTALL(mtw_transaction_add_file(m, &t, relative, original_sources[i], e));
     }
@@ -758,14 +773,18 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
         char *before = NULL;
         unsigned char *next = NULL;
         size_t before_length = 0, next_length = 0;
+        int selected = i == 9u ? m->options.marriage_title_fix : m->options.name_fix;
+        int kind = i == 7u ? MTW_GAME_DATA_HEROES :
+                   i == 8u ? MTW_GAME_DATA_NAMES : MTW_GAME_DATA_REGION_TITLES;
         wchar_t *live = mtw_live(m, medieval_payload_names[i], e);
         wchar_t *staged_path = mtw_path(m, t.directory,
-                                        i == 7u ? "next-default-heroes.bin" : "next-names.bin", e);
-        if (!m->options.name_fix) {
+                                        i == 7u ? "next-default-heroes.bin" :
+                                        i == 8u ? "next-names.bin" : "next-region-titles.bin", e);
+        if (!selected) {
             /* Data files become unmanaged when this component is off. On an
                upgrade from a selected receipt, restore the prior original in
-               a separate action before emitting the v7 deselected receipt. */
-            if (prior_name_data) {
+               a separate action before emitting the deselected receipt. */
+            if (i == 9u ? prior_title_selected : prior_name_selected) {
                 wchar_t *source = mtw_path(m, m->state, previous->files[i].snapshot_relative, e);
                 MTW_INSTALL(source && mtw_transaction_add_file(m, &t, medieval_payload_names[i], source, e));
                 raw = json_get(json_get(t.json, "actions")->last, "after");
@@ -775,11 +794,11 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
             continue;
         }
         MTW_INSTALL(live && staged_path &&
-                    patch_file_read(&m->guard, live, MTW_NAMES_FIXED_SIZE,
+                    patch_file_read(&m->guard, live,
+                                    i == 9u ? MTW_REGION_TITLES_SIZE : MTW_NAMES_FIXED_SIZE,
                                     &m->memory, &before, &before_length, e) &&
                     mtw_game_data_transform(&m->memory, (const unsigned char *)before,
-                                            before_length,
-                                            i == 7u ? MTW_GAME_DATA_HEROES : MTW_GAME_DATA_NAMES,
+                                            before_length, kind,
                                             &next, &next_length, e) &&
                     patch_file_write_new(&m->guard, staged_path, next, next_length, e) &&
                     mtw_transaction_add_file(m, &t, medieval_payload_names[i], staged_path, e));
@@ -990,7 +1009,8 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
             medieval_registry_ownership(&m->identity, &registry, receipt->installation_id, e));
     for (i = 0; i < medieval_receipt_file_count(receipt); ++i) {
         const MedievalFileState *f = &receipt->files[i];
-        if (i >= 7u && !receipt->name_fix_enabled && !receipt->old_v6) continue;
+        if (((i == 7u || i == 8u) && !receipt->name_fix_enabled && !receipt->old_v6) ||
+            (i == 9u && !receipt->marriage_title_fix_enabled)) continue;
         MTW_TRY(mtw_relative_record(m, f->name, &current, e));
         if (i == 5u && current.exists &&
             strcmp(current.sha256, f->installed.sha256) &&
@@ -1014,7 +1034,8 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
             MTW_TRY(mtw_archive_source(m, sources, &count,
                                        i == 6u ? "changed-CHANGES.TXT" :
                                        i == 7u ? "changed-DEFAULT_HEROES.TXT" :
-                                       i == 8u ? "changed-NAMES.TXT" : f->name,
+                                       i == 8u ? "changed-NAMES.TXT" :
+                                       i == 9u ? "changed-DEFAULT_REGION_SPECIFIC.TXT" : f->name,
                                        f->name, e));
     }
     uninstaller = mtw_live(m, MEDIEVAL_UNINSTALL_NAME, e);
@@ -1028,7 +1049,8 @@ static inline int mtw_remove(MedievalEngine *m, const MedievalReceipt *receipt, 
     MTW_REMOVE(mtw_fault(m, "before-stage-originals", e));
     for (i = 0; i < medieval_receipt_file_count(receipt); ++i) {
         const MedievalFileState *f = &receipt->files[i];
-        if (i >= 7u && !receipt->name_fix_enabled && !receipt->old_v6) continue;
+        if (((i == 7u || i == 8u) && !receipt->name_fix_enabled && !receipt->old_v6) ||
+            (i == 9u && !receipt->marriage_title_fix_enabled)) continue;
         wchar_t *source = f->original.exists ? mtw_path(m, m->state, f->snapshot_relative, e) : NULL;
         PatchFileRecord after;
         if (f->original.exists && !source) goto failed;
@@ -1316,8 +1338,13 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
     m.options = *options; m.outcome = outcome; m.executable_pin = m.log_handle = INVALID_HANDLE_VALUE;
     if (!m.options.selection_provided) {
         m.options.terrain_fix = 1; m.options.sprite_fix = 1;
-        m.options.tutorial_fix = 1; m.options.parchment_fix = 1; m.options.name_fix = 1; m.options.battle_icon_fix = 1;
+        m.options.tutorial_fix = 1; m.options.parchment_fix = 1; m.options.name_fix = 1;
+        m.options.marriage_title_fix = 1; m.options.battle_icon_fix = 1;
     }
+    /* The receipt keeps the historical title flag for upgrades and removal,
+       but every new installation makes it part of Name and Title Fix. */
+    if (mtw_is(options->operation, "Install"))
+        m.options.marriage_title_fix = m.options.name_fix;
     outcome->rollback = "not-needed"; outcome->restoration = "not-started"; outcome->exit_code = 2;
     if (!options->target || !*options->target || !options->payload || !*options->payload || !options->version ||
         (!mtw_is(options->operation, "Inspect") && !mtw_is(options->operation, "Install") &&
@@ -1361,7 +1388,9 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
             (!mtw_boolean(&m.document, result, "credits_flash_fix_enabled",
                           receipt.credits_fix_enabled, e) ||
              !mtw_boolean(&m.document, result, "key_fix_enabled",
-                          receipt.key_fix_enabled, e))) goto done;
+                          receipt.key_fix_enabled, e) ||
+             !mtw_boolean(&m.document, result, "marriage_title_fix_enabled",
+                          receipt.marriage_title_fix_enabled, e))) goto done;
     } else if (mtw_is(options->operation, "Verify")) {
         if (present && !receipt.legacy) {
             size_t verify_index;
@@ -1370,6 +1399,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
             if (!receipt.old_v2 &&
                 !medieval_boolean(receipt.json, "terrain_fix_enabled", &m.options.terrain_fix, e)) goto done;
             m.options.name_fix = receipt.name_fix_enabled;
+            m.options.marriage_title_fix = receipt.marriage_title_fix_enabled;
         }
         if (!mtw_verify_runtime(&m, present ? medieval_receipt_file_count(&receipt) : MEDIEVAL_FILE_COUNT, e) ||
             (present && !receipt.legacy && !mtw_verify_installed(&m, &receipt, e))) goto done;

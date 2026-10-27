@@ -504,6 +504,8 @@ def main() -> int:
                              "include/credits_payload_previous_hashes.h",
                              "include/credits_payload_r288_hashes.h",
                              "include/credits_payload_r289_hashes.h",
+                             "include/credits_payload_r290_hashes.h",
+                             "include/credits_payload_r291_hashes.h",
                              "include/mtw_exe_variants.h"})
     if set(native_build.get("source_inputs", {})) != required_sources:
         raise ValueError("Native helper provenance must identify all and only the C backend inputs.")

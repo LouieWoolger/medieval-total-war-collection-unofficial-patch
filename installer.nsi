@@ -64,6 +64,14 @@ ${Using:StrFunc} StrLoc
     System::Free $2
 !macroend
 
+!macro CHECK_PREVIEW_FOCUS HANDLE KEY
+    ${If} $7 == ${HANDLE}
+        StrCpy $R0 "${KEY}"
+        Call SetPreview
+        Return
+    ${EndIf}
+!macroend
+
 !define MUI_ABORTWARNING
 !define MUI_CUSTOMFUNCTION_ABORT LogUserAbort
 !define MUI_ICON "${SOURCE_DIR}\assets\medieval.ico"
@@ -144,6 +152,8 @@ Var PreviewTitle
 Var PreviewText
 Var PreviewWarningText
 Var CurrentPreviewKey
+Var LastPreviewFocus
+Var PreviewFocusChanged
 Var PatchPageFont
 Var PatchPageTitleFont
 Var PatchPageBodyFont
@@ -773,7 +783,7 @@ compatibilityInteractive:
     !insertmacro SET_TAHOMA $BrowseButton $PatchPageFont
     ${NSD_OnClick} $BrowseButton BrowseTarget
 
-    ${NSD_CreateGroupBox} 0 62 320 280 "Recommended"
+    ${NSD_CreateGroupBox} 0 62 320 274 "Recommended"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
     ${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"
@@ -832,31 +842,31 @@ compatibilityInteractive:
         ${NSD_Check} $CreditsCheck
     ${EndIf}
     ${NSD_OnClick} $CreditsCheck PreviewCredits
-    ${NSD_CreateGroupBox} 0 352 320 140 "Optional"
+    ${NSD_CreateGroupBox} 0 344 320 148 "Optional"
     Pop $0
     !insertmacro SET_TAHOMA $0 $PatchPageFont
-    ${NSD_CreateCheckbox} 12 368 295 24 "${PRODUCT_FAST_COMPONENT_NAME}"
+    ${NSD_CreateCheckbox} 12 364 295 20 "${PRODUCT_FAST_COMPONENT_NAME}"
     Pop $FastCheck
     !insertmacro SET_TAHOMA $FastCheck $PatchPageFont
     ${If} $FastSelected == "1"
         ${NSD_Check} $FastCheck
     ${EndIf}
     ${NSD_OnClick} $FastCheck PreviewFast
-    ${NSD_CreateCheckbox} 12 398 295 24 "${PRODUCT_ZOOM_COMPONENT_NAME}"
+    ${NSD_CreateCheckbox} 12 394 295 20 "${PRODUCT_ZOOM_COMPONENT_NAME}"
     Pop $ZoomCheck
     !insertmacro SET_TAHOMA $ZoomCheck $PatchPageFont
     ${If} $ZoomSelected == "1"
         ${NSD_Check} $ZoomCheck
     ${EndIf}
     ${NSD_OnClick} $ZoomCheck PreviewZoom
-    ${NSD_CreateCheckbox} 12 428 295 24 "${PRODUCT_ECONOMY_COMPONENT_NAME}"
+    ${NSD_CreateCheckbox} 12 424 295 20 "${PRODUCT_ECONOMY_COMPONENT_NAME}"
     Pop $EconomyCheck
     !insertmacro SET_TAHOMA $EconomyCheck $PatchPageFont
     ${If} $EconomySelected == "1"
         ${NSD_Check} $EconomyCheck
     ${EndIf}
     ${NSD_OnClick} $EconomyCheck PreviewEconomy
-    ${NSD_CreateCheckbox} 12 458 295 24 "${PRODUCT_KEY_COMPONENT_NAME}"
+    ${NSD_CreateCheckbox} 12 454 295 20 "${PRODUCT_KEY_COMPONENT_NAME}"
     Pop $KeyCheck
     !insertmacro SET_TAHOMA $KeyCheck $PatchPageFont
     ${If} $KeySelected == "1"
@@ -882,6 +892,7 @@ compatibilityInteractive:
 
     StrCpy $PreviewImage ""
     StrCpy $CurrentPreviewKey ""
+    StrCpy $LastPreviewFocus ""
     StrCpy $R0 "terrain"
     Call SetPreview
     ${NSD_CreateTimer} PreviewHoverTimer 120
@@ -974,23 +985,32 @@ Function PreviewHoverTimer
 FunctionEnd
 
 Function PreviewFromCursor
+    ; Remember focus on every tick, including while a checkbox is hovered.
+    ; A past mouse click must not replace the last hovered preview later.
+    System::Call "user32::GetFocus() p.r7"
+    StrCpy $PreviewFocusChanged "0"
+    ${If} $7 != $LastPreviewFocus
+        StrCpy $LastPreviewFocus $7
+        StrCpy $PreviewFocusChanged "1"
+    ${EndIf}
+
     System::Call "*(i 0, i 0) p.r8"
     System::Call "user32::GetCursorPos(p r8)i.r9"
     ${If} $9 == 0
         System::Free $8
-        Return
+        Goto previewFocus
     ${EndIf}
     System::Call "*$8(i.r0, i.r1)"
     System::Free $8
 
     System::Call "user32::WindowFromPoint(ir0, ir1)p.r7"
     ${If} $7 == 0
-        Return
+        Goto previewFocus
     ${EndIf}
     ${If} $7 != $HWNDPARENT
         System::Call "user32::IsChild(p$HWNDPARENT, pr7)i.r9"
         ${If} $9 == 0
-            Return
+            Goto previewFocus
         ${EndIf}
     ${EndIf}
 
@@ -1006,6 +1026,23 @@ Function PreviewFromCursor
     !insertmacro CHECK_PREVIEW_HOVER $KeyCheck "key"
     !insertmacro CHECK_PREVIEW_HOVER $ZoomCheck "zoom"
     !insertmacro CHECK_PREVIEW_HOVER $CreditsCheck "credits"
+previewFocus:
+    ${If} $PreviewFocusChanged != "1"
+        Return
+    ${EndIf}
+    System::Call "user32::GetFocus() p.r7"
+    !insertmacro CHECK_PREVIEW_FOCUS $CompatibilityCheck "terrain"
+    !insertmacro CHECK_PREVIEW_FOCUS $ScrollCheck "scrolling"
+    !insertmacro CHECK_PREVIEW_FOCUS $SpriteCheck "sprite"
+    !insertmacro CHECK_PREVIEW_FOCUS $TutorialCheck "tutorial"
+    !insertmacro CHECK_PREVIEW_FOCUS $BattleIconCheck "battle-icon"
+    !insertmacro CHECK_PREVIEW_FOCUS $ParchmentCheck "parchment"
+    !insertmacro CHECK_PREVIEW_FOCUS $NameCheck "name"
+    !insertmacro CHECK_PREVIEW_FOCUS $CreditsCheck "credits"
+    !insertmacro CHECK_PREVIEW_FOCUS $FastCheck "fast"
+    !insertmacro CHECK_PREVIEW_FOCUS $ZoomCheck "zoom"
+    !insertmacro CHECK_PREVIEW_FOCUS $EconomyCheck "economy"
+    !insertmacro CHECK_PREVIEW_FOCUS $KeyCheck "key"
 FunctionEnd
 
 Function SetPreview
@@ -1027,7 +1064,7 @@ Function SetPreview
         StrCpy $1 "$PLUGINSDIR\character-parchment.bmp"
     ${ElseIf} $R0 == "name"
         ${NSD_SetText} $PreviewTitle "${PRODUCT_NAME_COMPONENT_NAME}"
-        ${NSD_SetText} $PreviewText "Corrects incorrect character names and titles for the Sicilian and Welsh factions."
+        ${NSD_SetText} $PreviewText "Corrects Sicilian and Welsh character names and titles, and faction titles in marriage letters."
         ${NSD_SetText} $PreviewWarningText ""
         ShowWindow $PreviewWarningText ${SW_HIDE}
         StrCpy $1 "$PLUGINSDIR\name-and-title.bmp"

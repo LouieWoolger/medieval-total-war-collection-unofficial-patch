@@ -259,6 +259,7 @@ def test_v1_uncertain_wrapper_original_is_kept_for_restoration(games):
     for relative, snapshot in (
         ("campmap/names/DEFAULT_HEROES.TXT", "DEFAULT_HEROES.TXT"),
         ("Loc/Eng/NAMES.TXT", "NAMES.TXT"),
+        ("Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT", "DEFAULT_REGION_SPECIFIC.TXT"),
     ):
         shutil.copy2(state / "originals" / snapshot, game / relative)
         data_originals[relative] = digest(game / relative)
@@ -350,7 +351,7 @@ def test_published_v5_upgrade_preserves_partial_names_baseline(games, legacy_v5_
     result, report = run("Install", game, terrain_fix=False, scroll_fix=True, sprite_fix=True)
     assert result.returncode == 0, (result.stdout, result.stderr, report)
     receipt = read_receipt(game)
-    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v8"
     assert receipt["files"]["Loc/Eng/NAMES.TXT"]["original_sha256"] == before["Loc/Eng/NAMES.TXT"]
     assert digest(names) == "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
     result, report = run("Restore", game)

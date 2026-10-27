@@ -372,17 +372,31 @@ int wmain(int argc, wchar_t **argv) {
               "Released R201 proxy cannot become a clean original baseline");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R202_TERRAIN_ICON_HASH)),
               "R202 proxy cannot become a clean original baseline");
-        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R288_TERRAIN_ICON_HASH),
-                      "r288-key-customisation"), "current Credits-off proxy classification");
-        check(!medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R288_TERRAIN_ICON_HASH)),
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R292_TERRAIN_ICON_HASH),
+                      "r292-dust-alpha"), "current Credits-off proxy classification");
+        check(!medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R292_TERRAIN_ICON_HASH)),
               "current Credits-off proxy is not historical");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R291_TERRAIN_ICON_HASH),
+                      "r291-deployment-stage-sync"), "previous Credits-off proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R291_TERRAIN_ICON_HASH)),
+              "previous Credits-off proxy remains an upgrade source");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH),
+                      "r290-zoom-tooltip"), "previous Credits-off terrain remains identifiable");
         check(!strcmp(medieval_known_d3d9_mode(
                           "AADC364E2C602B82586ED6328E6CA4DA40167E1F031F74941F462BEE68C046F2"),
                       "r237-key-customisation"), "previous key proxy remains identifiable");
         check(medieval_old_patch("r237-key-customisation"),
               "previous key proxy cannot become a clean original baseline");
         check(!strcmp(medieval_known_d3d9_mode(mtw_credits_proxy_variants[0].sha256),
-                      "r290-credits"), "current Credits-on proxy classification");
+                      "r292-credits"), "current Credits-on proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_r291_credits_proxy_variants[0].sha256),
+                      "r291-credits-old"), "previous Credits-on proxy classification");
+        check(medieval_old_patch("r291-credits-old"),
+              "previous Credits-on proxy remains an upgrade source");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_r290_credits_proxy_variants[0].sha256),
+                      "r290-credits-old"), "previous Credits-on proxy classification");
+        check(medieval_old_patch("r290-credits-old"),
+              "previous Credits-on proxy cannot become a clean original baseline");
         check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R289_ZOOM_ONLY_HASH),
                       "r289-persistent-zoom"), "previous zoom proxy classification");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R289_ZOOM_ONLY_HASH)),

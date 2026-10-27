@@ -87,7 +87,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R288-key-customisation-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R292-dust-alpha-scroll-sprite-off"
     assert manifest["battle_unit_icons"]["default_installer_selection"] is True
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False

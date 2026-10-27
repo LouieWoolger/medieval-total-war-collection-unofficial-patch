@@ -1,12 +1,13 @@
 #ifndef MTW_GAME_DATA_PATCH_H
 #define MTW_GAME_DATA_PATCH_H
 
-/* Byte-bounded repairs of two supported game data files. The game files are
+/* Byte-bounded repairs of supported game data files. The game files are
    read from the user's installation and are never distributed as payloads. */
 #include "patch_files.h"
 
 #define MTW_GAME_DATA_HEROES 0
 #define MTW_GAME_DATA_NAMES 1
+#define MTW_GAME_DATA_REGION_TITLES 2
 
 #define MTW_HEROES_STOCK_SIZE 64281u
 #define MTW_HEROES_FIXED_SIZE 64280u
@@ -18,6 +19,9 @@
 #define MTW_NAMES_CYD_SHA256 "A4CC2AF6ECA25792E5E0FC64055706B4C22763C4D4A51080F774B0A8420E080E"
 #define MTW_NAMES_KILIJ_SHA256 "F2847372150BED92E36F87F629A955344D2DEF533D6FD5ED6A1C25EDECF532FA"
 #define MTW_NAMES_FIXED_SHA256 "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
+#define MTW_REGION_TITLES_SIZE 41495u
+#define MTW_REGION_TITLES_STOCK_SHA256 "17CC768ABBBE45CFDBFA807A17FC27732A2E0D25251298A55EED869389972517"
+#define MTW_REGION_TITLES_FIXED_SHA256 "F75F5DAFE7319715C81ABE87AC9F6D1058944AC505DA53E3C015A7EB353BF1F7"
 
 static inline int mtw_game_data_supported_record(const PatchFileRecord *r, int kind) {
     if (!r || !r->exists) return 0;
@@ -29,6 +33,10 @@ static inline int mtw_game_data_supported_record(const PatchFileRecord *r, int k
                 (!strcmp(r->sha256, MTW_NAMES_STOCK_SHA256) || !strcmp(r->sha256, MTW_NAMES_CYD_SHA256))) ||
                (r->length == MTW_NAMES_FIXED_SIZE &&
                 (!strcmp(r->sha256, MTW_NAMES_KILIJ_SHA256) || !strcmp(r->sha256, MTW_NAMES_FIXED_SHA256)));
+    if (kind == MTW_GAME_DATA_REGION_TITLES)
+        return r->length == MTW_REGION_TITLES_SIZE &&
+               (!strcmp(r->sha256, MTW_REGION_TITLES_STOCK_SHA256) ||
+                !strcmp(r->sha256, MTW_REGION_TITLES_FIXED_SHA256));
     return 0;
 }
 
@@ -58,6 +66,12 @@ static inline int mtw_game_data_transform(PatchContext *context, const unsigned 
     static const unsigned char cyd_after[] = "{\"Cydwladwr (Compatriot)\"}";
     static const unsigned char kilij_before[] = "{\"Kilij Arslan}";
     static const unsigned char kilij_after[] = "{\"Kilij Arslan\"}";
+    static const unsigned char titles_before[] =
+        "@{\" of Hungary\"}\r\n@{\" of Sicily\"}\r\n@{\" of Burgundy\"}\r\n"
+        "@{\" of Golden Khanate\"}\r\n@{\" of Novgorod\"}\r\n@{\" of The Papal States\"}";
+    static const unsigned char titles_after[] =
+        "@{\" of Burgundy\"}\r\n@{\" of Golden Khanate\"}\r\n@{\" of Hungary\"}\r\n"
+        "@{\" of Novgorod\"}\r\n@{\" of The Papal States\"}\r\n@{\" of Sicily\"}";
     MtwGameDataEdit edits[2];
     unsigned char *next;
     char input_hash[65], output_hash[65];
@@ -67,7 +81,8 @@ static inline int mtw_game_data_transform(PatchContext *context, const unsigned 
     if (result) *result = NULL;
     if (result_length) *result_length = 0;
     if (!context || !source || !result || !result_length ||
-        (kind != MTW_GAME_DATA_HEROES && kind != MTW_GAME_DATA_NAMES) ||
+        (kind != MTW_GAME_DATA_HEROES && kind != MTW_GAME_DATA_NAMES &&
+         kind != MTW_GAME_DATA_REGION_TITLES) ||
         !patch_sha256_bytes(context, source, source_length, input_hash)) {
         patch_error_set(error, "invalid_argument", "Could not hash supported game data input.", ERROR_INVALID_DATA);
         return 0;
@@ -85,7 +100,7 @@ static inline int mtw_game_data_transform(PatchContext *context, const unsigned 
             return 0;
         }
         expected = MTW_HEROES_FIXED_SHA256;
-    } else {
+    } else if (kind == MTW_GAME_DATA_NAMES) {
         if (source_length == MTW_NAMES_STOCK_SIZE && !strcmp(input_hash, MTW_NAMES_STOCK_SHA256)) {
             /* Neither entry is corrected. */
         } else if (source_length == MTW_NAMES_STOCK_SIZE && !strcmp(input_hash, MTW_NAMES_CYD_SHA256)) {
@@ -106,6 +121,20 @@ static inline int mtw_game_data_transform(PatchContext *context, const unsigned 
                                                sizeof kilij_before - 1u, sizeof kilij_after - 1u, 0};
         final_size = MTW_NAMES_FIXED_SIZE;
         expected = MTW_NAMES_FIXED_SHA256;
+    } else {
+        if (source_length != MTW_REGION_TITLES_SIZE) {
+            patch_error_set(error, "unsupported_data", "The English region text is not an exact supported state. Preserve it before installing.", ERROR_INVALID_DATA);
+            return 0;
+        }
+        if (!strcmp(input_hash, MTW_REGION_TITLES_STOCK_SHA256))
+            edits[count++] = (MtwGameDataEdit){titles_before, titles_after,
+                                               sizeof titles_before - 1u, sizeof titles_after - 1u, 0};
+        else if (strcmp(input_hash, MTW_REGION_TITLES_FIXED_SHA256)) {
+            patch_error_set(error, "unsupported_data", "The English region text is not an exact supported state. Preserve it before installing.", ERROR_INVALID_DATA);
+            return 0;
+        }
+        final_size = MTW_REGION_TITLES_SIZE;
+        expected = MTW_REGION_TITLES_FIXED_SHA256;
     }
     for (i = 0; i < count; ++i) {
         edits[i].at = mtw_game_data_find_once(source, source_length, edits[i].before, edits[i].before_length);

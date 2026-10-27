@@ -10,7 +10,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (232960, "E0FCBA01968F5A2D870B993D77A0DC85F9AFBB033182423524418A4CD94627B0"),
+    "D3D9.dll": (240128, "E7BBEB5B34756B359F8CD61BA3EDB88F6DFFC0DED52091F4BB5534B84ADABAA4"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -32,10 +32,10 @@ OFFICIAL_DGVOODOO_2875 = {
 }
 
 ZOOM_VARIANTS = {
-    "scroll-sprite-off-zoom": (True, False, False, True, "MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH"),
-    "scroll-sprite-off-fast-zoom": (True, False, False, True, "MEDIEVAL_R290_TERRAIN_FAST_ICON_ZOOM_HASH"),
-    "scroll-sprite-off-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R290_TERRAIN_NO_ICON_ZOOM_HASH"),
-    "scroll-sprite-off-fast-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R290_TERRAIN_FAST_NO_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-zoom": (True, False, False, True, "MEDIEVAL_R292_TERRAIN_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-fast-zoom": (True, False, False, True, "MEDIEVAL_R292_TERRAIN_FAST_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R292_TERRAIN_NO_ICON_ZOOM_HASH"),
+    "scroll-sprite-off-fast-icon-off-zoom": (True, False, False, False, "MEDIEVAL_R292_TERRAIN_FAST_NO_ICON_ZOOM_HASH"),
     "zoom-only": (False, False, False, False, "MEDIEVAL_R290_ZOOM_ONLY_HASH"),
     "fast-only-zoom": (False, False, False, False, "MEDIEVAL_R290_FAST_ZOOM_HASH"),
     "icon-only-zoom": (False, False, False, True, "MEDIEVAL_R290_ICON_ZOOM_HASH"),
@@ -126,7 +126,7 @@ def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope(
     state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
     for manifest_name, dll_name, terrain, receipt_hash_name in (
         ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
-         True, "MEDIEVAL_R290_TERRAIN_FAST_ICON_HASH"),
+         True, "MEDIEVAL_R292_TERRAIN_FAST_ICON_HASH"),
         ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
          False, "MEDIEVAL_R290_FAST_ONLY_HASH"),
     ):

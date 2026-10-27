@@ -18,7 +18,7 @@
 typedef struct {
     const char *operation, *version, *output, *fault, *require_owner;
     const wchar_t *target, *payload, *installer, *uninstaller, *log, *request;
-    int terrain_fix, scroll_fix, sprite_fix, tutorial_fix, parchment_fix, economy_fix, name_fix, fast_moves_fix, zoom_fix, battle_icon_fix, credits_fix, key_fix, selection_provided;
+    int terrain_fix, scroll_fix, sprite_fix, tutorial_fix, parchment_fix, economy_fix, name_fix, marriage_title_fix, fast_moves_fix, zoom_fix, battle_icon_fix, credits_fix, key_fix, selection_provided;
 } MedievalOptions;
 typedef struct {
     JsonDocument document;
@@ -232,11 +232,13 @@ static inline int mtw_observe(MedievalEngine *m, PatchError *e) {
             if (i == 6u) strcpy(relative, "CHANGES.TXT.unofficial-patch.bak");
             else if (i == 7u) strcpy(relative, "DEFAULT_HEROES.TXT.unofficial-patch.bak");
             else if (i == 8u) strcpy(relative, "NAMES.TXT.unofficial-patch.bak");
+            else if (i == 9u) strcpy(relative, "DEFAULT_REGION_SPECIFIC.TXT.unofficial-patch.bak");
             else snprintf(relative, sizeof relative, "%s.unofficial-patch.bak", medieval_payload_names[i]);
         } else {
             if (i == 6u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/CHANGES.TXT");
             else if (i == 7u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_HEROES.TXT");
             else if (i == 8u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/NAMES.TXT");
+            else if (i == 9u) strcpy(relative, MEDIEVAL_STATE_NAME "/originals/DEFAULT_REGION_SPECIFIC.TXT");
             else snprintf(relative, sizeof relative, MEDIEVAL_STATE_NAME "/originals/%s", medieval_payload_names[i]);
         }
         o->path = mtw_live(m, relative, e);
@@ -295,7 +297,7 @@ static inline int mtw_remove_empty(MedievalEngine *m, const wchar_t *path, Patch
 static inline int mtw_unknown_children(MedievalEngine *m, const wchar_t *path, int state, int *unknown, PatchError *e) {
     WIN32_FIND_DATAW data;
     HANDLE search;
-    wchar_t *pattern;
+    wchar_t *pattern, *native = NULL;
     size_t n;
     void *memory = NULL;
     DWORD last;
@@ -307,7 +309,8 @@ static inline int mtw_unknown_children(MedievalEngine *m, const wchar_t *path, i
     MTW_TRY(patch_alloc(&m->memory, n + 3, sizeof(wchar_t), &memory, e));
     pattern = memory;
     wcscpy(pattern, path); wcscat(pattern, L"\\*");
-    search = FindFirstFileW(pattern, &data);
+    MTW_TRY(patch_native_path(&m->memory, pattern, &native, e));
+    search = FindFirstFileW(native, &data);
     if (search == INVALID_HANDLE_VALUE) {
         if (GetLastError() == ERROR_FILE_NOT_FOUND) return 1;
         return patch_file_fail(e, "Cannot enumerate patch metadata.");
@@ -406,6 +409,7 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
     size_t k;
     if (actual->old_v3 != retained->old_v3 || actual->old_v4 != retained->old_v4 ||
         actual->old_v5 != retained->old_v5 || actual->old_v6 != retained->old_v6 ||
+        actual->old_v7 != retained->old_v7 ||
         medieval_receipt_file_count(actual) != medieval_receipt_file_count(retained) ||
         strcmp(actual->installation_id, retained->installation_id) || strcmp(actual->status, status) ||
         strcmp(actual->uninstaller_sha256, retained->uninstaller_sha256) ||
@@ -479,6 +483,14 @@ static inline int mtw_receipt_bound(MedievalEngine *m, const MedievalReceipt *ac
             if (!medieval_boolean(actual->json, "name_fix_enabled", &a, e) ||
                 !medieval_boolean(retained->json, "name_fix_enabled", &b, e)) return 0;
             if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained name selection.");
+        }
+        if (!!json_get(actual->json, "marriage_title_fix_enabled") !=
+            !!json_get(retained->json, "marriage_title_fix_enabled"))
+            return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained marriage title selection.");
+        if (json_get(actual->json, "marriage_title_fix_enabled")) {
+            if (!medieval_boolean(actual->json, "marriage_title_fix_enabled", &a, e) ||
+                !medieval_boolean(retained->json, "marriage_title_fix_enabled", &b, e)) return 0;
+            if (a != b) return mtw_fail(m, e, "receipt_invalid", "The receipt changes the retained marriage title selection.");
         }
         if (!!json_get(actual->json, "battle_icon_fix_enabled") !=
             !!json_get(retained->json, "battle_icon_fix_enabled"))

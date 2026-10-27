@@ -3,6 +3,7 @@ param(
     [string]$OutputDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'build'),
     [switch]$AllowUnpinnedOutput,
     [switch]$DiagnosticDepthState,
+    [switch]$DiagnosticDustStates,
     [ValidateSet(0,1)][int]$CreditsFlashFix = 0
 )
 
@@ -173,6 +174,9 @@ if ($LASTEXITCODE -ne 0) { throw "Dust simulation object build failed: $LASTEXIT
 $bridgeCompileDefinitions = @('/DMTW_DUST_DEFERRED_TAIL=1')
 if ($DiagnosticDepthState) {
     $bridgeCompileDefinitions += '/DMTW_DIAGNOSTIC_DEPTH_STATE=1'
+}
+if ($DiagnosticDustStates) {
+    $bridgeCompileDefinitions += '/DMTW_DIAGNOSTIC_DUST_STATES=1'
 }
 $bridgeArgs = @(
     '/nologo','/TP','--target=i686-pc-windows-msvc','/EHsc','/std:c++17',
@@ -815,6 +819,9 @@ $manifest = [ordered]@{
     intro_backing_repair_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'intro_backing_repair_core.h')).Hash
     intro_morph_guard_core_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'intro_morph_guard_core.h')).Hash
     menu_focus_pixel_aligned_vs_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'menu_focus_pixel_aligned_vs.hlsl')).Hash
+    dust_bridge_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dustFidelitySource 'dust_565_bridge.cpp')).Hash
+    dust_atlas_alpha_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dustFidelitySource 'dust_atlas_alpha.h')).Hash
+    dust_alpha_modulate_shader_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dustFidelitySource 'dust_alpha_modulate_ps.h')).Hash
     dust_draw_identity_source_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dustFidelitySource 'dust_draw_identity.h')).Hash
     accepted_inputs = $expected
     accepted_source_root = 'vendor/r185/accepted-dust-source'

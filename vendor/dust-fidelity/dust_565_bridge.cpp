@@ -9,8 +9,14 @@
 #include <stdint.h>
 #include <climits>
 #include <cmath>
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+#include <cstdarg>
+#include <cstdio>
+#endif
 #include <cwchar>
 #include <intrin.h>
+#include "dust_atlas_alpha.h"
+#include "dust_alpha_modulate_ps.h"
 #include "dust_draw_identity.h"
 #include "minhook/include/MinHook.h"
 
@@ -30,6 +36,12 @@ static ID3D11PixelShader *g_ps = nullptr;
 static ID3D11BlendState *g_blend = nullptr;
 static ID3D11DepthStencilState *g_depth = nullptr;
 static ID3D11RasterizerState *g_raster = nullptr;
+static ID3D11PixelShader *g_dust_alpha_ps = nullptr;
+static ID3D11Device *g_dust_alpha_device = nullptr;
+static ID3D11SamplerState *g_dust_source_sampler = nullptr;
+static ID3D11SamplerState *g_dust_clamp_sampler = nullptr;
+static IDirect3DBaseTexture9 *g_last_checked_dust_atlas = nullptr;
+static UINT g_last_checked_dust_atlas_draws = 0;
 static UINT g_width = 0, g_height = 0;
 
 extern "C" void mtw_dust_simulation_set_graphics_ready(int ready);
@@ -117,6 +129,292 @@ static volatile LONG estimated_step_us = 20000;
 static volatile LONG last_dust_area_pixels = 0;
 static volatile LONG scratch_bound_translated = 0;
 static volatile LONG scratch_unbound_translated = 0;
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+// Local diagnostic build only. The release build does no file I/O here.
+static SRWLOCK dust_diag_lock = SRWLOCK_INIT;
+static HANDLE dust_diag_file = INVALID_HANDLE_VALUE;
+static bool dust_diag_checked = false;
+static bool dust_diag_dumped_texture = false;
+static UINT dust_diag_texture_samples = 0;
+static UINT dust_diag_gpu_draws = 0;
+static volatile LONG dust_diag_sampler_repairs = 0;
+
+static void dust_diag_write(const char *format, ...) {
+    AcquireSRWLockExclusive(&dust_diag_lock);
+    if (!dust_diag_checked) {
+        char path[MAX_PATH] = {};
+        const DWORD size = GetEnvironmentVariableA("MTW_DUST_DIAG_PATH", path, MAX_PATH);
+        if (size && size < MAX_PATH)
+            dust_diag_file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ,
+                                         nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        dust_diag_checked = true;
+    }
+    if (dust_diag_file != INVALID_HANDLE_VALUE) {
+        char line[1024] = {};
+        va_list args;
+        va_start(args, format);
+        const int size = vsnprintf(line, sizeof(line), format, args);
+        va_end(args);
+        if (size > 0 && static_cast<size_t>(size) < sizeof(line)) {
+            DWORD written = 0;
+            WriteFile(dust_diag_file, line, static_cast<DWORD>(size), &written, nullptr);
+        }
+    }
+    ReleaseSRWLockExclusive(&dust_diag_lock);
+}
+
+static void dust_diag_d3d9(IDirect3DDevice9 *device, const void *vertices,
+                           UINT vertex_count, uintptr_t caller, uintptr_t image) {
+    DWORD colors[5] = {};
+    DWORD fvf = 0, blend = 0, src = 0, dst = 0, test = 0;
+    DWORD alpha_op = 0, alpha_arg1 = 0, alpha_arg2 = 0;
+    DWORD address_u = 0, address_v = 0, min_filter = 0, mag_filter = 0;
+    float first_u[5] = {}, first_v[5] = {};
+    float min_u = 1.0e9f, max_u = -1.0e9f, min_v = 1.0e9f, max_v = -1.0e9f;
+    for (UINT vertex = 0; vertex < 5; ++vertex)
+        CopyMemory(&colors[vertex], static_cast<const BYTE *>(vertices) +
+                   vertex * 32u + 16u, sizeof(colors[vertex]));
+    for (UINT vertex = 0; vertex < vertex_count && vertex < 50000u; ++vertex) {
+        const BYTE *data = static_cast<const BYTE *>(vertices) + vertex * 32u;
+        float u = 0.0f, v = 0.0f;
+        CopyMemory(&u, data + 24u, sizeof(u));
+        CopyMemory(&v, data + 28u, sizeof(v));
+        if (vertex < 5u) { first_u[vertex] = u; first_v[vertex] = v; }
+        if (std::isfinite(u) && std::isfinite(v)) {
+            if (u < min_u) min_u = u;
+            if (u > max_u) max_u = u;
+            if (v < min_v) min_v = v;
+            if (v > max_v) max_v = v;
+        }
+    }
+    const int phase = mtw_dust_batch_phase(vertices, vertex_count, 32,
+                                           caller, image);
+    device->GetFVF(&fvf);
+    device->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+    device->GetRenderState(D3DRS_SRCBLEND, &src);
+    device->GetRenderState(D3DRS_DESTBLEND, &dst);
+    device->GetRenderState(D3DRS_ALPHATESTENABLE, &test);
+    device->GetTextureStageState(0, D3DTSS_ALPHAOP, &alpha_op);
+    device->GetTextureStageState(0, D3DTSS_ALPHAARG1, &alpha_arg1);
+    device->GetTextureStageState(0, D3DTSS_ALPHAARG2, &alpha_arg2);
+    device->GetSamplerState(0, D3DSAMP_ADDRESSU, &address_u);
+    device->GetSamplerState(0, D3DSAMP_ADDRESSV, &address_v);
+    device->GetSamplerState(0, D3DSAMP_MINFILTER, &min_filter);
+    device->GetSamplerState(0, D3DSAMP_MAGFILTER, &mag_filter);
+    IDirect3DBaseTexture9 *base = nullptr;
+    D3DSURFACE_DESC desc = {};
+    HRESULT texture_hr = device->GetTexture(0, &base);
+    if (SUCCEEDED(texture_hr) && base && base->GetType() == D3DRTYPE_TEXTURE)
+        texture_hr = static_cast<IDirect3DTexture9 *>(base)->GetLevelDesc(0, &desc);
+    DWORD texture_hash = 0, opaque_pixels = 0, opaque_border = 0;
+    HRESULT lock_hr = E_NOTIMPL;
+    if (base && desc.Format == D3DFMT_A1R5G5B5 &&
+        desc.Width == 256 && desc.Height == 256 &&
+        (++dust_diag_texture_samples % 128u) == 1u) {
+        IDirect3DTexture9 *texture = static_cast<IDirect3DTexture9 *>(base);
+        D3DLOCKED_RECT locked = {};
+        lock_hr = texture->LockRect(0, &locked, nullptr, D3DLOCK_READONLY);
+        if (SUCCEEDED(lock_hr)) {
+            texture_hash = 2166136261u;
+            for (UINT y = 0; y < 256u; ++y) {
+                const WORD *row = reinterpret_cast<const WORD *>(
+                    static_cast<const BYTE *>(locked.pBits) + y * locked.Pitch);
+                for (UINT x = 0; x < 256u; ++x) {
+                    const WORD pixel = row[x];
+                    opaque_pixels += (pixel & 0x8000u) != 0u;
+                    if (x == 0u || x == 255u || y == 0u || y == 255u)
+                        opaque_border += (pixel & 0x8000u) != 0u;
+                    texture_hash = (texture_hash ^ pixel) * 16777619u;
+                }
+            }
+            if (phase != MTW_DUST_NONE && !dust_diag_dumped_texture) {
+                char path[MAX_PATH] = {};
+                const DWORD size = GetEnvironmentVariableA(
+                    "MTW_DUST_TEXTURE_DUMP_PATH", path, MAX_PATH);
+                if (size && size < MAX_PATH) {
+                    HANDLE file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ,
+                                              nullptr, CREATE_NEW,
+                                              FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (file != INVALID_HANDLE_VALUE) {
+                        for (UINT y = 0; y < 256u; ++y) {
+                            DWORD written = 0;
+                            const BYTE *row = static_cast<const BYTE *>(locked.pBits) +
+                                              y * locked.Pitch;
+                            WriteFile(file, row, 512, &written, nullptr);
+                        }
+                        CloseHandle(file);
+                        dust_diag_dumped_texture = true;
+                    }
+                }
+            }
+            texture->UnlockRect(0);
+        }
+    }
+    dust_diag_write("d3d9 tick=%llu caller=%08llx verts=%u color=%08lx phase=%d "
+                    "fvf=%lx blend=%lu src=%lu dst=%lu test=%lu alpha=%lu,%lu,%lu "
+                    "tex=%p fmt=%u size=%ux%u texhr=%08lx lockhr=%08lx hash=%08lx "
+                    "opaque=%lu border=%lu corners=%08lx,%08lx,%08lx,%08lx "
+                    "uv=%.4f,%.4f:%.4f,%.4f:%.4f,%.4f:%.4f,%.4f:%.4f,%.4f "
+                    "bounds=%.4f,%.4f,%.4f,%.4f sampler=%lu,%lu,%lu,%lu\r\n",
+                    static_cast<unsigned long long>(GetTickCount64()),
+                    static_cast<unsigned long long>(caller - image), vertex_count,
+                    colors[0], phase,
+                    fvf, blend, src, dst, test, alpha_op, alpha_arg1, alpha_arg2,
+                    base, desc.Format, desc.Width, desc.Height,
+                    static_cast<unsigned long>(texture_hr),
+                    static_cast<unsigned long>(lock_hr), texture_hash, opaque_pixels,
+                    opaque_border, colors[1], colors[2], colors[3], colors[4],
+                    first_u[0], first_v[0], first_u[1], first_v[1],
+                    first_u[2], first_v[2], first_u[3], first_v[3],
+                    first_u[4], first_v[4],
+                    min_u, max_u, min_v, max_v,
+                    address_u, address_v, min_filter, mag_filter);
+    drop(base);
+}
+
+static void dust_diag_atlas_draw(IDirect3DDevice9 *device,
+                                 D3DPRIMITIVETYPE kind, UINT min_vertex,
+                                 UINT vertex_count, UINT primitive_count,
+                                 D3DFORMAT index_format, const void *vertices,
+                                 UINT stride, uintptr_t caller) {
+    if (device != game_device || kind != D3DPT_TRIANGLELIST ||
+        stride != 32u || !vertices || vertex_count < 5u) return;
+    DWORD blend = 0, test = 0;
+    device->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+    if (!blend) return;
+    device->GetRenderState(D3DRS_ALPHATESTENABLE, &test);
+    if (test) return;
+    IDirect3DBaseTexture9 *base = nullptr;
+    if (FAILED(device->GetTexture(0, &base)) || !base) return;
+    D3DSURFACE_DESC desc = {};
+    if (base->GetType() == D3DRTYPE_TEXTURE) {
+        IDirect3DTexture9 *texture = static_cast<IDirect3DTexture9 *>(base);
+        texture->GetLevelDesc(0, &desc);
+    }
+    if (desc.Width && desc.Height) {
+        const uintptr_t image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        DWORD fvf = 0, alpha_op = 0, src = 0, dst = 0;
+        DWORD color = 0;
+        CopyMemory(&color, static_cast<const BYTE *>(vertices) + 16u,
+                   sizeof(color));
+        device->GetFVF(&fvf);
+        device->GetRenderState(D3DRS_SRCBLEND, &src);
+        device->GetRenderState(D3DRS_DESTBLEND, &dst);
+        device->GetTextureStageState(0, D3DTSS_ALPHAOP, &alpha_op);
+        dust_diag_write("particle tick=%llu caller=%08llx kind=%u min=%u verts=%u "
+                        "prims=%u index=%u stride=%u fvf=%lx blend=%lu "
+                        "test=%lu src=%lu dst=%lu alpha=%lu tex=%p fmt=%u "
+                        "size=%ux%u color=%08lx\r\n",
+                        static_cast<unsigned long long>(GetTickCount64()),
+                        image && caller >= image
+                            ? static_cast<unsigned long long>(caller - image) : 0ull,
+                        kind, min_vertex, vertex_count, primitive_count,
+                        index_format, stride, fvf, blend, test, src, dst,
+                        alpha_op, base, desc.Format, desc.Width,
+                        desc.Height, color);
+    }
+    drop(base);
+}
+
+static void dust_diag_d3d11(ID3D11DeviceContext *context, UINT count) {
+    ID3D11BlendState *blend = nullptr;
+    ID3D11ShaderResourceView *resource = nullptr;
+    ID3D11PixelShader *shader = nullptr;
+    ID3D11SamplerState *sampler = nullptr;
+    ID3D11RenderTargetView *target = nullptr;
+    FLOAT factors[4] = {};
+    UINT mask = 0;
+    context->OMGetBlendState(&blend, factors, &mask);
+    context->PSGetShaderResources(0, 1, &resource);
+    context->PSGetShader(&shader, nullptr, nullptr);
+    context->PSGetSamplers(0, 1, &sampler);
+    context->OMGetRenderTargets(1, &target, nullptr);
+    D3D11_BLEND_DESC desc = {};
+    if (blend) blend->GetDesc(&desc);
+    D3D11_SAMPLER_DESC sampler_desc = {};
+    if (sampler) sampler->GetDesc(&sampler_desc);
+    const D3D11_RENDER_TARGET_BLEND_DESC &rt = desc.RenderTarget[0];
+    dust_diag_write("d3d11 tick=%llu indices=%u blend=%p enable=%u src=%u dst=%u "
+                    "srca=%u dsta=%u mask=%u write=%u srv=%p shader=%p "
+                    "sampler=%p,%u,%u,%u "
+                    "target=%p scratch=%u returned=%u remaining=%u\r\n",
+                    static_cast<unsigned long long>(GetTickCount64()), count,
+                    blend, rt.BlendEnable, rt.SrcBlend, rt.DestBlend,
+                    rt.SrcBlendAlpha, rt.DestBlendAlpha, mask,
+                    rt.RenderTargetWriteMask, resource, shader,
+                    sampler, sampler_desc.AddressU, sampler_desc.AddressV,
+                    sampler_desc.Filter, target,
+                    target == g_scratch_rtv, dust_call_returned, dust_indices_remaining);
+    if (resource && (++dust_diag_gpu_draws % 512u) == 1u) {
+        ID3D11Resource *raw = nullptr;
+        ID3D11Texture2D *source = nullptr;
+        ID3D11Device *device = nullptr;
+        ID3D11Texture2D *staging = nullptr;
+        resource->GetResource(&raw);
+        if (raw) raw->QueryInterface(__uuidof(ID3D11Texture2D),
+                                     reinterpret_cast<void **>(&source));
+        context->GetDevice(&device);
+        D3D11_TEXTURE2D_DESC texture_desc = {};
+        HRESULT sample_hr = E_NOTIMPL;
+        DWORD hash = 2166136261u;
+        UINT opaque = 0, row_bytes = 0;
+        if (source && device) {
+            source->GetDesc(&texture_desc);
+            D3D11_TEXTURE2D_DESC staging_desc = texture_desc;
+            staging_desc.Usage = D3D11_USAGE_STAGING;
+            staging_desc.BindFlags = 0;
+            staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            staging_desc.MiscFlags = 0;
+            sample_hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
+            if (SUCCEEDED(sample_hr)) {
+                context->CopyResource(staging, source);
+                D3D11_MAPPED_SUBRESOURCE mapped = {};
+                sample_hr = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+                if (SUCCEEDED(sample_hr)) {
+                    row_bytes = mapped.RowPitch;
+                    char directory[MAX_PATH] = {};
+                    const DWORD size = GetEnvironmentVariableA(
+                        "MTW_DUST_GPU_DUMP_DIR", directory, MAX_PATH);
+                    char path[MAX_PATH] = {};
+                    HANDLE file = INVALID_HANDLE_VALUE;
+                    if (size && size < MAX_PATH &&
+                        snprintf(path, MAX_PATH, "%s\\gpu-%06u.bin", directory,
+                                 dust_diag_gpu_draws) < MAX_PATH)
+                        file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ,
+                                           nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL,
+                                           nullptr);
+                    for (UINT y = 0; y < texture_desc.Height; ++y) {
+                        const BYTE *row = static_cast<const BYTE *>(mapped.pData) +
+                                          y * mapped.RowPitch;
+                        for (UINT x = 0; x < mapped.RowPitch; ++x)
+                            hash = (hash ^ row[x]) * 16777619u;
+                        if (texture_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+                            texture_desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS) {
+                            for (UINT x = 0; x < texture_desc.Width; ++x)
+                                opaque += row[x * 4u + 3u] != 0u;
+                        }
+                        if (file != INVALID_HANDLE_VALUE) {
+                            DWORD written = 0;
+                            WriteFile(file, row, mapped.RowPitch, &written, nullptr);
+                        }
+                    }
+                    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+                    context->Unmap(staging, 0);
+                }
+            }
+        }
+        dust_diag_write("gpu tick=%llu draw=%u srv=%p format=%u size=%ux%u "
+                        "mips=%u pitch=%u hr=%08lx hash=%08lx nonzero_alpha=%u\r\n",
+                        static_cast<unsigned long long>(GetTickCount64()),
+                        dust_diag_gpu_draws, resource, texture_desc.Format,
+                        texture_desc.Width, texture_desc.Height,
+                        texture_desc.MipLevels, row_bytes,
+                        static_cast<unsigned long>(sample_hr), hash, opaque);
+        drop(staging); drop(device); drop(source); drop(raw);
+    }
+    drop(target); drop(sampler); drop(shader); drop(resource); drop(blend);
+}
+#endif
 #ifdef MTW_DIAGNOSTIC_DEPTH_STATE
 static volatile LONG depth_probe_done = 0;
 static void log_dust_depth_state(ID3D11DeviceContext *context) {
@@ -377,6 +675,26 @@ static HRESULT make_shaders(ID3D11Device *device) {
     return device->CreateRasterizerState(&rd, &g_raster);
 }
 
+// dgVoodoo builds the fixed-function dust shader from the current D3D9 alpha
+// stage. A stale or incorrect alpha stage can turn every masked billboard into
+// an opaque square. Use the exact verified shader for this draw, preserving its
+// original input registers, diffuse/specular terms, and fog behavior.
+static HRESULT make_dust_alpha_shader(ID3D11Device *device) {
+    if (g_dust_alpha_device == device && g_dust_alpha_ps) return S_OK;
+    drop(g_dust_clamp_sampler);
+    drop(g_dust_source_sampler);
+    drop(g_dust_alpha_ps);
+    drop(g_dust_alpha_device);
+    const HRESULT hr = device->CreatePixelShader(
+        k_dust_alpha_modulate_ps, sizeof(k_dust_alpha_modulate_ps),
+        nullptr, &g_dust_alpha_ps);
+    if (SUCCEEDED(hr)) {
+        device->AddRef();
+        g_dust_alpha_device = device;
+    }
+    return hr;
+}
+
 static HRESULT make_scratch(ID3D11Device *device, UINT width, UINT height) {
     if (g_scratch && device == g_device && width == g_width && height == g_height)
         return S_OK;
@@ -540,6 +858,10 @@ static int game_dust_draw_phase(IDirect3DDevice9 *device,
     DWORD color = 0, fvf = 0;
     CopyMemory(&color, static_cast<const BYTE *>(vertices) + 16, sizeof(color));
     const uintptr_t image = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+    if (image && caller >= image && caller - image == MTW_DUST_DRAW_RETURN_RVA)
+        dust_diag_d3d9(device, vertices, vertex_count, caller, image);
+#endif
     const int first_phase = mtw_dust_color_phase(color, caller, image);
     const bool possible_mixed = image != 0u && caller >= image &&
         caller - image == MTW_DUST_DRAW_RETURN_RVA;
@@ -559,6 +881,74 @@ static int game_dust_draw_phase(IDirect3DDevice9 *device,
     base->Release();
     return match ? mtw_dust_batch_phase(vertices, vertex_count, stride,
                                         caller, image) : MTW_DUST_NONE;
+}
+
+static void repair_dust_atlas_alpha(IDirect3DDevice9 *device) {
+    IDirect3DBaseTexture9 *base = nullptr;
+    if (FAILED(device->GetTexture(0, &base)) || !base) return;
+    bool full_check = base != g_last_checked_dust_atlas;
+    if (base == g_last_checked_dust_atlas) {
+        full_check = ++g_last_checked_dust_atlas_draws >= 1024u;
+    }
+    if (full_check) {
+        g_last_checked_dust_atlas = base;
+        g_last_checked_dust_atlas_draws = 0u;
+    }
+    if (base->GetType() == D3DRTYPE_TEXTURE) {
+        IDirect3DTexture9 *texture = static_cast<IDirect3DTexture9 *>(base);
+        D3DSURFACE_DESC desc = {};
+        if (SUCCEEDED(texture->GetLevelDesc(0, &desc)) &&
+            desc.Format == D3DFMT_A1R5G5B5 &&
+            desc.Width == 256u && desc.Height == 256u) {
+            D3DLOCKED_RECT locked = {};
+            const HRESULT lock_hr = texture->LockRect(0, &locked, nullptr, 0);
+            if (SUCCEEDED(lock_hr)) {
+                const bool needs_repair = full_check ||
+                    mtw_dust_atlas_alpha_sentinels_bad(
+                        static_cast<const WORD *>(locked.pBits), locked.Pitch);
+                if (!needs_repair) {
+                    texture->UnlockRect(0);
+                    drop(base);
+                    return;
+                }
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+                static bool injected_once = false;
+                const bool inject_full_atlas = GetEnvironmentVariableA(
+                    "MTW_DUST_INJECT_OPAQUE_FULL_ATLAS", nullptr, 0) != 0;
+                if (!injected_once && (inject_full_atlas || GetEnvironmentVariableA(
+                        "MTW_DUST_INJECT_OPAQUE_ATLAS", nullptr, 0))) {
+                    const UINT side = inject_full_atlas ? 256u : 128u;
+                    for (UINT y = 0u; y < side; ++y) {
+                        WORD *row = reinterpret_cast<WORD *>(
+                            static_cast<BYTE *>(locked.pBits) + y * locked.Pitch);
+                        for (UINT x = 0u; x < side; ++x)
+                            row[x] |= 0x8000u;
+                    }
+                    injected_once = true;
+                }
+                const bool bypass = GetEnvironmentVariableA(
+                    "MTW_DUST_SKIP_ATLAS_REPAIR", nullptr, 0) != 0;
+                const unsigned changed = bypass ? 0u : mtw_repair_dust_atlas_alpha(
+                    static_cast<WORD *>(locked.pBits), locked.Pitch,
+                    UINT64_C(0x389100512363FEBD), 6847u);
+                dust_diag_write("atlas tick=%llu texture=%p lock=%08lx changed=%u "
+                                "bypass=%u\r\n",
+                                static_cast<unsigned long long>(GetTickCount64()),
+                                texture, static_cast<unsigned long>(lock_hr),
+                                changed, bypass);
+#else
+                mtw_repair_dust_atlas_alpha(
+                    static_cast<WORD *>(locked.pBits), locked.Pitch,
+                    UINT64_C(0x389100512363FEBD), 6847u);
+#endif
+                texture->UnlockRect(0);
+            } else {
+                last_error = lock_hr;
+                g_last_checked_dust_atlas = nullptr;
+            }
+        }
+    }
+    drop(base);
 }
 
 // The game's transformed dust billboard is five 32-byte vertices: center
@@ -732,6 +1122,9 @@ static void STDMETHODCALLTYPE dust_draw_indexed(ID3D11DeviceContext *context,
             }
 #endif
             InterlockedIncrement(&translated_draws);
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+            dust_diag_d3d11(context, count);
+#endif
 #ifdef MTW_DIAGNOSTIC_DEPTH_STATE
             log_dust_depth_state(context);
 #endif
@@ -743,7 +1136,80 @@ static void STDMETHODCALLTYPE dust_draw_indexed(ID3D11DeviceContext *context,
 #endif
         }
     }
+    ID3D11PixelShader *previous_shader = nullptr;
+    ID3D11SamplerState *previous_sampler = nullptr;
+    bool replaced_shader = false;
+    bool replaced_sampler = false;
+    if (dust_pending && dust_active && context == backend_context &&
+        GetCurrentThreadId() == dust_thread &&
+        g_dust_alpha_device == backend_device && g_dust_alpha_ps) {
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+        const bool bypass = GetEnvironmentVariableA(
+            "MTW_DUST_SKIP_ALPHA_REPAIR", nullptr, 0) != 0;
+#else
+        const bool bypass = false;
+#endif
+        if (!bypass) {
+            context->PSGetShader(&previous_shader, nullptr, nullptr);
+            context->PSSetShader(g_dust_alpha_ps, nullptr, 0);
+            replaced_shader = true;
+        }
+        context->PSGetSamplers(0, 1, &previous_sampler);
+        if (previous_sampler) {
+            D3D11_SAMPLER_DESC desc = {};
+            previous_sampler->GetDesc(&desc);
+            if (desc.AddressU != D3D11_TEXTURE_ADDRESS_CLAMP ||
+                desc.AddressV != D3D11_TEXTURE_ADDRESS_CLAMP) {
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+                const bool skip_clamp = GetEnvironmentVariableA(
+                    "MTW_DUST_SKIP_SAMPLER_REPAIR", nullptr, 0) != 0;
+#else
+                const bool skip_clamp = false;
+#endif
+                if (!skip_clamp) {
+                    if (g_dust_source_sampler != previous_sampler ||
+                        !g_dust_clamp_sampler) {
+                        drop(g_dust_clamp_sampler);
+                        drop(g_dust_source_sampler);
+                        previous_sampler->AddRef();
+                        g_dust_source_sampler = previous_sampler;
+                        desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+                        desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+                        const HRESULT clamp_hr = backend_device->CreateSamplerState(
+                            &desc, &g_dust_clamp_sampler);
+                        if (FAILED(clamp_hr)) last_error = clamp_hr;
+                    }
+                    if (g_dust_clamp_sampler) {
+                        context->PSSetSamplers(0, 1, &g_dust_clamp_sampler);
+                        replaced_sampler = true;
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+                        if (InterlockedIncrement(&dust_diag_sampler_repairs) <= 16) {
+                            ID3D11SamplerState *bound_sampler = nullptr;
+                            context->PSGetSamplers(0, 1, &bound_sampler);
+                            D3D11_SAMPLER_DESC bound_desc = {};
+                            if (bound_sampler) bound_sampler->GetDesc(&bound_desc);
+                            dust_diag_write("clamp tick=%llu original=%p replacement=%p "
+                                            "bound=%p address=%u,%u filter=%u\r\n",
+                                            static_cast<unsigned long long>(GetTickCount64()),
+                                            previous_sampler, g_dust_clamp_sampler,
+                                            bound_sampler, bound_desc.AddressU,
+                                            bound_desc.AddressV, bound_desc.Filter);
+                            drop(bound_sampler);
+                        }
+#endif
+                    }
+                }
+            }
+        }
+    }
     original_draw_indexed(context, count, start, base);
+    if (replaced_sampler)
+        context->PSSetSamplers(0, 1, &previous_sampler);
+    drop(previous_sampler);
+    if (replaced_shader) {
+        context->PSSetShader(previous_shader, nullptr, 0);
+        drop(previous_shader);
+    }
 #ifdef MTW_DUST_DEFERRED_TAIL
     if (dust_pending && dust_active && context == backend_context &&
         GetCurrentThreadId() == dust_thread && !inside_bridge) {
@@ -787,6 +1253,11 @@ static HRESULT STDMETHODCALLTYPE dust_draw_up(IDirect3DDevice9 *device,
     frame_total_primitives += primitive_count;
     frame_total_vertices += vertex_count;
     ++frame_draw_calls;
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+    dust_diag_atlas_draw(device, kind, min_vertex, vertex_count,
+                         primitive_count, index_format, vertices, stride,
+                         reinterpret_cast<uintptr_t>(_ReturnAddress()));
+#endif
     const bool may_select = bridge_enabled && !dust_pending && backend_context &&
 #ifdef MTW_DUST_DEFERRED_TAIL
         !dust_tail_pending;
@@ -800,6 +1271,16 @@ static HRESULT STDMETHODCALLTYPE dust_draw_up(IDirect3DDevice9 *device,
         : MTW_DUST_NONE;
     const bool selected = phase != MTW_DUST_NONE;
     if (selected) {
+        repair_dust_atlas_alpha(device);
+#ifdef MTW_DIAGNOSTIC_DUST_STATES
+        if (GetEnvironmentVariableA("MTW_DUST_INJECT_BAD_ALPHA", nullptr, 0))
+            device->SetTextureStageState(0, D3DTSS_ALPHAOP,
+                                         D3DTOP_SELECTARG2);
+        if (GetEnvironmentVariableA("MTW_DUST_INJECT_WRAP", nullptr, 0)) {
+            device->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+            device->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+        }
+#endif
         // Keep the native-step estimator's original work categories. The
         // gray phase is a graphics repair; its particles already matched the
         // native reference before this bridge selection was extended.
@@ -1011,6 +1492,8 @@ extern "C" int mtw_dust_graphics_register_d3d11(ID3D11Device *device,
     }
     backend_device = device;
     backend_context = context;
+    const HRESULT shader_hr = make_dust_alpha_shader(device);
+    if (FAILED(shader_hr)) last_error = shader_hr;
     registered_context = static_cast<LONG>(reinterpret_cast<UINT_PTR>(context));
     if (game_device && original_draw_up && original_draw_primitive_up)
         mtw_dust_simulation_set_graphics_ready(1);

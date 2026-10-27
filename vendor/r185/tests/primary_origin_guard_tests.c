@@ -210,10 +210,99 @@ static int test_guard_lifecycle(void) {
     return 0;
 }
 
+static int test_deployment_stage_sync_gate(void) {
+    static const unsigned char terrain_call[] = {
+        0xE8u, 0x4Eu, 0xC0u, 0xF1u, 0xFFu
+    };
+    unsigned char corrupt[sizeof(terrain_call)];
+    unsigned char bits = 0u;
+
+    CHECK(MTW_DEPLOYMENT_TERRAIN_DRAW_CALL_RVA == 0x0023120Du);
+    CHECK(mtw_deployment_terrain_call_supported(
+        terrain_call, sizeof(terrain_call)));
+    memcpy(corrupt, terrain_call, sizeof(corrupt));
+    corrupt[1] ^= 1u;
+    CHECK(!mtw_deployment_terrain_call_supported(
+        corrupt, sizeof(corrupt)));
+    CHECK(!mtw_deployment_terrain_call_supported(NULL, sizeof(corrupt)));
+    CHECK(!mtw_deployment_terrain_call_supported(
+        terrain_call, sizeof(terrain_call) - 1u));
+
+    CHECK(mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x11110000u, &bits,
+        2560u, 1440u, 5120));
+    CHECK(mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x11110000u, &bits,
+        800u, 600u, 1600));
+    CHECK(!mtw_deployment_stage_should_sync(
+        0u, 0, 0x11110000u, 0x11110000u, &bits,
+        2560u, 1440u, 5120));
+    CHECK(!mtw_deployment_stage_should_sync(
+        1u, -1, 0x11110000u, 0x11110000u, &bits,
+        2560u, 1440u, 5120));
+    CHECK(!mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x22220000u, &bits,
+        2560u, 1440u, 5120));
+    CHECK(!mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x11110000u, NULL,
+        2560u, 1440u, 5120));
+    CHECK(!mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x11110000u, &bits,
+        2560u, 1440u, 5000));
+    CHECK(!mtw_deployment_stage_should_sync(
+        1u, 0, 0x11110000u, 0x11110000u, &bits,
+        UINT32_MAX, 1440u, 5120));
+    return 0;
+}
+
+static int test_deployment_row_copy_preserves_padding(void) {
+    const unsigned char source[] = {
+        1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 0xFEu, 0xFEu,
+        9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 0xFDu, 0xFDu
+    };
+    unsigned char destination[24];
+    memset(destination, 0xAA, sizeof(destination));
+    CHECK(mtw_deployment_copy_rows(
+        destination, 12, source, 10, 4u, 2u));
+    CHECK(memcmp(destination, source, 8u) == 0);
+    CHECK(destination[8] == 0xAAu && destination[11] == 0xAAu);
+    CHECK(memcmp(destination + 12, source + 10, 8u) == 0);
+    CHECK(destination[20] == 0xAAu && destination[23] == 0xAAu);
+    CHECK(!mtw_deployment_copy_rows(
+        destination, 7, source, 10, 4u, 2u));
+    CHECK(!mtw_deployment_copy_rows(
+        destination, 12, source, 7, 4u, 2u));
+    CHECK(!mtw_deployment_copy_rows(
+        NULL, 12, source, 10, 4u, 2u));
+    return 0;
+}
+
+static int test_deployment_source_requires_rendered_pixels(void) {
+    unsigned char image[8u * 8u * 2u] = {0};
+    uint32_t x, y;
+    CHECK(!mtw_deployment_source_looks_rendered(
+        image, 16, 8u, 8u));
+    for (y = 1u; y <= 4u; ++y) {
+        for (x = 1u; x <= 4u; ++x) {
+            image[(y * 8u + x) * 2u] = 0x21u;
+        }
+    }
+    CHECK(mtw_deployment_source_looks_rendered(
+        image, 16, 8u, 8u));
+    CHECK(!mtw_deployment_source_looks_rendered(
+        image, 14, 8u, 8u));
+    CHECK(!mtw_deployment_source_looks_rendered(
+        NULL, 16, 8u, 8u));
+    return 0;
+}
+
 int main(void) {
     CHECK(test_exact_hook_signature() == 0);
     CHECK(test_resolution_independent_identity_gate() == 0);
     CHECK(test_guard_lifecycle() == 0);
+    CHECK(test_deployment_stage_sync_gate() == 0);
+    CHECK(test_deployment_row_copy_preserves_padding() == 0);
+    CHECK(test_deployment_source_requires_rendered_pixels() == 0);
     puts("primary origin guard tests passed");
     return 0;
 }

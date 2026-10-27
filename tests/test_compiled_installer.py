@@ -34,8 +34,10 @@ RUNTIME_NAMES = ("D3D9.dll", "dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dg
 LOCALE_NAME = "Loc/Eng/CHANGES.TXT"
 HEROES_NAME = "campmap/names/DEFAULT_HEROES.TXT"
 NAMES_NAME = "Loc/Eng/NAMES.TXT"
+REGION_TITLES_NAME = "Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT"
 FIXED_HEROES_HASH = "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB"
 FIXED_NAMES_HASH = "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
+FIXED_REGION_TITLES_HASH = "F75F5DAFE7319715C81ABE87AC9F6D1058944AC505DA53E3C015A7EB353BF1F7"
 STOCK_LOCALE_HASH = "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC"
 FAST_LOCALE_HASH = "2BC2C971F1AC2C564490A526C6E8B1AE255E2CECBC43B45EC0B6B45A8FDF0F5B"
 ZOOM_LOCALE_HASH = "F2724F3F76CABB6289C327229988CEADF04D1D820BFBC0E8D7BDE52207FBC3D3"
@@ -104,7 +106,8 @@ def new_game(root: Path, name: str) -> Path:
 
 
 def snapshot(game: Path) -> dict[str, str | None]:
-    names = ["Medieval_TW.exe", LOCALE_NAME, HEROES_NAME, NAMES_NAME, *RUNTIME_NAMES, "D3D8.dll"]
+    names = ["Medieval_TW.exe", LOCALE_NAME, HEROES_NAME, NAMES_NAME,
+             REGION_TITLES_NAME, *RUNTIME_NAMES, "D3D8.dll"]
     names += [f"{name}.unofficial-patch.bak" for name in RUNTIME_NAMES]
     return {name: sha256(game / name) if (game / name).is_file() else None for name in names}
 
@@ -180,8 +183,8 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
     return result
 
 
-def test_compiled_name_choice_installs_alone_and_other_fixes_leave_text_alone(tmp_path: Path) -> None:
-    game = new_game(tmp_path, "Independent name option")
+def test_compiled_name_choice_includes_marriage_titles_and_restores_text(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Name and title corrections")
     before = snapshot(game)
     receipt_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
     only_names = run_installer(game, terrain_fix=False, scroll_fix=False, sprite_fix=False,
@@ -190,8 +193,11 @@ def test_compiled_name_choice_installs_alone_and_other_fixes_leave_text_alone(tm
     assert only_names.returncode == 0, (only_names.stdout, only_names.stderr)
     assert sha256(game / HEROES_NAME) == FIXED_HEROES_HASH
     assert sha256(game / NAMES_NAME) == FIXED_NAMES_HASH
+    assert sha256(game / REGION_TITLES_NAME) == FIXED_REGION_TITLES_HASH
     assert sha256(game / "Medieval_TW.exe") == SUPPORTED_EXE_HASH
-    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["name_fix_enabled"] is True
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert receipt["name_fix_enabled"] is True
+    assert receipt["marriage_title_fix_enabled"] is True
 
     off = run_installer(game, terrain_fix=False, scroll_fix=True, sprite_fix=False,
                         tutorial_fix=False, parchment_fix=False, name_fix=False,
@@ -199,7 +205,10 @@ def test_compiled_name_choice_installs_alone_and_other_fixes_leave_text_alone(tm
     assert off.returncode == 0, (off.stdout, off.stderr)
     assert sha256(game / HEROES_NAME) == before[HEROES_NAME]
     assert sha256(game / NAMES_NAME) == before[NAMES_NAME]
-    assert json.loads(receipt_path.read_text(encoding="utf-8-sig"))["name_fix_enabled"] is False
+    assert sha256(game / REGION_TITLES_NAME) == before[REGION_TITLES_NAME]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    assert receipt["name_fix_enabled"] is False
+    assert receipt["marriage_title_fix_enabled"] is False
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before
 
@@ -477,7 +486,7 @@ def test_compiled_all_seven_independent_fix_combinations(tmp_path: Path) -> None
         assert receipt["scroll_fix_enabled"] is scroll
         assert receipt["sprite_fix_enabled"] is sprite
         assert receipt["sprite_delivery"] == "direct-exe"
-        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v8"
         if installation_id is None:
             installation_id = receipt["installation_id"]
         assert receipt["installation_id"] == installation_id
@@ -501,7 +510,7 @@ def test_compiled_fast_computer_moves_is_independent_reversible_and_combines_wit
         assert result.returncode == 0, (result.stdout, result.stderr)
         receipt = json.loads((game / ".unofficial-medieval-total-war-patch" / "install-manifest.json")
                              .read_text(encoding="utf-8-sig"))
-        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+        assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v8"
         assert receipt["fast_moves_fix_enabled"] is fast
         assert receipt["terrain_fix_enabled"] is terrain
         if installation_id is None:
@@ -868,7 +877,7 @@ def test_compiled_character_data_fixes_share_one_transaction_and_restore_origina
     assert sha256(game / NAMES_NAME) == FIXED_NAMES_HASH
     receipt = json.loads((game / ".unofficial-medieval-total-war-patch/install-manifest.json")
                          .read_text(encoding="utf-8-sig"))
-    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v8"
     for name in (HEROES_NAME, NAMES_NAME):
         row = receipt["files"][name]
         assert row["original_sha256"] == before[name]
@@ -1008,7 +1017,7 @@ def test_compiled_receiptless_current_patch_runtime_restored_on_removal(tmp_path
     assert first.returncode == 0
     manifest_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
     first_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    assert first_receipt["preinstall_mode"] == "r288-key-customisation"
+    assert first_receipt["preinstall_mode"] == "r292-dust-alpha"
     assert first_receipt["recovery_archive"] == ""
     for name in RUNTIME_NAMES:
         assert first_receipt["files"][name]["baseline_kind"] == "verified-preinstall"

@@ -62,10 +62,15 @@ def test_patch_choices_fit_inside_their_group_borders() -> None:
         )),
     ):
         gx, gy, gw, gh = group
+        spans = []
         for label in labels:
             x, y, width, height = control_rect(text, "Checkbox", label)
             assert gx < x and x + width < gx + gw, label
             assert gy < y and y + height + 8 <= gy + gh, label
+            spans.append((y, y + height, label))
+        spans.sort()
+        for (_, previous_bottom, previous_label), (next_top, _, next_label) in zip(spans, spans[1:]):
+            assert previous_bottom <= next_top, f"{previous_label} overlaps {next_label}"
 
 
 def test_identity_is_centralized_and_unicode_mui2_metadata_is_complete() -> None:
@@ -363,7 +368,7 @@ def test_name_corrections_are_a_separate_recommended_choice_and_parchment_has_pr
     assert 'Restores the parchment background behind character attributes.' in text
     assert 'File /oname=name-and-title.bmp' in text
     assert 'StrCpy $1 "$PLUGINSDIR\\name-and-title.bmp"' in text
-    assert 'Corrects incorrect character names and titles for the Sicilian and Welsh factions.' in text
+    assert 'Corrects Sicilian and Welsh character names and titles, and faction titles in marriage letters.' in text
 
 
 def test_engine_drives_inspect_install_and_restore_with_uninstaller() -> None:

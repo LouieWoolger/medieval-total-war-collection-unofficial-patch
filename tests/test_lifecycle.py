@@ -32,8 +32,10 @@ NAMES = tuple(json.loads((PAYLOAD / "payload-manifest.json").read_text())['files
 SUPPORTED = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
 HEROES = "campmap/names/DEFAULT_HEROES.TXT"
 CHARACTER_NAMES = "Loc/Eng/NAMES.TXT"
+REGION_TITLES = "Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT"
 FIXED_HEROES = "B9BB6F6000BB426736F2E113A0D05331A014C8351AB0D8C1B3FD2FE10705ADDB"
 FIXED_NAMES = "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
+FIXED_REGION_TITLES = "F75F5DAFE7319715C81ABE87AC9F6D1058944AC505DA53E3C015A7EB353BF1F7"
 
 
 def digest(path: Path) -> str:
@@ -117,14 +119,16 @@ def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None
 
 def test_name_corrections_are_an_independent_selection(games):
     game = games()
-    originals = {name: digest(game / name) for name in (HEROES, CHARACTER_NAMES)}
+    originals = {name: digest(game / name) for name in (HEROES, CHARACTER_NAMES, REGION_TITLES)}
     result, _ = run("Install", game, terrain_fix=False, scroll_fix=False,
                     sprite_fix=False, parchment_fix=False, name_fix=True)
     assert result.returncode == 0, (result.stdout, result.stderr)
     receipt = read_receipt(game)
     assert receipt["name_fix_enabled"] is True
+    assert receipt["marriage_title_fix_enabled"] is True
     assert digest(game / HEROES) == FIXED_HEROES
     assert digest(game / CHARACTER_NAMES) == FIXED_NAMES
+    assert digest(game / REGION_TITLES) == FIXED_REGION_TITLES
     assert digest(game / "Medieval_TW.exe") == SUPPORTED
     result, _ = run("Install", game, terrain_fix=False, scroll_fix=False,
                     sprite_fix=False, parchment_fix=False, name_fix=False)
@@ -132,6 +136,78 @@ def test_name_corrections_are_an_independent_selection(games):
     result, _ = run("Restore", game)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert {name: digest(game / name) for name in originals} == originals
+
+
+def test_name_choice_reapplies_and_restores_marriage_letter_text(games):
+    game = games("Name and title corrections")
+    original = digest(game / REGION_TITLES)
+    result, report = run("Install", game, terrain_fix=False, scroll_fix=False,
+                         sprite_fix=False, parchment_fix=False, name_fix=True)
+    assert result.returncode == 0, (report, result.stdout)
+    assert digest(game / REGION_TITLES) == FIXED_REGION_TITLES
+    assert read_receipt(game)["marriage_title_fix_enabled"] is True
+    assert read_receipt(game)["files"][REGION_TITLES]["original_sha256"] == original
+    assert digest(game / "Medieval_TW.exe") == SUPPORTED
+    verify, _ = run("Verify", game)
+    assert verify.returncode == 0, verify.stdout
+    repeat, _ = run("Install", game, terrain_fix=False, scroll_fix=False,
+                    sprite_fix=False, parchment_fix=False, name_fix=True)
+    assert repeat.returncode == 0, repeat.stdout
+    assert digest(game / REGION_TITLES) == FIXED_REGION_TITLES
+    removed, _ = run("Restore", game)
+    assert removed.returncode == 0, removed.stdout
+    assert digest(game / REGION_TITLES) == original
+
+
+def test_name_choice_toggle_off_preserves_subsequent_user_edit(games):
+    game = games("Name choice toggle")
+    path = game / REGION_TITLES
+    original = path.read_bytes()
+    on, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
+                sprite_fix=False, name_fix=True)
+    assert on.returncode == 0, on.stdout
+    off, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
+                 sprite_fix=False, name_fix=False)
+    assert off.returncode == 0, off.stdout
+    assert path.read_bytes() == original
+    assert read_receipt(game)["name_fix_enabled"] is False
+    assert read_receipt(game)["marriage_title_fix_enabled"] is False
+    changed = original + b"\r\nuser title\r\n"
+    path.write_bytes(changed)
+    assert run("Verify", game)[0].returncode == 0
+    assert run("Install", game, terrain_fix=False, scroll_fix=True,
+               sprite_fix=False, name_fix=False)[0].returncode == 0
+    assert path.read_bytes() == changed
+    rejected, report = run("Install", game, terrain_fix=False, scroll_fix=True,
+                           sprite_fix=False, name_fix=True)
+    assert rejected.returncode != 0 and report["code"] == "unsupported_data"
+    assert path.read_bytes() == changed
+    assert run("Restore", game)[0].returncode == 0
+    assert path.read_bytes() == changed
+
+
+def test_v7_receipt_upgrades_to_marriage_titles_with_name_choice(games):
+    game = games("V7 name and title upgrade")
+    original = digest(game / REGION_TITLES)
+    first, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
+                   sprite_fix=False, name_fix=False)
+    assert first.returncode == 0, first.stdout
+    path = game / STATE / "install-manifest.json"
+    receipt = read_receipt(game)
+    receipt["schema"] = "unofficial-medieval-total-war-patch-install-v7"
+    receipt.pop("marriage_title_fix_enabled")
+    receipt["files"].pop(REGION_TITLES)
+    seal(receipt)
+    path.write_text(json.dumps(receipt, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    (game / STATE / "originals" / "DEFAULT_REGION_SPECIFIC.TXT").unlink()
+    upgrade, report = run("Install", game, terrain_fix=False, scroll_fix=True,
+                          sprite_fix=False, name_fix=True)
+    assert upgrade.returncode == 0, (report, upgrade.stdout)
+    assert read_receipt(game)["schema"] == "unofficial-medieval-total-war-patch-install-v8"
+    assert digest(game / REGION_TITLES) == FIXED_REGION_TITLES
+    assert read_receipt(game)["files"][REGION_TITLES]["original_sha256"] == original
+    assert run("Restore", game)[0].returncode == 0
+    assert digest(game / REGION_TITLES) == original
 
 
 def test_other_fix_leaves_character_data_untouched_when_name_fix_off(games):
@@ -144,6 +220,21 @@ def test_other_fix_leaves_character_data_untouched_when_name_fix_off(games):
     assert {name: digest(game / name) for name in originals} == originals
     result, _ = run("Restore", game)
     assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def test_repeating_install_with_name_fix_off_does_not_archive_unchanged_snapshots(games):
+    game = games("Name off repeat")
+    original = {name: digest(game / name) for name in (HEROES, CHARACTER_NAMES)}
+    for repair_count in (0, 1):
+        result, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
+                        sprite_fix=False, name_fix=False)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        receipt = read_receipt(game)
+        assert receipt["repair_count"] == repair_count
+        assert receipt["name_fix_enabled"] is False
+        assert receipt["recovery_archive"] == ""
+        assert not list(game.glob(".medieval-recovery-*"))
+        assert {name: digest(game / name) for name in original} == original
 
 
 def test_name_component_can_be_disabled_and_later_text_edits_survive_removal(games):
@@ -201,13 +292,15 @@ def test_v6_receipt_upgrades_to_independent_name_selection(games):
     receipt = read_receipt(game)
     receipt["schema"] = "unofficial-medieval-total-war-patch-install-v6"
     receipt.pop("name_fix_enabled")
+    receipt.pop("marriage_title_fix_enabled")
     receipt.pop("key_fix_enabled")
+    receipt["files"].pop(REGION_TITLES)
     seal(receipt)
     path.write_text(json.dumps(receipt, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     off, _ = run("Install", game, terrain_fix=False, scroll_fix=True,
                  sprite_fix=False, name_fix=False)
     assert off.returncode == 0, off.stdout
-    assert read_receipt(game)["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    assert read_receipt(game)["schema"] == "unofficial-medieval-total-war-patch-install-v8"
     assert read_receipt(game)["name_fix_enabled"] is False
     assert {name: digest(game / name) for name in originals} == originals
     removed, _ = run("Restore", game)
@@ -223,7 +316,8 @@ def installed(game: Path):
 
 def relevant(game: Path):
     names = (*NAMES, "Medieval_TW.exe", "Loc/Eng/NAMES.TXT",
-             "campmap/names/DEFAULT_HEROES.TXT", "SaveGames/personal.cpg", "unrelated-mod.txt")
+             "campmap/names/DEFAULT_HEROES.TXT", REGION_TITLES,
+             "SaveGames/personal.cpg", "unrelated-mod.txt")
     return {name: digest(game / name) if (game / name).exists() else None for name in names}
 
 
@@ -475,6 +569,50 @@ def test_extended_character_executable_can_be_reinstalled(games):
     assert relevant(game) == before
 
 
+@pytest.mark.parametrize("target_length", [183, 218])
+def test_deep_game_folder_reinstall_and_restore_cleans_metadata(games, tmp_path, target_length):
+    # A deeply nested but valid game path makes transaction metadata longer
+    # than the legacy Win32 enumeration limit during normal reinstall/restore.
+    padding = target_length - len(str(tmp_path)) - 1
+    assert padding > 0, "test needs a shorter temporary root for this boundary"
+    name = "g" * padding
+    game = games(name)
+    assert len(str(game)) == target_length
+    before = relevant(game)
+
+    for _ in range(2):
+        installed_result, _ = run("Install", game)
+        assert installed_result.returncode == 0, (installed_result.stdout, installed_result.stderr)
+
+    restored, _ = run("Restore", game)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert relevant(game) == before
+    assert not (game / STATE).exists()
+    assert not (game / UNINSTALL).exists()
+    assert not list(game.glob(".unofficial-medieval-patch-preparing-*"))
+    assert not registry(game)
+
+
+@pytest.mark.parametrize("target_length", [183, 184])
+def test_deep_game_folder_failed_install_rolls_back_cleanly(games, tmp_path, target_length):
+    padding = target_length - len(str(tmp_path)) - 1
+    assert padding > 0, "test needs a shorter temporary root for this boundary"
+    name = "g" * padding
+    game = games(name)
+    assert len(str(game)) == target_length
+    before = relevant(game)
+
+    failed, report = run("Install", game, fault="throw:before-stage-exe",
+                         terrain_fix=False, scroll_fix=True, sprite_fix=False)
+    assert failed.returncode != 0, (failed.stdout, failed.stderr)
+    assert report["rollback"] in {"not-needed", "verified"}, report
+    assert relevant(game) == before
+    assert not (game / STATE).exists()
+    assert not (game / UNINSTALL).exists()
+    assert not list(game.glob(".unofficial-medieval-patch-preparing-*"))
+    assert not registry(game)
+
+
 def test_exact_current_proxy_without_receipt_is_restored_as_preinstall(games):
     game = games("Receipt lost with current proxy")
     proxy = PAYLOAD / "D3D9.dll"
@@ -485,7 +623,7 @@ def test_exact_current_proxy_without_receipt_is_restored_as_preinstall(games):
                     sprite_fix=False, parchment_fix=False)
     assert installed[0].returncode == 0, (installed[0].stdout, installed[0].stderr)
     receipt = read_receipt(game)
-    assert receipt["preinstall_mode"] == "r288-key-customisation"
+    assert receipt["preinstall_mode"] == "r292-dust-alpha"
     assert receipt["files"]["D3D9.dll"]["existed"] is True
     assert receipt["files"]["D3D9.dll"]["baseline_kind"] == "verified-preinstall"
     assert receipt["files"]["D3D9.dll"]["original_sha256"] == prior_hash
@@ -521,7 +659,7 @@ def test_character_data_partial_and_preexisting_manual_fixes_restore_exact_input
     assert digest(game / HEROES) == FIXED_HEROES
     assert digest(game / CHARACTER_NAMES) == FIXED_NAMES
     receipt = read_receipt(game)
-    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v7"
+    assert receipt["schema"] == "unofficial-medieval-total-war-patch-install-v8"
     for relative in (HEROES, CHARACTER_NAMES):
         row = receipt["files"][relative]
         assert row["original_sha256"] == before[relative]

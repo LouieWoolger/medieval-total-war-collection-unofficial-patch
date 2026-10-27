@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Terrain Movement Fix",
-  "runtime_identity": "R290-zoom-tooltip-scroll-sprite-off-fast-icon-off",
+  "runtime_identity": "R292-dust-alpha-scroll-sprite-off-fast-icon-off",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 246272,
-      "sha256": "7DC0431A69A6DB9ECABC66E6F558ADD00CD4C93D3FAC822D19C741759587DB0C",
-      "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
+      "length": 253440,
+      "sha256": "D4ACE2D3C842A29489BA866CC34B7DA9FD3F14823E8755CCF4F9A9CD4E0EBFA3",
+      "provenance": "Source-built PE32 D3D9 proxy with exact supported game identity; dust transparency state, atlas mask and sampler are repaired only for selected draws while FastVideoMemoryAccess remains enabled."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

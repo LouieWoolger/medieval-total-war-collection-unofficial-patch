@@ -83,7 +83,7 @@ def main() -> None:
         previous = json.loads((runtime / ("payload-manifest-credits-only.json" if name == "credits-only"
                                          else f"payload-manifest-{name}-credits.json")).read_text(encoding="utf-8"))
         original["runtime_identity"] = (
-            f"R290-credits-zoom-tooltip-{name}"
+            f"R292-credits-dust-alpha-{name}"
             if previous["files"]["D3D9.dll"]["sha256"] != item["sha256"]
             else previous["runtime_identity"]
         )

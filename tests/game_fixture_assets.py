@@ -8,6 +8,7 @@ import shutil
 STOCK_ENGLISH_SHA256 = "A4ED1815E5BBE23DC0B4279AFB9398E1FABC6A9A1F2A014DB96F5F25E2B5B3DC"
 STOCK_HEROES_SHA256 = "62B181D0804E48ECB527CAC1DC38D5DBE6CC79A22B9C576530F6F1C842D6E6DF"
 STOCK_NAMES_SHA256 = "BDFB6F894C4B21C147A523A1FAD84B1A8F3CF8D809E98C69363266D4B17A7A76"
+STOCK_REGION_TITLES_SHA256 = "17CC768ABBBE45CFDBFA807A17FC27732A2E0D25251298A55EED869389972517"
 
 
 def copy_campaign_text(game_executable: Path, destination: Path) -> None:
@@ -23,6 +24,7 @@ def copy_character_text(game_executable: Path, destination: Path) -> None:
     for relative, expected in (
         (Path("campmap/names/DEFAULT_HEROES.TXT"), STOCK_HEROES_SHA256),
         (Path("Loc/Eng/NAMES.TXT"), STOCK_NAMES_SHA256),
+        (Path("Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT"), STOCK_REGION_TITLES_SHA256),
     ):
         source = game_executable.parent / relative
         data_hash = hashlib.sha256(source.read_bytes()).hexdigest().upper()

@@ -12,7 +12,8 @@ int main(int argc, char **argv) {
     int kind, ok = 0;
     if (argc != 4) return 2;
     kind = !strcmp(argv[1], "heroes") ? MTW_GAME_DATA_HEROES :
-           !strcmp(argv[1], "names") ? MTW_GAME_DATA_NAMES : -1;
+           !strcmp(argv[1], "names") ? MTW_GAME_DATA_NAMES :
+           !strcmp(argv[1], "region-titles") ? MTW_GAME_DATA_REGION_TITLES : -1;
     if (kind < 0 || !(input = fopen(argv[2], "rb")) || fseek(input, 0, SEEK_END) ||
         (count = ftell(input)) < 0 || count > 200000 || fseek(input, 0, SEEK_SET)) goto done;
     source = (unsigned char *)malloc((size_t)count);

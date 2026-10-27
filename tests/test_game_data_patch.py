@@ -16,6 +16,8 @@ NAMES_STOCK = "BDFB6F894C4B21C147A523A1FAD84B1A8F3CF8D809E98C69363266D4B17A7A76"
 NAMES_CYD = "A4CC2AF6ECA25792E5E0FC64055706B4C22763C4D4A51080F774B0A8420E080E"
 NAMES_KILIJ = "F2847372150BED92E36F87F629A955344D2DEF533D6FD5ED6A1C25EDECF532FA"
 NAMES_FIXED = "3421E5FE033FF3CD9D710FFA38F465B970060C4095C56B590C22AEDFEF4A6F15"
+REGION_TITLES_STOCK = "17CC768ABBBE45CFDBFA807A17FC27732A2E0D25251298A55EED869389972517"
+REGION_TITLES_FIXED = "F75F5DAFE7319715C81ABE87AC9F6D1058944AC505DA53E3C015A7EB353BF1F7"
 
 
 def sha(data: bytes) -> str:
@@ -108,6 +110,41 @@ def test_data_transform_refuses_unrecognized_user_edit(
     original = bytearray(source_file("Loc/Eng/NAMES.TXT", NAMES_STOCK))
     original[100] ^= 1
     result = transformed(executable, tmp_path, "names", bytes(original))
+    assert result.returncode != 0
+    assert "unsupported" in result.stderr.lower()
+    assert not result.output_file.exists()
+
+
+def test_marriage_title_transform_and_idempotence(
+    native_transform: tuple[Path, subprocess.CompletedProcess[str]], tmp_path: Path,
+) -> None:
+    executable, built = native_transform
+    assert built.returncode == 0, built.stdout + built.stderr
+    original = source_file("Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT", REGION_TITLES_STOCK)
+    before = (b'@{" of Hungary"}\r\n@{" of Sicily"}\r\n@{" of Burgundy"}\r\n'
+              b'@{" of Golden Khanate"}\r\n@{" of Novgorod"}\r\n@{" of The Papal States"}')
+    after = (b'@{" of Burgundy"}\r\n@{" of Golden Khanate"}\r\n@{" of Hungary"}\r\n'
+             b'@{" of Novgorod"}\r\n@{" of The Papal States"}\r\n@{" of Sicily"}')
+    assert original.count(before) == 1
+    expected = original.replace(before, after)
+    assert len(expected) == len(original) == 41495
+    assert sha(expected) == REGION_TITLES_FIXED
+    first = transformed(executable, tmp_path, "region-titles", original)
+    assert first.returncode == 0, first.stderr
+    assert first.output_file.read_bytes() == expected
+    second = transformed(executable, tmp_path, "region-titles", expected)
+    assert second.returncode == 0, second.stderr
+    assert second.output_file.read_bytes() == expected
+
+
+def test_marriage_title_transform_rejects_unknown_edit(
+    native_transform: tuple[Path, subprocess.CompletedProcess[str]], tmp_path: Path,
+) -> None:
+    executable, built = native_transform
+    assert built.returncode == 0, built.stdout + built.stderr
+    original = bytearray(source_file("Loc/Eng/DEFAULT_REGION_SPECIFIC.TXT", REGION_TITLES_STOCK))
+    original[100] ^= 1
+    result = transformed(executable, tmp_path, "region-titles", bytes(original))
     assert result.returncode != 0
     assert "unsupported" in result.stderr.lower()
     assert not result.output_file.exists()
