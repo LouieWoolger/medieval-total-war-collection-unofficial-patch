@@ -499,7 +499,7 @@ def test_previous_fullscreen_config_upgrades_to_single_window_presentation(tmp_p
 
     inspected, report = invoke("Inspect", game)
     assert inspected.returncode == 0, (inspected.stdout, inspected.stderr)
-    assert report["mode"] == "r292-dust-alpha"
+    assert report["mode"] == "r293-key-text"
 
     upgraded, report = invoke("Install", game)
     assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)

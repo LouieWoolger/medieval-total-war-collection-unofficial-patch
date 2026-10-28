@@ -1,3 +1,12 @@
+Unofficial Medieval: Total War Collection Patch core runtime R293 local candidate
+
+R293 rebuilds all Credits-off and Credits-on D3D9 proxies against the 384-state
+exact executable table. It recognizes the Backspace text-input repair while
+retaining the previous key hook identities for safe upgrades. R292 proxy hashes
+remain pinned as historical installation inputs.
+
+Earlier runtime development history follows.
+
 Unofficial Medieval: Total War Collection Patch core runtime R288 local candidate
 
 R288 rebuilds the Credits-off and Credits-on graphics proxies for the optional
@@ -74,7 +83,7 @@ Official release: https://github.com/dege-diosg/dgVoodoo2/releases/tag/v2.87.5
 Official archive SHA-256:
 5FFDE6927F7355CA3FDD5D785B581256A8E6539FA13E395A891ADE6BA1040850
 
-The runtime is gated to the 256 exact Medieval_TW.exe SHA-256 identities in
+The R293 runtime is gated to the 384 exact Medieval_TW.exe SHA-256 identities in
 include/mtw_exe_variants.h, covering independently selected direct fixes,
 Character Parchment Fix, 120-Man Unit Balance Fix, Keybinding Customisation
 Fix, and the verified original/LAA checksum forms.

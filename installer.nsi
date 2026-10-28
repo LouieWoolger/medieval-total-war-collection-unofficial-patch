@@ -893,6 +893,7 @@ compatibilityInteractive:
     StrCpy $PreviewImage ""
     StrCpy $CurrentPreviewKey ""
     StrCpy $LastPreviewFocus ""
+    StrCpy $PreviewFocusChanged "0"
     StrCpy $R0 "terrain"
     Call SetPreview
     ${NSD_CreateTimer} PreviewHoverTimer 120
@@ -985,10 +986,9 @@ Function PreviewHoverTimer
 FunctionEnd
 
 Function PreviewFromCursor
-    ; Remember focus on every tick, including while a checkbox is hovered.
-    ; A past mouse click must not replace the last hovered preview later.
+    ; Keep a new focus pending while the pointer is over an option. Apply it
+    ; after the pointer leaves so the preview follows keyboard navigation.
     System::Call "user32::GetFocus() p.r7"
-    StrCpy $PreviewFocusChanged "0"
     ${If} $7 != $LastPreviewFocus
         StrCpy $LastPreviewFocus $7
         StrCpy $PreviewFocusChanged "1"
@@ -1030,6 +1030,7 @@ previewFocus:
     ${If} $PreviewFocusChanged != "1"
         Return
     ${EndIf}
+    StrCpy $PreviewFocusChanged "0"
     System::Call "user32::GetFocus() p.r7"
     !insertmacro CHECK_PREVIEW_FOCUS $CompatibilityCheck "terrain"
     !insertmacro CHECK_PREVIEW_FOCUS $ScrollCheck "scrolling"

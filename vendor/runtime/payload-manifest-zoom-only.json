@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Persistent Campaign Zoom Option",
-  "runtime_identity": "R290-zoom-tooltip-zoom-only",
+  "runtime_identity": "R293-key-text-zoom-only",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,8 +9,8 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 144896,
-      "sha256": "9C76E1241A1ABFBCB15AADE8CE74511F170FF9EA2754A9C23DE61B0DBE48A0BF",
+      "length": 161280,
+      "sha256": "E6FCFEB3CA81CE405495D5BDED13240BD0B12857369D1CC952CC0781A77BA120",
       "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
     }
   },

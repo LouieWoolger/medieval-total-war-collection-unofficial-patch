@@ -108,8 +108,8 @@ try {
     $spriteCounts = $spriteSuite.testsuites.testsuite
     # pytest counts Sprite unittest subtests in the suite total, while JUnit
     # emits one testcase per method. Require four Sprite, four UI, four economy
-    # and seven key cases, so a skipped key test cannot pass the release gate.
-    if (@($spriteCounts.testcase).Count -ne 19 -or [int]$spriteCounts.tests -lt 19 -or
+    # and nine key cases, so a skipped key test cannot pass the release gate.
+    if (@($spriteCounts.testcase).Count -ne 21 -or [int]$spriteCounts.tests -lt 21 -or
         [int]$spriteCounts.skipped -ne 0 -or
         [int]$spriteCounts.failures -ne 0 -or [int]$spriteCounts.errors -ne 0) {
         throw 'The exact-binary Sprite, UI, economy and key EXE tests must run without skips or failures.'

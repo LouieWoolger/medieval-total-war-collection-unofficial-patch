@@ -1017,7 +1017,7 @@ def test_compiled_receiptless_current_patch_runtime_restored_on_removal(tmp_path
     assert first.returncode == 0
     manifest_path = game / ".unofficial-medieval-total-war-patch" / "install-manifest.json"
     first_receipt = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    assert first_receipt["preinstall_mode"] == "r292-dust-alpha"
+    assert first_receipt["preinstall_mode"] == "r293-key-text"
     assert first_receipt["recovery_archive"] == ""
     for name in RUNTIME_NAMES:
         assert first_receipt["files"][name]["baseline_kind"] == "verified-preinstall"

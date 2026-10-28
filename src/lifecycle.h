@@ -499,6 +499,7 @@ static inline int mtw_install(MedievalEngine *m, const MedievalReceipt *previous
                  current_variant.ui == m->options.parchment_fix &&
                  current_variant.economy == m->options.economy_fix &&
                  current_variant.key == m->options.key_fix &&
+                 !current_variant.key_previous &&
                  current_variant.laa == original_variant.laa)
             m->payload_records[5] = current_exe;
         else {

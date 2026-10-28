@@ -6,6 +6,7 @@ import importlib.util
 import os
 from pathlib import Path
 import struct
+import subprocess
 
 import pytest
 import pefile
@@ -57,6 +58,61 @@ def test_key_helper_round_trips_every_prior_exact_state(source_states):
                        key.SPECIAL_SITE - key.IMAGE_BASE + key.SPECIAL_LENGTH] == key.special_bytes()
         identities.add(hashlib.sha256(patched).digest())
     assert len(identities) == 128
+
+
+def test_previous_key_payload_round_trips_all_prior_states(source_states):
+    key = load(ROOT / "tools" / "build-key-exe-patch.py", "key_previous_payload")
+    current_hashes = set()
+    previous_hashes = set()
+    for (_, _, _, style, _, _), original in source_states.items():
+        checksum = struct.unpack_from("<I", original, 0xD8)[0]
+        previous = key.add_key(original, style, previous=True)
+        current = key.add_key(original, style)
+        assert key.strip_key(previous, checksum, style, previous=True) == original
+        assert key.strip_key(current, checksum, style) == original
+        previous_hashes.add(hashlib.sha256(previous).digest())
+        current_hashes.add(hashlib.sha256(current).digest())
+    assert len(previous_hashes) == len(current_hashes) == 128
+    assert previous_hashes.isdisjoint(current_hashes)
+
+
+def test_native_key_upgrade_and_removal_preserve_exact_states(source_states, tmp_path):
+    compiler = os.environ.get("MTW_CC")
+    if not compiler:
+        pytest.skip("MTW_CC must name the i686 compiler")
+    key = load(ROOT / "tools" / "build-key-exe-patch.py", "key_native_migration")
+    binary = tmp_path / "key-transform.exe"
+    env = dict(os.environ, PATH=str(Path(compiler).parent) + os.pathsep + os.environ["PATH"])
+    built = subprocess.run([compiler, "-std=c99", "-Wall", "-Wextra", "-Werror",
+                            str(ROOT / "tests" / "native_key_exe.c"), "-o", str(binary),
+                            "-ladvapi32"], cwd=ROOT, env=env, capture_output=True,
+                           text=True, timeout=60)
+    assert built.returncode == 0, built.stderr
+    cases = ((0, 0, 0, "base", 0, 0),
+             (1, 0, 1, "recompute", 1, 0),
+             (0, 1, 1, "zero", 0, 1),
+             (1, 1, 1, "retain", 1, 1))
+    for scroll, sprite, tutorial, style, ui, economy in cases:
+        original = source_states[(scroll, sprite, tutorial, style, ui, economy)]
+        prior = key.add_key(original, style, previous=True)
+        source = tmp_path / "source.exe"
+        result = tmp_path / "result.exe"
+        source.write_bytes(prior)
+        for desired_key, expected in ((1, key.add_key(original, style)), (0, original)):
+            proc = subprocess.run([str(binary), str(source), str(scroll), str(sprite),
+                                   str(tutorial), str(ui), str(economy), str(desired_key),
+                                   str(result)], capture_output=True, text=True, timeout=30)
+            assert proc.returncode == 0, (style, desired_key, proc.stderr)
+            assert result.read_bytes() == expected
+        damaged = bytearray(prior)
+        damaged[-1] ^= 1
+        source.write_bytes(damaged)
+        result.unlink()
+        rejected = subprocess.run([str(binary), str(source), str(scroll), str(sprite),
+                                   str(tutorial), str(ui), str(economy), "1", str(result)],
+                                  capture_output=True, text=True, timeout=30)
+        assert rejected.returncode == 6
+        assert not result.exists()
 
 
 def test_backspace_candidate_keeps_original_reassignment_code(source_states):
@@ -134,13 +190,14 @@ def test_battle_dispatch_preserves_each_active_native_control_layout(source_stat
     pe = pefile.PE(data=stock, fast_load=True)
     defaults = struct.unpack("<5I", pe.get_data(0x4957DC, 20))
 
-    def slots(bindings: list[int], event: int, layout: int | None) -> list[int]:
+    def slots(bindings: list[int], event: int, layout: int | None,
+              input_guard: int = 0) -> list[int]:
         game = pefile.PE(data=patched, fast_load=True)
         cpu = Uc(UC_ARCH_X86, UC_MODE_32)
         for address, size in ((0x4C0000, 0x10000), (0x890000, 0x10000),
                               (0x950000, 0x10000), (0x960000, 0x10000),
                               (0xE70000, 0x10000), (0x300000, 0x10000),
-                              (0xF4C000, 0x1000)):
+                              (0xB40000, 0x10000), (0xF4C000, 0x1000)):
             cpu.mem_map(address, size)
         cpu.mem_write(0x4C0000, game.get_data(0xC0000, 0x10000))
         cpu.mem_write(0x890000, game.get_data(0x490000, 0x10000))
@@ -148,6 +205,7 @@ def test_battle_dispatch_preserves_each_active_native_control_layout(source_stat
         if layout is not None:
             cpu.mem_write(0x95E7C0, struct.pack("<I", 0x960100))
             cpu.mem_write(0x96010C, struct.pack("<I", layout))
+        cpu.mem_write(0xB429B0, struct.pack("<I", input_guard))
         cpu.mem_write(0xE78174, struct.pack("<113I", *bindings))
         cpu.reg_write(UC_X86_REG_EDI, event)
         cpu.reg_write(UC_X86_REG_EBP, 0x300800)
@@ -173,6 +231,14 @@ def test_battle_dispatch_preserves_each_active_native_control_layout(source_stat
     custom[0] = 0x2E
     assert slots(custom, 0x2E, 0) == [0]
     assert slots(custom, 0x2E, None) == [106, 68, 0]
+    # The native input guard is nonzero in Save Replay and zero in battle.
+    # A custom Backspace binding must keep the native fixed editing slots
+    # ahead of the configurable action while that input context is active.
+    custom = default.copy()
+    custom[24] = 0x08
+    custom[29] = 0x2E
+    assert slots(custom, 0x08, 0) == [24]
+    assert slots(custom, 0x08, 0, input_guard=1) == [101, 69, 24]
 
 
 def test_key_helper_rejects_partial_or_mutated_state(source_states):

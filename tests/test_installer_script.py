@@ -105,7 +105,7 @@ def test_wizard_matches_reference_structure_and_atomic_component_model() -> None
     assert product["product_name"] == "Unofficial Medieval: Total War Collection Patch"
     assert product["setup_caption"] == "Unofficial Medieval: Total War Collection Patch Setup"
     assert product["output_filename"] == "Unofficial Medieval Total War Collection Patch.exe"
-    assert product["version"] == "1.0.0"
+    assert product["version"] == "2.0.0"
     assert product["uninstaller_filename"] == "Uninstall Unofficial Medieval Patch.exe"
     assert product["component_name"] == "Terrain Movement Fix"
     assert '${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"' in text
@@ -487,8 +487,8 @@ def test_native_helper_resources_and_source_build_are_explicit() -> None:
         assert obsolete not in build
     manifest = (ROOT / "src/medieval_fix_patcher.manifest").read_text(encoding="utf-8")
     assert 'level="asInvoker"' in manifest
-    assert 'version="1.0.0.0"' in manifest
+    assert 'version="2.0.0.0"' in manifest
     resource = (ROOT / "src/medieval_fix_patcher.rc").read_text(encoding="utf-8")
-    assert 'FILEVERSION 1,0,0,0' in resource
+    assert 'FILEVERSION 2,0,0,0' in resource
     assert 'Unofficial Medieval: Total War Collection Patch' in resource
     assert 'medieval_fix_patcher.manifest' in resource

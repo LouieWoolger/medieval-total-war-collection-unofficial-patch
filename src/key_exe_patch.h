@@ -4,6 +4,7 @@
 /* Last independent PE32 section transform for the optional keybinding fix.
    The complete input and output identities are pinned. */
 #include "../vendor/key_exe/key_hook.inc"
+#include "../vendor/key_exe/key_hook_previous.inc"
 
 #define MTW_KEY_PAGE 0x1000u
 #define MTW_KEY_GHOST_OFFSET 0x200u
@@ -36,9 +37,20 @@ static const unsigned char mtw_key_original_label[] = {0xFF, 0x15, 0xE0, 0x42, 0
 static const unsigned char mtw_key_original_special[] = {0xA1, 0x88, 0x81, 0xE7, 0x00, 0x25, 0xFF, 0xFF, 0x00, 0x00, 0x50, 0xFF, 0x15, 0xC0, 0x42, 0x78, 0x00, 0x66, 0x8B, 0xD8, 0xC1, 0xEB, 0x0F, 0x80, 0xE3, 0x01};
 static const unsigned char mtw_key_special_patch[] = {0x6A, 0x05, 0xE8, 0x1D, 0x05, 0x00, 0x00, 0x83, 0xC4, 0x04, 0x89, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 
-static inline int mtw_key_payload(uint32_t rva,
+static inline int mtw_key_payload(uint32_t rva, int previous,
                                   const unsigned char **payload, size_t *length) {
     if (!payload || !length) return 0;
+    if (previous) {
+        switch (rva) {
+        case 0xB4C000u: *payload = mtw_key_previous_hook_b4c000; *length = MTW_KEY_PREVIOUS_HOOK_B4C000_LENGTH; return 1;
+        case 0xB4D000u: *payload = mtw_key_previous_hook_b4d000; *length = MTW_KEY_PREVIOUS_HOOK_B4D000_LENGTH; return 1;
+        case 0xB4E000u: *payload = mtw_key_previous_hook_b4e000; *length = MTW_KEY_PREVIOUS_HOOK_B4E000_LENGTH; return 1;
+        case 0xB4F000u: *payload = mtw_key_previous_hook_b4f000; *length = MTW_KEY_PREVIOUS_HOOK_B4F000_LENGTH; return 1;
+        case 0xB50000u: *payload = mtw_key_previous_hook_b50000; *length = MTW_KEY_PREVIOUS_HOOK_B50000_LENGTH; return 1;
+        case 0xB51000u: *payload = mtw_key_previous_hook_b51000; *length = MTW_KEY_PREVIOUS_HOOK_B51000_LENGTH; return 1;
+        default: return 0;
+        }
+    }
     switch (rva) {
     case 0xB4C000u: *payload = mtw_key_hook_b4c000; *length = MTW_KEY_HOOK_B4C000_LENGTH; return 1;
     case 0xB4D000u: *payload = mtw_key_hook_b4d000; *length = MTW_KEY_HOOK_B4D000_LENGTH; return 1;
@@ -127,7 +139,7 @@ static inline int mtw_key_add(PatchContext *context,
     static const unsigned char empty_slot[40] = {0};
     if (!variant || variant->key ||
         !mtw_key_layout(source, length, variant, &count, &image_size, &slot) ||
-        !mtw_key_payload(image_size, &payload, &payload_length) ||
+        !mtw_key_payload(image_size, 0, &payload, &payload_length) ||
         memcmp(source + slot, empty_slot, 40u) ||
         memcmp(source + MTW_KEY_COLLISION_RAW, mtw_key_original_collision, sizeof mtw_key_original_collision) ||
         memcmp(source + MTW_KEY_HELD_RAW, mtw_key_original_held, sizeof mtw_key_original_held) ||
@@ -209,7 +221,7 @@ static inline int mtw_key_strip(PatchContext *context,
         return 0;
     }
     prior_size = image_size - MTW_KEY_PAGE;
-    if (!mtw_key_payload(prior_size, &payload, &payload_length)) {
+    if (!mtw_key_payload(prior_size, variant->key_previous, &payload, &payload_length)) {
         patch_error_set(error, "unsupported_executable", "The key payload is unavailable.", ERROR_INVALID_DATA);
         return 0;
     }

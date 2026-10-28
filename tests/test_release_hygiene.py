@@ -76,7 +76,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema"] == "unofficial-medieval-total-war-patch-release-v2"
     product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
-    assert manifest["product"]["version"] == product["version"] == "1.0.0"
+    assert manifest["product"]["version"] == product["version"] == "2.0.0"
     assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
     assert manifest["product"]["tutorial_component"] == product["tutorial_component_name"]
     assert manifest["product"]["parchment_component"] == product["parchment_component_name"]
@@ -87,7 +87,7 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["installer"]["filename"] == INSTALLER.name
     assert manifest["installer"]["sha256"] == sha256(INSTALLER)
     assert manifest["installer"]["length"] == INSTALLER.stat().st_size
-    assert manifest["runtime"]["identity"] == "R292-dust-alpha-scroll-sprite-off"
+    assert manifest["runtime"]["identity"] == "R293-key-text-scroll-sprite-off"
     assert manifest["battle_unit_icons"]["default_installer_selection"] is True
     assert manifest["direct_scroll_executable"]["shipped_game_executable"] is False
     assert manifest["direct_sprite_executable"]["shipped_game_executable"] is False
@@ -221,11 +221,12 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert manifest["runtime"]["dgvoodoo_version"] == "2.87.5"
     assert manifest["supported_executable_sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
     variants = manifest["supported_executable_variants"]
-    assert len(variants) == 256
-    assert len({entry["sha256"] for entry in variants}) == 256
-    assert sum(entry["ui"] for entry in variants) == 128
-    assert sum(entry["economy"] for entry in variants) == 128
-    assert sum(entry["key"] for entry in variants) == 128
+    assert len(variants) == 384
+    assert len({entry["sha256"] for entry in variants}) == 384
+    assert sum(entry["ui"] for entry in variants) == 192
+    assert sum(entry["economy"] for entry in variants) == 192
+    assert sum(entry["key"] for entry in variants) == 256
+    assert sum(entry["key_previous"] for entry in variants) == 128
     assert {entry["checksum_style"] for entry in variants} == {"base", "retain", "zero", "recompute"}
     assert {entry["sha256"] for entry in variants if entry["scroll"] is False and
             entry["sprite"] is False and entry["tutorial"] is False and entry["ui"] is False and
@@ -254,8 +255,8 @@ def test_installer_pe_metadata_is_complete() -> None:
     assert values["ProductName"] == "Unofficial Medieval: Total War Collection Patch"
     assert values["FileDescription"] == "Unofficial Medieval: Total War Collection Patch Setup"
     assert values["CompanyName"] == "Louie Woolger"
-    assert values["FileVersion"] == "1.0.0"
-    assert values["ProductVersion"] == "1.0.0"
+    assert values["FileVersion"] == "2.0.0"
+    assert values["ProductVersion"] == "2.0.0"
     assert values["LegalCopyright"] == "Copyright 2026 Louie Woolger"
 
 
@@ -419,7 +420,7 @@ def test_setup_and_uninstaller_embed_exact_selfcontained_native_helper(tmp_path:
         assert sha256(native) == expected
         report = module.audit_native_helper(native)
         assert report["execution_level"] == "asInvoker"
-        assert report["file_version"] == "1.0.0"
+        assert report["file_version"] == "2.0.0"
         assert report["clr_header_absent"] and not report["external_runtime_required"]
         assert report["subsystem_version"] == [5, 1]
         assert report["named_imports"] and report["delay_imports"] == {}

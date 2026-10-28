@@ -10,7 +10,7 @@ RUNTIME = ROOT / "vendor" / "runtime"
 R185 = ROOT / "vendor" / "r185"
 
 EXPECTED_RUNTIME = {
-    "D3D9.dll": (240128, "E7BBEB5B34756B359F8CD61BA3EDB88F6DFFC0DED52091F4BB5534B84ADABAA4"),
+    "D3D9.dll": (256512, "BD1680A9A5EE6FFCCF3B205B3FFC6F21A98BE515BF1369C5BC276842760DDECE"),
     "dgVoodoo_D3D9.dll": (482304, "6A0CA214784BE04B7C8B547105AA9D79ACF4DC26C0B6F8702B437DDCA54058B2"),
     "ddraw.dll": (255488, "612A24408A090A3C6F3886557FA18034EE742E94AD0A40EBDF854D2816176C2E"),
     "D3DImm.dll": (208384, "93C534F2D17419EA78F15551F7E0AAC78B3C503733A840914FA063708A5AFE8E"),
@@ -50,6 +50,16 @@ CREDITS_VARIANTS = (
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+def active_runtime_proxy_records() -> dict[tuple[bool, bool, bool, bool], tuple[str, int]]:
+    header = (ROOT / "include" / "runtime_proxy_hashes.h").read_text(encoding="ascii")
+    pattern = re.compile(r'^\s*\{([01])u, ([01])u, ([01])u, ([01])u, "([0-9A-F]{64})", (\d+)u\},$',
+                         re.MULTILINE)
+    rows = {(bool(int(terrain)), bool(int(fast)), bool(int(icon)), bool(int(zoom))):
+            (digest, int(length)) for terrain, fast, icon, zoom, digest, length in pattern.findall(header)}
+    assert len(rows) == 15
+    return rows
 
 
 def test_campaign_zoom_runtime_recognizes_current_locale() -> None:
@@ -123,27 +133,27 @@ def test_scroll_off_payload_differs_only_in_the_proxy() -> None:
 
 
 def test_optional_fast_payloads_have_exact_source_built_proxy_and_backend_scope() -> None:
-    state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
-    for manifest_name, dll_name, terrain, receipt_hash_name in (
+    records = active_runtime_proxy_records()
+    for manifest_name, dll_name, terrain, fast, icon in (
         ("payload-manifest-scroll-sprite-off-fast.json", "D3D9-scroll-sprite-off-fast.dll",
-         True, "MEDIEVAL_R292_TERRAIN_FAST_ICON_HASH"),
+         True, True, True),
         ("payload-manifest-fast-only.json", "D3D9-fast-only.dll",
-         False, "MEDIEVAL_R290_FAST_ONLY_HASH"),
+         False, True, False),
     ):
         manifest = json.loads((RUNTIME / manifest_name).read_text(encoding="utf-8"))
         dll = RUNTIME / dll_name
         assert manifest["target_executable"]["sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
         assert manifest["files"]["D3D9.dll"]["sha256"] == sha256(dll)
         assert manifest["files"]["D3D9.dll"]["length"] == dll.stat().st_size
-        assert (f'#define {receipt_hash_name} '
-                f'"{manifest["files"]["D3D9.dll"]["sha256"]}"') in state
+        assert records[(terrain, fast, icon, False)] == (
+            manifest["files"]["D3D9.dll"]["sha256"], dll.stat().st_size)
         assert set(manifest["files"]) == (set(EXPECTED_RUNTIME) if terrain else {"D3D9.dll"})
 
 
 def test_optional_zoom_payloads_match_exact_proxy_receipts_and_backend_scope() -> None:
-    state = (ROOT / "src" / "medieval_state.h").read_text(encoding="utf-8")
+    records = active_runtime_proxy_records()
     hashes = set()
-    for suffix, (terrain, scroll, sprite, icon, receipt_hash_name) in ZOOM_VARIANTS.items():
+    for suffix, (terrain, scroll, sprite, icon, _) in ZOOM_VARIANTS.items():
         manifest = json.loads((RUNTIME / f"payload-manifest-{suffix}.json").read_text(encoding="utf-8"))
         dll = RUNTIME / f"D3D9-{suffix}.dll"
         digest = sha256(dll)
@@ -155,7 +165,7 @@ def test_optional_zoom_payloads_match_exact_proxy_receipts_and_backend_scope() -
         assert manifest["target_executable"]["sha256"] == "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
         assert manifest["files"]["D3D9.dll"]["sha256"] == digest
         assert manifest["files"]["D3D9.dll"]["length"] == dll.stat().st_size
-        assert (f'#define {receipt_hash_name} "{digest}"') in state
+        assert records[(terrain, "fast" in suffix, icon, True)] == (digest, dll.stat().st_size)
         assert set(manifest["files"]) == (set(EXPECTED_RUNTIME) if terrain else {"D3D9.dll"})
         assert manifest["locked_settings"] == (LOCKED_CONFIG if terrain else None)
     assert len(hashes) == len(ZOOM_VARIANTS)

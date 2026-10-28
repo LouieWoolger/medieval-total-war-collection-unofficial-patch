@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Credits Flash Fix",
-  "runtime_identity": "R292-credits-dust-alpha-scroll-sprite-off-fast-zoom",
+  "runtime_identity": "R293-credits-key-text-scroll-sprite-off-fast-zoom",
   "dgvoodoo_version": "2.87.5",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 257024,
-      "sha256": "D97F234A35250C2CF683C610CF14458203EC8A147A15FC0B3E9B67B854A1253B",
-      "provenance": "Source-built PE32 D3D9 proxy with exact supported game identity; dust transparency state, atlas mask and sampler are repaired only for selected draws while FastVideoMemoryAccess remains enabled."
+      "length": 277504,
+      "sha256": "4AADBB0676B3FC4D9E3CFC10831D154CB3950D819B27AD95689164101160BEBC",
+      "provenance": "Source-built PE32 D3D9 proxy with an exact supported executable SHA-256 and length guard; the Credits illustration sequencing repair is enabled only when selected."
     },
     "dgVoodoo_D3D9.dll": {
       "length": 482304,

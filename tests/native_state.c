@@ -373,8 +373,12 @@ int wmain(int argc, wchar_t **argv) {
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R202_TERRAIN_ICON_HASH)),
               "R202 proxy cannot become a clean original baseline");
         check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R292_TERRAIN_ICON_HASH),
-                      "r292-dust-alpha"), "current Credits-off proxy classification");
-        check(!medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R292_TERRAIN_ICON_HASH)),
+                      "r292-dust-alpha"), "previous Credits-off proxy classification");
+        check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R292_TERRAIN_ICON_HASH)),
+              "previous Credits-off proxy remains an upgrade source");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_runtime_proxy_variants[0].sha256),
+                      "r293-key-text"), "current Credits-off proxy classification");
+        check(!medieval_old_patch(medieval_known_d3d9_mode(mtw_runtime_proxy_variants[0].sha256)),
               "current Credits-off proxy is not historical");
         check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R291_TERRAIN_ICON_HASH),
                       "r291-deployment-stage-sync"), "previous Credits-off proxy classification");
@@ -382,13 +386,23 @@ int wmain(int argc, wchar_t **argv) {
               "previous Credits-off proxy remains an upgrade source");
         check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH),
                       "r290-zoom-tooltip"), "previous Credits-off terrain remains identifiable");
+        check(medieval_known_old_runtime("D3D9.dll", MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH, ""),
+              "R290 Credits-off proxy is recognized as an older patch");
+        check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R288_ICON_ONLY_HASH),
+                      "r288-key-customisation"), "R288 Credits-off proxy remains identifiable");
+        check(medieval_known_old_runtime("D3D9.dll", MEDIEVAL_R288_ICON_ONLY_HASH, ""),
+              "R288 Credits-off proxy is recognized as an older patch");
         check(!strcmp(medieval_known_d3d9_mode(
                           "AADC364E2C602B82586ED6328E6CA4DA40167E1F031F74941F462BEE68C046F2"),
                       "r237-key-customisation"), "previous key proxy remains identifiable");
         check(medieval_old_patch("r237-key-customisation"),
               "previous key proxy cannot become a clean original baseline");
         check(!strcmp(medieval_known_d3d9_mode(mtw_credits_proxy_variants[0].sha256),
-                      "r292-credits"), "current Credits-on proxy classification");
+                      "r293-credits"), "current Credits-on proxy classification");
+        check(!strcmp(medieval_known_d3d9_mode(mtw_r292_credits_proxy_variants[0].sha256),
+                      "r292-credits-old"), "previous Credits-on proxy classification");
+        check(medieval_old_patch("r292-credits-old"),
+              "previous Credits-on proxy remains an upgrade source");
         check(!strcmp(medieval_known_d3d9_mode(mtw_r291_credits_proxy_variants[0].sha256),
                       "r291-credits-old"), "previous Credits-on proxy classification");
         check(medieval_old_patch("r291-credits-old"),
@@ -413,6 +427,18 @@ int wmain(int argc, wchar_t **argv) {
         decision = medieval_baseline_decision("D3D9.dll", &current, "r185", current.sha256);
         check(!decision.preserve_current && decision.archive_current,
               "older patched runtime cannot become clean original");
+        strcpy(current.sha256, MEDIEVAL_R290_TERRAIN_ICON_ZOOM_HASH);
+        decision = medieval_baseline_decision("D3D9.dll", &current,
+                                             medieval_known_d3d9_mode(current.sha256), "");
+        check(!decision.preserve_current && decision.archive_current &&
+              !strcmp(decision.baseline_kind, "older-patch-archived"),
+              "R290 proxy with lost receipt is archived rather than restored");
+        strcpy(current.sha256, MEDIEVAL_R288_ICON_ONLY_HASH);
+        decision = medieval_baseline_decision("D3D9.dll", &current,
+                                             medieval_known_d3d9_mode(current.sha256), "");
+        check(!decision.preserve_current && decision.archive_current &&
+              !strcmp(decision.baseline_kind, "older-patch-archived"),
+              "R288 proxy with lost receipt is archived rather than restored");
         strcpy(current.sha256, MEDIEVAL_R201_TERRAIN_ICON_HASH);
         decision = medieval_baseline_decision("D3D9.dll", &current,
                                              medieval_known_d3d9_mode(current.sha256),

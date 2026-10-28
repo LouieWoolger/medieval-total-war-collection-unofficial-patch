@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Fast Computer Moves Option",
-  "runtime_identity": "R290-zoom-tooltip-fast-icon",
+  "runtime_identity": "R293-key-text-fast-icon",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,8 +9,8 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 145920,
-      "sha256": "93E4FE0B05992F024FEB55E64D399D29CA59934A3D3DEE426205D98C1953DD67",
+      "length": 162816,
+      "sha256": "7404A941F981005771B72BCE7D5A125A9D28B9A9CC3F4991F73BB4CCAACB0721",
       "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
     }
   },

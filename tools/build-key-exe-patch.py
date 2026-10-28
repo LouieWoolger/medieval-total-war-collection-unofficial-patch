@@ -78,15 +78,16 @@ def _nasm() -> str:
     raise RuntimeError("NASM is required for the PE32 key helper")
 
 
-@lru_cache(maxsize=6)
-def assemble_hook(size: int) -> bytes:
+@lru_cache(maxsize=12)
+def assemble_hook(size: int, previous: bool = False) -> bytes:
     if size not in IMAGE_SIZES:
         raise ValueError("unsupported key section RVA")
     with tempfile.TemporaryDirectory(prefix="mtw-key-asm-") as scratch:
         output = Path(scratch) / "key_hook.bin"
         command = [_nasm(), "-f", "bin",
                    f"-DKEY_CODE_VA=0x{IMAGE_BASE + size:08X}",
-                   str(ROOT / "vendor" / "key_exe" / "key_hook.asm"),
+                   str(ROOT / "vendor" / "key_exe" /
+                       ("key_hook_previous.asm" if previous else "key_hook.asm")),
                    "-o", str(output)]
         run = subprocess.run(command, capture_output=True, text=True, timeout=60)
         if run.returncode:
@@ -143,11 +144,12 @@ def _input_layout(data: bytes) -> tuple[int, int, int, int, int]:
     return pe, opt, table, size, count
 
 
-def add_key(base: bytes, checksum_style: str = "base") -> bytes:
+def add_key(base: bytes, checksum_style: str = "base",
+            previous: bool = False) -> bytes:
     if checksum_style not in ("base", "retain", "zero", "recompute"):
         raise ValueError("unknown checksum style")
     pe, opt, table, size, count = _input_layout(base)
-    hook = assemble_hook(size)
+    hook = assemble_hook(size, previous)
     result = bytearray(base + hook.ljust(PAGE, b"\0"))
     struct.pack_into("<H", result, pe + 6, count + 1)
     struct.pack_into("<I", result, opt + 4,
@@ -181,7 +183,7 @@ def add_key(base: bytes, checksum_style: str = "base") -> bytes:
 
 
 def strip_key(patched: bytes, original_checksum: int,
-              checksum_style: str = "base") -> bytes:
+              checksum_style: str = "base", previous: bool = False) -> bytes:
     if checksum_style not in ("base", "retain", "zero", "recompute"):
         raise ValueError("unknown checksum style")
     pe, opt, table, new_size = UI.pe_layout(patched)
@@ -190,7 +192,7 @@ def strip_key(patched: bytes, original_checksum: int,
     raw = len(patched) - PAGE
     if size not in IMAGE_SIZES or not 7 <= count <= 12 or raw % PAGE:
         raise ValueError("not a supported key-patched executable")
-    hook = assemble_hook(size)
+    hook = assemble_hook(size, previous)
     expected_checksum = (UI.pe_checksum(patched, opt + 64)
                          if checksum_style in ("base", "recompute")
                          else original_checksum if checksum_style == "retain" else 0)
@@ -242,14 +244,17 @@ def strip_key(patched: bytes, original_checksum: int,
     return bytes(result)
 
 
-def emit_include() -> str:
-    lines = ["/* Generated from vendor/key_exe/key_hook.asm. */",
-             "#ifndef MTW_KEY_HOOK_INC", "#define MTW_KEY_HOOK_INC"]
+def emit_include(previous: bool = False) -> str:
+    source = "key_hook_previous.asm" if previous else "key_hook.asm"
+    prefix = "mtw_key_previous_hook" if previous else "mtw_key_hook"
+    guard = "MTW_KEY_PREVIOUS_HOOK_INC" if previous else "MTW_KEY_HOOK_INC"
+    lines = [f"/* Generated from vendor/key_exe/{source}. */",
+             f"#ifndef {guard}", f"#define {guard}"]
     for size in IMAGE_SIZES:
-        hook = assemble_hook(size)
+        hook = assemble_hook(size, previous)
         label = f"{size:06x}"
-        lines += [f"#define MTW_KEY_HOOK_{label.upper()}_LENGTH {len(hook)}u",
-                  f"static const unsigned char mtw_key_hook_{label}[] = {{"]
+        lines += [f"#define {prefix.upper()}_{label.upper()}_LENGTH {len(hook)}u",
+                  f"static const unsigned char {prefix}_{label}[] = {{"]
         for start in range(0, len(hook), 16):
             lines.append("    " + ", ".join(f"0x{b:02X}" for b in hook[start:start+16]) + ",")
         lines.append("};")
@@ -267,6 +272,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--inc", type=Path)
+    parser.add_argument("--previous-inc", type=Path)
     args = parser.parse_args()
     source = args.source.read_bytes()
     if sha256(source) != args.source_sha256.upper():
@@ -297,6 +303,9 @@ def main() -> None:
     if args.inc:
         args.inc.parent.mkdir(parents=True, exist_ok=True)
         args.inc.write_text(emit_include(), encoding="ascii")
+    if args.previous_inc:
+        args.previous_inc.parent.mkdir(parents=True, exist_ok=True)
+        args.previous_inc.write_text(emit_include(previous=True), encoding="ascii")
     print(sha256(target))
 
 

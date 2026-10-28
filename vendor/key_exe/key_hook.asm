@@ -147,15 +147,19 @@ binding_match:
 times 0x400 - ($ - $$) db 0
 
 ; Replacement for the initial fixed-first setup at 0x4C8E56. A newly
-; assigned configurable control owns its exact key/chord in battle; the
-; fixed slots are skipped for that event. Untouched factory bindings keep
-; the game's original fixed-first order, including intentional duplicates.
+; assigned configurable control owns its exact key/chord in active battle;
+; the fixed slots are skipped for that event. The native input guard used by
+; held controls is nonzero in text entry, where fixed key listeners must run
+; before configurable controls. Untouched factory bindings keep the game's
+; original fixed-first order, including intentional duplicates.
 ; Preserve registers and flags that the original two MOVs did not alter.
 key_dispatch_entry:
     pushfd
     push eax
     push ecx
     push edx
+    cmp dword [0xB429B0], 0
+    jne .default
     ; The Controls Reset command selects one of five native tables through
     ; this same object and pointer array. Keep their layout-specific defaults.
     mov edx, [0x95E7C0]

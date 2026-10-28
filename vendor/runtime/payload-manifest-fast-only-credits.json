@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Credits Flash Fix",
-  "runtime_identity": "R290-credits-zoom-tooltip-fast-only",
+  "runtime_identity": "R293-credits-key-text-fast-only",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,8 +9,8 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 146432,
-      "sha256": "2969095115A0A6529D182AA005BC786AEA03FF53C8A20D3F2A0B8D583DBCBF4F",
+      "length": 163328,
+      "sha256": "6F0B0E3F130FB7E88A594B202801045C9DEF9B01BCE347CDB9858BDA34A0703A",
       "provenance": "Source-built PE32 D3D9 proxy with an exact supported executable SHA-256 and length guard; the Credits illustration sequencing repair is enabled only when selected."
     }
   },

@@ -623,7 +623,7 @@ def test_exact_current_proxy_without_receipt_is_restored_as_preinstall(games):
                     sprite_fix=False, parchment_fix=False)
     assert installed[0].returncode == 0, (installed[0].stdout, installed[0].stderr)
     receipt = read_receipt(game)
-    assert receipt["preinstall_mode"] == "r292-dust-alpha"
+    assert receipt["preinstall_mode"] == "r293-key-text"
     assert receipt["files"]["D3D9.dll"]["existed"] is True
     assert receipt["files"]["D3D9.dll"]["baseline_kind"] == "verified-preinstall"
     assert receipt["files"]["D3D9.dll"]["original_sha256"] == prior_hash

@@ -78,11 +78,11 @@ def supported_executable_variants() -> list[dict]:
     header = (ROOT / "include" / "mtw_exe_variants.h").read_text(encoding="ascii")
     pattern = re.compile(
         r'^\s*\{"([0-9A-F]{64})", (\d+)u, 0x([0-9A-F]{8})u, '
-        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, '
+        r'0x([0-9A-F]{8})u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, ([01])u, '
         r'"(base|retain|zero|recompute)"\},$', re.MULTILINE)
     entries = []
     for match in pattern.finditer(header):
-        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, ui, economy, key, laa, style = match.groups()
+        digest, length, image_size, canonical_checksum, scroll, sprite, tutorial, ui, economy, key, key_previous, laa, style = match.groups()
         entries.append({
             "sha256": digest, "length": int(length),
             "image_size": int(image_size, 16),
@@ -90,12 +90,15 @@ def supported_executable_variants() -> list[dict]:
             "scroll": bool(int(scroll)), "sprite": bool(int(sprite)),
             "tutorial": bool(int(tutorial)), "ui": bool(int(ui)),
             "economy": bool(int(economy)), "key": bool(int(key)),
+            "key_previous": bool(int(key_previous)),
             "laa": bool(int(laa)), "checksum_style": style,
         })
     states = {(entry["scroll"], entry["sprite"], entry["tutorial"], entry["ui"], entry["economy"], entry["key"],
-               entry["checksum_style"]) for entry in entries}
-    if len(entries) != 256 or len(states) != 256 or len({entry["sha256"] for entry in entries}) != 256:
+               entry["key_previous"], entry["checksum_style"]) for entry in entries}
+    if len(entries) != 384 or len(states) != 384 or len({entry["sha256"] for entry in entries}) != 384:
         raise ValueError("The shared EXE identity table is incomplete or ambiguous.")
+    if any(entry["key_previous"] and not entry["key"] for entry in entries):
+        raise ValueError("Only key-enabled executable states may be historical.")
     if any(entry["laa"] != (entry["checksum_style"] != "base") for entry in entries):
         raise ValueError("The shared EXE identity table has inconsistent LAA metadata.")
     return entries
@@ -506,6 +509,8 @@ def main() -> int:
                              "include/credits_payload_r289_hashes.h",
                              "include/credits_payload_r290_hashes.h",
                              "include/credits_payload_r291_hashes.h",
+                             "include/credits_payload_r292_hashes.h",
+                             "include/runtime_proxy_hashes.h",
                              "include/mtw_exe_variants.h"})
     if set(native_build.get("source_inputs", {})) != required_sources:
         raise ValueError("Native helper provenance must identify all and only the C backend inputs.")

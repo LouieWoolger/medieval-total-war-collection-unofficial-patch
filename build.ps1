@@ -112,7 +112,7 @@ function Build-NativeHelper {
     foreach ($name in @('credits_payload_hashes.h','credits_payload_previous_hashes.h',
             'credits_payload_r288_hashes.h','credits_payload_r289_hashes.h',
             'credits_payload_r290_hashes.h','credits_payload_r291_hashes.h',
-            'mtw_exe_variants.h')) {
+            'credits_payload_r292_hashes.h','runtime_proxy_hashes.h','mtw_exe_variants.h')) {
         $path = Join-Path $root ('include\' + $name)
         $nativeSources['include/' + $name] = [ordered]@{sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash;length=(Get-Item -LiteralPath $path).Length}
     }
