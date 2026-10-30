@@ -1182,14 +1182,19 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
     const MtwExeVariant *desired_exe;
     wchar_t *path, *mutex_name;
     DWORD wait;
-    int missing_restore;
     size_t i;
     patch_platform_init(&m->guard.platform);
     MTW_TRY(patch_guard_open(&m->guard, m->options.target, e));
+    m->transaction_path = mtw_path(m, m->guard.canonical, MTW_TRANSACTION_NAME, e);
+    MTW_TRY(m->transaction_path);
     path = mtw_path(m, m->guard.canonical, "Medieval_TW.exe", e);
     MTW_TRY(path && patch_file_pin(&m->guard, path, &m->executable_pin, &executable, e));
-    missing_restore = !executable.exists && mtw_is(m->options.operation, "Restore");
-    if (!executable.exists && !missing_restore)
+    /* A process can stop after moving the verified EXE aside but before
+       publishing its replacement. A candidate recovery directory permits only
+       deferred inspection: the journal, retained receipt and copies must still
+       pass full validation before recovery can restore a supported EXE. */
+    if (!executable.exists && !mtw_is(m->options.operation, "Restore") &&
+        !mtw_directory_exists(m->transaction_path))
         return mtw_fail(m, e, "target_missing", "Medieval_TW.exe was not found in the selected folder.");
     if (executable.exists &&
         !mtw_exe_variant_from_hash(executable.sha256, (size_t)executable.length, &exe_identity))
@@ -1220,7 +1225,6 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
             return mtw_fail(m, e, "platform_unsupported", "The Terrain Movement Fix requires Windows 7 or later. No runtime or registration changes were made.");
     }
     m->state = mtw_path(m, m->guard.canonical, MEDIEVAL_STATE_NAME, e);
-    m->transaction_path = mtw_path(m, m->guard.canonical, MTW_TRANSACTION_NAME, e);
     MTW_TRY(m->state && m->transaction_path && medieval_identity_open(&m->identity, &m->guard, e) &&
             patch_utf8_to_wide(&m->memory, m->identity.mutex_name, strlen(m->identity.mutex_name), &mutex_name, e));
     m->mutex = CreateMutexW(NULL, FALSE, mutex_name);
@@ -1267,7 +1271,7 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
             return mtw_fail(m, e, "invalid_payload", "Embedded payload verification failed for %s.", medieval_payload_names[i]);
         m->payload_records[i] = actual;
     }
-    if (!missing_restore) {
+    if (executable.exists) {
         desired_exe = mtw_exe_variant_for_options_key(
             (unsigned int)m->options.scroll_fix,
             (unsigned int)m->options.sprite_fix,
@@ -1327,7 +1331,7 @@ static inline int medieval_failure_result(MedievalOutcome *o, const MedievalOpti
 }
 static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *outcome, PatchError *e) {
     MedievalEngine m;
-    MedievalReceipt receipt;
+    MedievalReceipt receipt = {0};
     JsonValue *recovered = NULL, *result = NULL;
     const char *mode = NULL;
     int pending = 0, present = 0, ok = 0;
@@ -1363,7 +1367,7 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
         mtw_fail(&m, e, "wrong_account", "Continue with the same Windows account that started setup. Administrator credentials for another account cannot be used to transfer this patch installation."); goto done;
     }
     if ((mtw_is(options->operation, "Install") || mtw_is(options->operation, "Restore")) && !mtw_game_closed(&m, e)) goto done;
-    if (!mtw_transaction_recover(&m, &recovered, &pending, e)) goto done;
+    if (!mtw_transaction_recover(&m, &recovered, &pending, &receipt, e)) goto done;
     if (!mtw_is(options->operation, "Restore")) {
         /* Recovery has finished. A subsequent requested operation owns its own
            outcome; an Install failure must not advertise incomplete removal. */
@@ -1383,15 +1387,17 @@ static inline int medieval_run(const MedievalOptions *options, MedievalOutcome *
             !mtw_boolean(&m.document, result, "managed_installation", present || pending, e) ||
             !mtw_text(&m.document, result, "target", m.identity.target, e) ||
             !mtw_text(&m.document, result, "target_executable_sha256", MEDIEVAL_EXECUTABLE_HASH, e)) goto done;
-        /* Expose saved selections only from the fully validated, sealed
-           receipt. Historical receipts without either field mean OFF. */
-        if (present &&
-            (!mtw_boolean(&m.document, result, "credits_flash_fix_enabled",
-                          receipt.credits_fix_enabled, e) ||
-             !mtw_boolean(&m.document, result, "key_fix_enabled",
-                          receipt.key_fix_enabled, e) ||
+        /* Installed and interrupted operations supply validated receipt choices.
+           Completed removal is a fresh installation even when unknown metadata
+           retained its restored receipt: use the recommended Credits default.
+           Historical installed receipts missing a choice still mean OFF. */
+        if (!mtw_boolean(&m.document, result, "credits_flash_fix_enabled",
+                         present || pending ? receipt.credits_fix_enabled : 1, e) ||
+            !mtw_boolean(&m.document, result, "key_fix_enabled",
+                         present || pending ? receipt.key_fix_enabled : 0, e) ||
+            ((present || pending) &&
              !mtw_boolean(&m.document, result, "marriage_title_fix_enabled",
-                          receipt.marriage_title_fix_enabled, e))) goto done;
+                           receipt.marriage_title_fix_enabled, e))) goto done;
     } else if (mtw_is(options->operation, "Verify")) {
         if (present && !receipt.legacy) {
             size_t verify_index;

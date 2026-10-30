@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Fast Computer Moves Option",
-  "runtime_identity": "R293-key-text-icon-only",
+  "runtime_identity": "R294-xp-icon-only",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 126464,
-      "sha256": "FB2E4409D477888154EED7D9351EC18F4AB3A606487746E0E8ECFA0A5F89F8BB",
-      "provenance": "Source-built R288-key-customisation PE32 proxy from vendor/r185/source with exact supported executable identity checks; independently selected battle unit icon recovery, Terrain Movement Fix and Fast Computer Moves hooks are enabled only in their named variant."
+      "sha256": "C7C19E7E23C1CC1339DC0C6149B98678B8DC1A7596FA8DBF7D9A64804A939B71",
+      "length": 74752,
+      "provenance": "Source-built PE32 feature proxy using the bounded XP SP3 import surface, with exact supported game inputs and the selected hooks; forwards to Windows D3D9. XP execution is not established by the import audit."
     }
   },
   "locked_settings": null,

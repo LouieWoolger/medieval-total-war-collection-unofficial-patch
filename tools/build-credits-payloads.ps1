@@ -17,27 +17,17 @@ if ($LASTEXITCODE -ne 0) { throw "Credits source build failed: $LASTEXITCODE" }
     Out-File -LiteralPath (Join-Path $output 'zoom.log') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "Credits Zoom build failed: $LASTEXITCODE" }
 
-$dev = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\18\BuildTools\Common7\Tools\Launch-VsDevShell.ps1'
-$clang = Join-Path $env:ProgramFiles 'LLVM\bin\clang-cl.exe'
-if (-not (Test-Path -LiteralPath $dev) -or -not (Test-Path -LiteralPath $clang)) {
-    throw 'The x86 Visual Studio and clang-cl toolchain is required.'
-}
-if (-not ($env:VSCMD_VER -and $env:VSCMD_ARG_TGT_ARCH -eq 'x86' -and
-        $env:VSCMD_ARG_HOST_ARCH -eq 'x64')) {
-    & $dev -Arch x86 -HostArch amd64 -SkipAutomaticLocation | Out-Null
-}
-$bridge = Join-Path $output 'credits-only-bridge.obj'
-& $clang /nologo /TC --target=i686-pc-windows-msvc /O2 /W4 /WX /c `
-    /DMTW_ENABLE_FAST_MOVES=0 /DMTW_ENABLE_ZOOM=0 /DMTW_ENABLE_BATTLE_ICON_FIX=0 `
-    /DMTW_ENABLE_CREDITS_FLASH_FIX=1 ('/Fo' + $bridge) `
-    (Join-Path $source 'campaign_fast_moves_proxy.c')
-if ($LASTEXITCODE -ne 0) { throw 'Credits-only bridge compilation failed.' }
+# The same source-built XP feature producer supplies all independent options.
+$featureOutput = Join-Path $scaffold 'combined-r154\feature-runtime'
 $creditsOnly = Join-Path $products 'D3D9-credits-only.dll'
-& $clang /nologo --target=i686-pc-windows-msvc /LD ('/Fe' + $creditsOnly) `
-    $bridge (Join-Path $scaffold 'combined-r154\credits_flash_fix.obj') `
-    /link ('/DEF:' + (Join-Path $source 'combined_proxy.def')) `
-    /MACHINE:X86 /BREPRO /INCREMENTAL:NO advapi32.lib user32.lib
-if ($LASTEXITCODE -ne 0) { throw 'Credits-only proxy link failed.' }
+Copy-Item -LiteralPath (Join-Path $featureOutput 'payloads\D3D9-credits-only.dll') -Destination $creditsOnly -Force
+
+# Also rebuild the Credits-off branch. Every currently packaged proxy now has
+# source-build evidence, including the unchanged Terrain variants.
+$offOutput = Join-Path $output 'credits-off'
+& (Join-Path $PSScriptRoot 'build-zoom-payloads.ps1') -OutputDirectory $offOutput -CreditsFlashFix 0 |
+    Out-File -LiteralPath (Join-Path $output 'credits-off.log') -Encoding utf8
+if ($LASTEXITCODE -ne 0) { throw "Credits-off source build failed: $LASTEXITCODE" }
 
 $nonZoom = @(
     @{name='scroll-sprite-off'; terrain=$true; fast=$false; icon=$true},
@@ -52,6 +42,8 @@ $sourceInputs = [ordered]@{}
 $inputFiles = @(Get-ChildItem -LiteralPath $source,(Join-Path $root 'vendor\dust-fidelity') -File -Recurse)
 $inputFiles += Get-Item -LiteralPath (Join-Path $root 'include\mtw_exe_variants.h'), `
     (Join-Path $root 'tools\build-zoom-payloads.ps1'),$PSCommandPath
+$inputFiles += Get-Item -LiteralPath (Join-Path $root 'tools\build-feature-payloads.py'), `
+    (Join-Path $root 'tools\runtime_platform.py'),(Join-Path $root 'tests\native_feature_proxy_smoke.c')
 $rootPrefix = [IO.Path]::GetFullPath($root) + [IO.Path]::DirectorySeparatorChar
 foreach ($inputFile in @($inputFiles | Sort-Object FullName -Unique)) {
     if (-not $inputFile.FullName.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -73,7 +65,24 @@ $manifest = [ordered]@{
     scaffold_manifest_sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $scaffold 'BUILD_MANIFEST.json')).Hash
     zoom_manifest_sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $zoom 'zoom-build-manifest.json')).Hash
     source_inputs=$sourceInputs
+    feature_runtime=(Get-Content -LiteralPath (Join-Path $featureOutput 'feature-build-manifest.json') -Raw | ConvertFrom-Json)
+    credits_off_variants=@()
     variants=@()
+}
+foreach ($v in $nonZoom) {
+    $file = Get-Item -LiteralPath (Join-Path $offOutput ('scaffold\combined-r154\D3D9-' + $v.name + '.dll'))
+    $manifest.credits_off_variants += [ordered]@{
+        name=$v.name; filename=$file.Name; length=$file.Length
+        sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
+}
+$offZoomManifest = Get-Content -LiteralPath (Join-Path $offOutput 'zoom-build-manifest.json') -Raw | ConvertFrom-Json
+foreach ($v in $offZoomManifest.variants) {
+    $file = Get-Item -LiteralPath (Join-Path $offOutput ('payloads\D3D9-' + $v.name + '.dll'))
+    $manifest.credits_off_variants += [ordered]@{
+        name=$v.name; filename=$file.Name; length=$file.Length
+        sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+    }
 }
 function Add-Variant([string]$name,[string]$sourceFile,[bool]$terrain,[bool]$fast,[bool]$icon,[bool]$zoomEnabled) {
     $target = Join-Path $products ('D3D9-' + $name + '-credits.dll')
@@ -100,5 +109,5 @@ $manifest.variants += [ordered]@{
     filename=$creditsFile.Name; length=$creditsFile.Length
     sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $creditsFile.FullName).Hash
 }
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $output 'credits-build-manifest.json') -Encoding utf8
-$manifest | ConvertTo-Json -Depth 6
+$manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $output 'credits-build-manifest.json') -Encoding utf8
+$manifest | ConvertTo-Json -Depth 12

@@ -10,6 +10,15 @@
 #include "../../dust-fidelity/minhook/include/MinHook.h"
 #include "campaign_fast_moves_core.h"
 
+#ifndef MTW_XP_RUNTIME
+#define MTW_XP_RUNTIME 0
+#endif
+#if MTW_XP_RUNTIME && !defined(CALG_SHA_256)
+/* The RSA/AES provider supports SHA-256 on XP SP3; older header targets hide
+ * the constant even when that provider is installed. No newer API is used. */
+#define CALG_SHA_256 0x0000800cu
+#endif
+
 #define MTW_SHOW_MOVES_ADDRESS 0x007CD498u
 #define MTW_ADD_OPTION_ADDRESS 0x0062F410u
 #define MTW_CLICK_OPTION_ADDRESS 0x0062F960u
@@ -109,8 +118,12 @@ static int mtw_supported_inputs(void) {
     filename = wcsrchr(path, L'\\');
     if (!filename || (size_t)(filename - path) +
         wcslen(L"\\Loc\\Eng\\CHANGES.TXT") + 1u >= MAX_PATH) return 0;
+#if MTW_XP_RUNTIME
+    memcpy(filename, L"\\Loc\\Eng\\CHANGES.TXT", sizeof(L"\\Loc\\Eng\\CHANGES.TXT"));
+#else
     if (wcscpy_s(filename, MAX_PATH - (size_t)(filename - path),
                  L"\\Loc\\Eng\\CHANGES.TXT")) return 0;
+#endif
     if (!mtw_hash_file(path, hex, NULL)) return 0;
     mtw_fast_available = !strcmp(hex, MTW_LOCALE_HASH) ||
                          !strcmp(hex, MTW_LOCALE_FAST_ZOOM_HASH);

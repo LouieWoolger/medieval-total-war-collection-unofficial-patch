@@ -12,6 +12,13 @@
 #include "../../../include/mtw_exe_variants.h"
 #include "credits_flash_fix.h"
 
+#ifndef MTW_XP_RUNTIME
+#define MTW_XP_RUNTIME 0
+#endif
+#if MTW_XP_RUNTIME && !defined(CALG_SHA_256)
+#define CALG_SHA_256 0x0000800cu
+#endif
+
 #if !defined(_M_IX86)
 #error The credits hook applies only to the verified PE32 game.
 #endif
@@ -22,7 +29,11 @@
 #define MTW_CREDITS_FULL_COPY_RVA 0x00003110u
 #define MTW_CREDITS_TIMER_INIT_RVA 0x00018480u
 
+#if MTW_XP_RUNTIME
+static volatile LONG credits_once_state;
+#else
 static INIT_ONCE credits_once = INIT_ONCE_STATIC_INIT;
+#endif
 static int credits_installed;
 static void *credits_original_full_copy;
 static void *credits_original_timer_init;
@@ -218,6 +229,20 @@ static int install_credits_flash_repair(void) {
     return 1;
 }
 
+#if MTW_XP_RUNTIME
+int mtw_credits_flash_install_once(void) {
+    LONG state = InterlockedCompareExchange(&credits_once_state, 1, 0);
+    if (state == 0) {
+        credits_installed = install_credits_flash_repair();
+        InterlockedExchange(&credits_once_state, 2);
+    } else {
+        /* Preserve the synchronous once contract for concurrent factories. */
+        while (InterlockedCompareExchange(&credits_once_state, 2, 2) != 2)
+            Sleep(0);
+    }
+    return credits_installed;
+}
+#else
 static BOOL CALLBACK credits_install_once(PINIT_ONCE once, PVOID parameter,
                                           PVOID *context) {
     (void)once;
@@ -233,3 +258,4 @@ int mtw_credits_flash_install_once(void) {
     }
     return credits_installed;
 }
+#endif

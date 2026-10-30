@@ -866,7 +866,8 @@ static inline int mtw_transaction_failure(MedievalEngine *m, MedievalTransaction
     }
     return 0;
 }
-static inline int mtw_transaction_recover(MedievalEngine *m, JsonValue **result, int *pending, PatchError *e) {
+static inline int mtw_transaction_recover(MedievalEngine *m, JsonValue **result, int *pending,
+                                          MedievalReceipt *inspection_receipt, PatchError *e) {
     MedievalTransaction t = {0}, previous = {0};
     wchar_t *p, *fallback;
     PatchFileRecord primary, backup;
@@ -884,7 +885,13 @@ static inline int mtw_transaction_recover(MedievalEngine *m, JsonValue **result,
     MTW_TRY(mtw_read_json(m, &m->guard, primary.exists ? p : fallback, &t.json, &t.journal_record, e) &&
             mtw_transaction_validate(m, &t, e));
     *pending = 1;
-    if (mtw_is(m->options.operation, "Inspect")) return 1;
+    if (mtw_is(m->options.operation, "Inspect")) {
+        /* The retained receipt has passed journal and staged-receipt binding.
+           A repair may not have published its new live receipt yet. Borrow
+           these validated choices while leaving all recovery state untouched. */
+        *inspection_receipt = t.typed.receipt;
+        return 1;
+    }
     if (mtw_is(m->options.operation, "Verify"))
         return mtw_fail(m, e, "recovery_required", "An interrupted operation must be recovered by setup or the patch uninstaller before verification.");
     if (backup.exists) {

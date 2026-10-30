@@ -380,6 +380,31 @@ int wmain(int argc, wchar_t **argv) {
                       "r293-key-text"), "current Credits-off proxy classification");
         check(!medieval_old_patch(medieval_known_d3d9_mode(mtw_runtime_proxy_variants[0].sha256)),
               "current Credits-off proxy is not historical");
+        {
+            size_t i;
+            for (i = 0; i < sizeof(mtw_r293_feature_proxy_variants) / sizeof(mtw_r293_feature_proxy_variants[0]); ++i) {
+                const MtwR293FeatureProxyVariant *v = &mtw_r293_feature_proxy_variants[i];
+                const char *mode = medieval_known_d3d9_mode(v->sha256);
+                check(!strcmp(mode, "r293-feature-old") && medieval_old_patch(mode),
+                      "released R293 independent proxy remains an upgrade source");
+                current.exists = 1;
+                current.length = (int64_t)v->file_length;
+                strcpy(current.sha256, v->sha256);
+                decision = medieval_baseline_decision("D3D9.dll", &current, mode, "");
+                check(!decision.preserve_current && decision.archive_current &&
+                      !strcmp(decision.baseline_kind, "older-patch-archived"),
+                      "released R293 independent proxy cannot become a clean baseline after receipt loss");
+                check(mtw_r293_feature_proxy_for_options(0u, v->fast, v->icon, v->zoom, v->credits) == v &&
+                      !mtw_r293_feature_proxy_for_options(1u, v->fast, v->icon, v->zoom, v->credits),
+                      "R293 history preserves exact independent option flags");
+            }
+            for (i = 0; i < sizeof(mtw_runtime_proxy_variants) / sizeof(mtw_runtime_proxy_variants[0]); ++i)
+                check(!medieval_old_patch(medieval_known_d3d9_mode(mtw_runtime_proxy_variants[i].sha256)),
+                      "current Credits-off payload cannot be mistaken for R293 history");
+            for (i = 0; i < sizeof(mtw_credits_proxy_variants) / sizeof(mtw_credits_proxy_variants[0]); ++i)
+                check(!medieval_old_patch(medieval_known_d3d9_mode(mtw_credits_proxy_variants[i].sha256)),
+                      "current Credits-on payload cannot be mistaken for R293 history");
+        }
         check(!strcmp(medieval_known_d3d9_mode(MEDIEVAL_R291_TERRAIN_ICON_HASH),
                       "r291-deployment-stage-sync"), "previous Credits-off proxy classification");
         check(medieval_old_patch(medieval_known_d3d9_mode(MEDIEVAL_R291_TERRAIN_ICON_HASH)),

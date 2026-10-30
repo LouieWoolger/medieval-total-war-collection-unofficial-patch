@@ -170,6 +170,9 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
     if battle_icon_fix is None:
         battle_icon_fix = terrain_fix is not False
     command.append(f"/BATTLEICONFIX={int(battle_icon_fix)}")
+    # Missing-EXE recovery must never fall back to a registered game elsewhere.
+    # NSIS consumes /D= as the final, unquoted native command-line suffix.
+    command = subprocess.list2cmdline(command) + f" /D={game}"
     result = subprocess.run(
         command,
         cwd=game,
@@ -180,6 +183,11 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
     for log in logs.rglob("*.log"):
         encoding = "utf-16" if log.name == "installer.log" else "utf-8-sig"
         result.stdout += f"\n{log}\n" + log.read_text(encoding=encoding, errors="replace")
+    targets = re.findall(r"^operation=(?:Inspect|Install|Verify) target=(.*)$",
+                         result.stdout, re.MULTILINE)
+    expected_target = os.path.normcase(os.path.normpath(str(game)))
+    assert all(os.path.normcase(os.path.normpath(target.rstrip("\r"))) == expected_target
+               for target in targets), (command, targets, result.stdout)
     return result
 
 
@@ -822,6 +830,184 @@ def test_compiled_prior_explicit_credits_choice_survives_upgrade_and_repair(tmp_
     assert run_uninstaller(game).returncode == 0
     assert snapshot(game) == before
     assert_empty_registration(registration_name(game))
+
+
+@pytest.mark.parametrize("operation,fault", (
+    ("Install", "crash:after-file-0"),
+    ("Restore", "crash:after-file-0"),
+    ("Install", "throw:after-file-0,crash:rollback-after-restoration"),
+))
+@pytest.mark.parametrize("credits", (False, True))
+def test_compiled_normal_setup_retains_credits_through_pending_recovery(
+        tmp_path: Path, operation: str, fault: str, credits: bool) -> None:
+    game = new_game(tmp_path, "Pending recovery with saved Credits choice")
+    before = snapshot(game)
+    choices = dict(terrain_fix=True, scroll_fix=False, sprite_fix=False,
+                   tutorial_fix=False, parchment_fix=False, name_fix=False,
+                   fast_moves_fix=False, zoom_fix=False, economy_fix=False,
+                   key_fix=False, battle_icon_fix=True)
+    # During repair the journal's intended choice can differ from the still
+    # active receipt. Hydration must use the validated transaction's receipt.
+    installed_credits = not credits if operation == "Install" else credits
+    installed = run_installer(game, **choices, credits_fix=installed_credits)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    payload = tmp_path / "interruption-payload"
+    payload.mkdir()
+    suffix = "-credits" if credits else ""
+    shutil.copy2(PAYLOAD / f"payload-manifest-scroll-sprite-off{suffix}.json",
+                 payload / "payload-manifest.json")
+    shutil.copy2(PAYLOAD / f"D3D9-scroll-sprite-off{suffix}.dll", payload / "D3D9.dll")
+    for name in ("dgVoodoo_D3D9.dll", "ddraw.dll", "D3DImm.dll", "dgVoodoo.conf"):
+        shutil.copy2(PAYLOAD / name, payload / name)
+    helper = os.environ.get("MTW_TEST_NATIVE_HELPER")
+    assert helper and Path(helper).is_file(), "Supply the source-built native helper"
+    (game / ".umtwp-test-fixture").write_text("disposable packaged recovery test\n")
+    command = [helper, "--operation", operation, "--target", str(game),
+               "--payload", str(payload), "--version", "2.0.0",
+               "--uninstaller", str(game / "Uninstall Unofficial Medieval Patch.exe"),
+               "--terrain-fix", "1", "--scroll-fix", "0", "--sprite-fix", "0",
+               "--tutorial-fix", "0", "--parchment-fix", "0", "--name-fix", "0",
+               "--fast-moves-fix", "0", "--zoom-fix", "0", "--economy-fix", "0",
+               "--credits-fix", str(int(credits)), "--key-fix", "0", "--battle-icon-fix", "1",
+               "--test-fault", fault]
+    crashed = subprocess.run(command, capture_output=True, text=True, timeout=90,
+                             env=dict(os.environ, MTW_ENABLE_LIFECYCLE_FAULTS="1"))
+    assert crashed.returncode == 97, (crashed.stdout, crashed.stderr)
+    transaction = game / ".unofficial-medieval-total-war-patch-transaction"
+    assert (transaction / "journal.json").is_file()
+    if "rollback-after-restoration" in fault:
+        assert json.loads((transaction / "journal.json").read_text(encoding="utf-8"))["phase"] == "rolled-back"
+
+    recovered = run_installer(game, **choices, credits_fix=None)
+    assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    receipt = json.loads((game / ".unofficial-medieval-total-war-patch/install-manifest.json")
+                         .read_text(encoding="utf-8-sig"))
+    assert receipt["credits_flash_fix_enabled"] is credits
+    assert not transaction.exists()
+    assert_registration(game)
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+    assert_empty_registration(registration_name(game))
+
+
+def test_compiled_reinstall_after_retained_metadata_uses_fresh_credits_default(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Retained metadata with completed removal")
+    before = snapshot(game)
+    choices = dict(terrain_fix=True, scroll_fix=False, sprite_fix=False,
+                   tutorial_fix=False, parchment_fix=False, name_fix=False,
+                   fast_moves_fix=False, zoom_fix=False, economy_fix=False,
+                   key_fix=False, battle_icon_fix=True)
+    installed = run_installer(game, **choices, credits_fix=False)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    state = game / ".unofficial-medieval-total-war-patch"
+    note = state / "personal-notes.txt"
+    note.write_bytes(b"unrelated notes survive removal and reinstallation\x00\xff")
+    assert run_uninstaller(game).returncode == 0
+    receipt = state / "install-manifest.json"
+    assert json.loads(receipt.read_text(encoding="utf-8-sig"))["status"] == "restored"
+
+    reinstalled = run_installer(game, **choices, credits_fix=None)
+    assert reinstalled.returncode == 0, (reinstalled.stdout, reinstalled.stderr)
+    assert json.loads(receipt.read_text(encoding="utf-8-sig"))["credits_flash_fix_enabled"] is True
+    assert note.read_bytes() == b"unrelated notes survive removal and reinstallation\x00\xff"
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+    assert note.read_bytes() == b"unrelated notes survive removal and reinstallation\x00\xff"
+    assert_empty_registration(registration_name(game))
+
+
+def test_compiled_saved_choice_hydration_still_refuses_damaged_receipt(tmp_path: Path) -> None:
+    game = new_game(tmp_path, "Damaged receipt while hydrating saved choices")
+    installed = run_installer(game, credits_fix=False)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    receipt = game / ".unofficial-medieval-total-war-patch/install-manifest.json"
+    valid_bytes = receipt.read_bytes()
+    damaged = json.loads(valid_bytes)
+    damaged["credits_flash_fix_enabled"] = True  # Deliberately leave the old integrity checksum.
+    receipt.write_text(json.dumps(damaged), encoding="utf-8")
+    before = snapshot(game)
+    entry = read_registration(registration_name(game))
+    try:
+        refused = run_installer(game, credits_fix=None)
+        assert refused.returncode == 2, (refused.stdout, refused.stderr)
+        assert "error=saved_choices_inspect_failed" in refused.stdout
+        assert snapshot(game) == before
+        assert json.loads(receipt.read_text(encoding="utf-8")) == damaged
+        assert read_registration(registration_name(game)) == entry
+    finally:
+        receipt.write_bytes(valid_bytes)
+        assert run_uninstaller(game).returncode == 0
+
+
+@pytest.fixture(scope="module")
+def native_exe_interruption_helper(tmp_path_factory) -> Path:
+    from test_c_backend_lifecycle import build_c_engine
+    return build_c_engine(tmp_path_factory.mktemp("exe-interruption-helper") / "interrupted.exe",
+                          source_name="tests/native_exe_interruption.c")
+
+
+def test_compiled_recovers_interruption_between_exe_rename_and_publication(
+        tmp_path: Path, native_exe_interruption_helper: Path) -> None:
+    game = new_game(tmp_path, "EXE rename interruption")
+    before = snapshot(game)
+    source_uninstaller = os.environ.get("MTW_TEST_UNINSTALLER")
+    assert source_uninstaller and Path(source_uninstaller).is_file()
+    command = [str(native_exe_interruption_helper), "--operation", "Install", "--target", str(game),
+               "--payload", str(PAYLOAD), "--version", "2.0.0", "--uninstaller", source_uninstaller,
+               "--terrain-fix", "1", "--scroll-fix", "1", "--sprite-fix", "0",
+               "--tutorial-fix", "0", "--parchment-fix", "0", "--name-fix", "0",
+               "--fast-moves-fix", "0", "--zoom-fix", "0", "--economy-fix", "0",
+               "--credits-fix", "0", "--key-fix", "0", "--battle-icon-fix", "1"]
+    interrupted = subprocess.run(command, capture_output=True, text=True, timeout=90,
+                                 env=dict(os.environ, MTW_TEST_CRASH_RENAME_EXE=str(game / "Medieval_TW.exe")))
+    assert interrupted.returncode == 97, (interrupted.stdout, interrupted.stderr)
+    assert not (game / "Medieval_TW.exe").exists()
+    transaction = game / ".unofficial-medieval-total-war-patch-transaction"
+    journal = transaction / "journal.json"
+    saved_journal = journal.read_bytes()
+    value = json.loads(saved_journal)
+    assert value["phase"] == "applying"
+    assert value["actions"][value["started"] - 1]["relative"] == "Medieval_TW.exe"
+    # Inspect must validate the journal while leaving the rename gap untouched.
+    inspection = subprocess.run([os.environ["MTW_TEST_NATIVE_HELPER"], "--operation", "Inspect",
+                                  "--target", str(game), "--payload", str(PAYLOAD), "--version", "2.0.0"],
+                                 capture_output=True, text=True, timeout=90)
+    assert not (game / "Medieval_TW.exe").exists() and journal.read_bytes() == saved_journal
+
+    recovered = run_installer(game, terrain_fix=True, scroll_fix=True, sprite_fix=False,
+                              tutorial_fix=False, parchment_fix=False, name_fix=False,
+                              battle_icon_fix=True, credits_fix=False)
+    assert recovered.returncode == 0, (recovered.stdout, recovered.stderr)
+    assert inspection.returncode == 0, (inspection.stdout, inspection.stderr)
+    assert json.loads(inspection.stdout)["recovery_pending"] is True
+    assert sha256(game / "Medieval_TW.exe") == SCROLL_EXE_HASH
+    assert not transaction.exists()
+    assert_registration(game)
+    assert run_uninstaller(game).returncode == 0
+    assert snapshot(game) == before
+    assert_empty_registration(registration_name(game))
+
+
+@pytest.mark.parametrize("invalid_journal", (False, True))
+def test_compiled_explicit_missing_exe_target_is_refused_without_redirection(
+        tmp_path: Path, invalid_journal: bool) -> None:
+    game = new_game(tmp_path, "Explicit missing target")
+    saved_exe = game / "task-owned-original-exe.bin"
+    (game / "Medieval_TW.exe").rename(saved_exe)
+    if invalid_journal:
+        transaction = game / ".unofficial-medieval-total-war-patch-transaction"
+        transaction.mkdir()
+        journal = transaction / "journal.json"
+        journal.write_bytes(b"invalid recovery metadata must not authorize writes")
+    before = snapshot(game)
+    refused = run_installer(game, credits_fix=False)
+    assert refused.returncode == 2, (refused.stdout, refused.stderr)
+    assert snapshot(game) == before
+    assert sha256(saved_exe) == SUPPORTED_EXE_HASH
+    assert read_registration(registration_name(game)) is None
+    assert not (game / "Uninstall Unofficial Medieval Patch.exe").exists()
+    if invalid_journal:
+        assert journal.read_bytes() == b"invalid recovery metadata must not authorize writes"
 
 
 def test_compiled_credits_only_to_name_only_removes_proxy_and_restores(tmp_path: Path) -> None:

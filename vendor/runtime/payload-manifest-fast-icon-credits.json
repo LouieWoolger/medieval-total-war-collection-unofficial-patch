@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Credits Flash Fix",
-  "runtime_identity": "R293-credits-key-text-fast-icon",
+  "runtime_identity": "R294-xp-fast-icon-credits",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 164352,
-      "sha256": "CFCE1A4F4D80F2DF5FBE953446E628E662DE7A0F8C94B750D42F93A1B5B866F8",
-      "provenance": "Source-built PE32 D3D9 proxy with an exact supported executable SHA-256 and length guard; the Credits illustration sequencing repair is enabled only when selected."
+      "sha256": "07E7A41782C83C2F8CA6C86A62C9D4E346D7D4B86E3D21796147EEB735930349",
+      "length": 177152,
+      "provenance": "Source-built PE32 feature proxy using the bounded XP SP3 import surface, with exact supported game inputs and the selected hooks; forwards to Windows D3D9. XP execution is not established by the import audit."
     }
   },
   "locked_settings": null,

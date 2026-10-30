@@ -61,6 +61,8 @@ $variants = @(
 $sourceInputs = [ordered]@{}
 $sourceFiles = @(Get-ChildItem -LiteralPath $source,(Join-Path $root 'vendor\dust-fidelity') -File -Recurse)
 $sourceFiles += Get-Item -LiteralPath (Join-Path $root 'include\mtw_exe_variants.h'),$PSCommandPath
+$sourceFiles += Get-Item -LiteralPath (Join-Path $root 'tools\build-feature-payloads.py'), `
+    (Join-Path $root 'tools\runtime_platform.py'),(Join-Path $root 'tests\native_feature_proxy_smoke.c')
 $rootPrefix = [IO.Path]::GetFullPath($root) + [IO.Path]::DirectorySeparatorChar
 foreach ($item in @($sourceFiles | Sort-Object FullName -Unique)) {
     if (-not $item.FullName.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -73,6 +75,19 @@ $manifest = [ordered]@{schema='mtw-zoom-payload-build-v1'; source=(Resolve-Path 
     source_inputs=$sourceInputs; variants=@()}
 foreach ($variant in $variants) {
     $name = $variant.name
+    if (-not $variant.terrain) {
+        $suffix = if ($CreditsFlashFix) { '-credits' } else { '' }
+        $candidate = Join-Path $objects ('feature-runtime\payloads\D3D9-' + $name + $suffix + '.dll')
+        $dll = Join-Path $products ('D3D9-' + $name + '.dll')
+        Copy-Item -LiteralPath $candidate -Destination $dll -Force
+        $item = Get-Item -LiteralPath $dll
+        $manifest.variants += [ordered]@{
+            name=$name; fast=[bool]$variant.fast; icon=[bool]$variant.icon;
+            terrain=$false; length=$item.Length;
+            sha256=(Get-FileHash -Algorithm SHA256 -LiteralPath $dll).Hash
+        }
+        continue
+    }
     $bridge = Compile-Bridge $name $variant.terrain $variant.fast $variant.icon
     $dll = Join-Path $products ('D3D9-' + $name + '.dll')
     $inputs = @($minhook | ForEach-Object { Join-Path $objects $_ }) + @(

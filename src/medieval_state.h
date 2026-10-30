@@ -16,6 +16,7 @@
 #include "../include/credits_payload_r291_hashes.h"
 #include "../include/credits_payload_r292_hashes.h"
 #include "../include/runtime_proxy_hashes.h"
+#include "../include/runtime_proxy_r293_hashes.h"
 
 #define MEDIEVAL_STATE_NAME ".unofficial-medieval-total-war-patch"
 #define MEDIEVAL_RECEIPT_NAME "install-manifest.json"
@@ -711,6 +712,9 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
             const MtwRuntimeProxyVariant *runtime_variant = !credits ?
                 mtw_runtime_proxy_for_options((unsigned int)terrain, (unsigned int)fast,
                                               (unsigned int)icon, (unsigned int)zoom) : NULL;
+            const MtwR293FeatureProxyVariant *r293_feature_variant =
+                mtw_r293_feature_proxy_for_options((unsigned int)terrain, (unsigned int)fast,
+                    (unsigned int)icon, (unsigned int)zoom, (unsigned int)credits);
             const char *current_proxy = credits ? (credits_variant ? credits_variant->sha256 : "") :
                 (runtime_variant ? runtime_variant->sha256 : "");
             const char *expected_proxy = credits ? (credits_variant ? credits_variant->sha256 : "") : zoom ?
@@ -733,6 +737,9 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
             const int current_match = !strcmp(r.files[4].installed.sha256, current_proxy) &&
                 (credits ? (credits_variant && r.files[4].installed.length == credits_variant->file_length) :
                            (runtime_variant && r.files[4].installed.length == runtime_variant->file_length));
+            const int r293_feature_match = r293_feature_variant &&
+                !strcmp(r.files[4].installed.sha256, r293_feature_variant->sha256) &&
+                r.files[4].installed.length == r293_feature_variant->file_length;
             const int r292_match = !strcmp(r.files[4].installed.sha256,
                 credits ? (r292_credits_variant ? r292_credits_variant->sha256 : "") :
                           medieval_r292_proxy_hash(terrain, fast, icon, zoom)) &&
@@ -762,7 +769,7 @@ static inline int medieval_receipt_validate(JsonDocument *owner, const JsonValue
                 credits ? (previous_credits_variant ? previous_credits_variant->sha256 : "") : expected_proxy) &&
                 (!credits || (previous_credits_variant &&
                              r.files[4].installed.length == previous_credits_variant->file_length));
-            if (!current_match && !r292_match && !r291_match && !r290_match && !r289_match &&
+            if (!current_match && !r293_feature_match && !r292_match && !r291_match && !r290_match && !r289_match &&
                 !r288_match && !previous_match)
                 return json_invalid(e, "Inconsistent graphics proxy selection.");
         }
@@ -1308,6 +1315,7 @@ done:
     return ok;
 }
 static inline int medieval_old_patch(const char *mode) {
+    if (!strcmp(mode, "r293-feature-old")) return 1;
     if (!strcmp(mode, "r292-dust-alpha") || !strcmp(mode, "r292-credits-old")) return 1;
     return !strcmp(mode, "r291-deployment-stage-sync") || !strcmp(mode, "r291-credits-old") || !strcmp(mode, "r290-zoom-tooltip") || !strcmp(mode, "r290-credits-old") || !strcmp(mode, "r289-persistent-zoom") || !strcmp(mode, "r289-credits-old") || !strcmp(mode, "r288-key-customisation") || !strcmp(mode, "r288-locale-old") || !strcmp(mode, "r288-credits-old") || !strcmp(mode, "r237-key-customisation") || !strcmp(mode, "r287-credits") || !strcmp(mode, "r205-key-reject") || !strcmp(mode, "r204-keytable") || !strcmp(mode, "r203-zoom") || !strcmp(mode, "r202") || !strcmp(mode, "r201") || !strcmp(mode, "r200") || !strcmp(mode, "r199") || !strcmp(mode, "r198") || !strcmp(mode, "r197") || !strcmp(mode, "r196") || !strcmp(mode, "r195") || !strcmp(mode, "r194") || !strcmp(mode, "r191") || !strcmp(mode, "r189") || !strcmp(mode, "r188") || !strcmp(mode, "r187") || !strcmp(mode, "r186") || !strcmp(mode, "r185") ||
            !strcmp(mode, "dust-only") || !strcmp(mode, "r6f160");
@@ -1317,6 +1325,14 @@ static inline int medieval_old_configuration(const char *hash) {
            !strcmp(hash, "BD21E07D4B9282A8CA0F53613CCB852D419E5D54967A96C8E34A60D2F96E476A");
 }
 static inline const char *medieval_known_d3d9_mode(const char *hash) {
+    size_t feature_index;
+    if (mtw_r293_feature_proxy_known_hash(hash)) return "r293-feature-old";
+    for (feature_index = 0; feature_index < sizeof(mtw_credits_proxy_variants) / sizeof(mtw_credits_proxy_variants[0]); ++feature_index)
+        if (!mtw_credits_proxy_variants[feature_index].terrain &&
+            !strcmp(hash, mtw_credits_proxy_variants[feature_index].sha256)) return "r294-xp-credits";
+    for (feature_index = 0; feature_index < sizeof(mtw_runtime_proxy_variants) / sizeof(mtw_runtime_proxy_variants[0]); ++feature_index)
+        if (!mtw_runtime_proxy_variants[feature_index].terrain &&
+            !strcmp(hash, mtw_runtime_proxy_variants[feature_index].sha256)) return "r294-xp";
     if (mtw_credits_proxy_known_hash(hash))
         return "r293-credits";
     if (mtw_runtime_proxy_known_hash(hash)) return "r293-key-text";

@@ -508,8 +508,18 @@ Function DetectGamePath
     ${If} ${FileExists} "$INSTDIR\Medieval_TW.exe"
         Return
     ${EndIf}
+    StrCpy $0 "$INSTDIR"
+    Call TryDetectedGamePath
+    ${If} $9 == "1"
+        Return
+    ${EndIf}
     ${If} ${FileExists} "$EXEDIR\Medieval_TW.exe"
         StrCpy $INSTDIR "$EXEDIR"
+        Return
+    ${EndIf}
+    StrCpy $0 "$EXEDIR"
+    Call TryDetectedGamePath
+    ${If} $9 == "1"
         Return
     ${EndIf}
 
@@ -603,10 +613,40 @@ Function TryDetectedGamePath
         Return
     ${EndIf}
     ${StrRep} $0 "$0" "/" "\"
-    ${If} ${FileExists} "$0\Medieval_TW.exe"
-        StrCpy $INSTDIR "$0"
-        StrCpy $9 "1"
+    ; Interrupted replacement can temporarily remove the EXE. Keep this folder
+    ; as a candidate instead of silently selecting another registered game.
+    ; Metadata presence grants no mutation authority: native Inspect/Install
+    ; must validate its account, directory identity, receipt, journal and copies.
+    StrCpy $R0 "$0"
+    StrCpy $R1 "$R0" 4
+    ${If} $R1 != "\\?\"
+        StrCpy $R1 "$R0" 2
+        ${If} $R1 == "\\"
+            StrCpy $R0 "$R0" "" 2
+            StrCpy $R0 "\\?\UNC\$R0"
+        ${Else}
+            StrCpy $R0 "\\?\$R0"
+        ${EndIf}
     ${EndIf}
+    System::Call 'kernel32::GetFileAttributesW(w "$R0\Medieval_TW.exe") i.r11'
+    ${If} $R1 != -1
+        Goto detectedCandidateFound
+    ${EndIf}
+    System::Call 'kernel32::GetFileAttributesW(w "$R0\.unofficial-medieval-total-war-patch\install-manifest.json") i.r11'
+    ${If} $R1 != -1
+        Goto detectedCandidateFound
+    ${EndIf}
+    System::Call 'kernel32::GetFileAttributesW(w "$R0\.unofficial-medieval-total-war-patch-transaction\journal.json") i.r11'
+    ${If} $R1 != -1
+        Goto detectedCandidateFound
+    ${EndIf}
+    System::Call 'kernel32::GetFileAttributesW(w "$R0\.unofficial-medieval-total-war-patch-transaction\journal.json.mtw-previous") i.r11'
+    ${If} $R1 == -1
+        Return
+    ${EndIf}
+detectedCandidateFound:
+    StrCpy $INSTDIR "$0"
+    StrCpy $9 "1"
 FunctionEnd
 
 Function TrySteamRoot
@@ -617,9 +657,11 @@ Function TrySteamRoot
 
     ${StrRep} $0 "$0" "/" "\"
     StrCpy $1 "$0\steamapps\common\Total War Medieval 1 Gold"
-    ${If} ${FileExists} "$1\Medieval_TW.exe"
-        StrCpy $INSTDIR "$1"
-        StrCpy $9 "1"
+    Push $0
+    StrCpy $0 "$1"
+    Call TryDetectedGamePath
+    Pop $0
+    ${If} $9 == "1"
         Return
     ${EndIf}
 
@@ -667,10 +709,10 @@ Function TrySteamLibraryFolderLine
     StrCpy $5 "$5" $6
     ${StrRep} $5 "$5" "\\" "\"
     StrCpy $5 "$5\steamapps\common\Total War Medieval 1 Gold"
-    ${If} ${FileExists} "$5\Medieval_TW.exe"
-        StrCpy $INSTDIR "$5"
-        StrCpy $9 "1"
-    ${EndIf}
+    Push $0
+    StrCpy $0 "$5"
+    Call TryDetectedGamePath
+    Pop $0
 FunctionEnd
 
 Function ExtractEngineResult

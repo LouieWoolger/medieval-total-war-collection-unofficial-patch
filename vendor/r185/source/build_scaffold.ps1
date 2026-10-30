@@ -45,12 +45,12 @@ $expectedR185Proxy = '5CD672ACDE32034E0530147195FCFBE84751730A65F309C26ADF1CA8BF
 $expectedScrollOffProxy = '7EBBB717AA71AA7207C8B435687DFE6CDC49AB3C220030FB84B16A73C4B15300'
 $expectedSpriteOffProxy = 'C05CF7E7E8E2F6BC8ECCEFB7F957086ADB2BF0B6F6FFA9407C5DAF486F858AE4'
 $expectedScrollSpriteOffProxy = 'DFA4C8776F9328CD99EDF5661785F882ECA9550620486534DA540C65B05A8CC4'
-$expectedFastOnlyProxy = '197F95C52FFA2EA2682941F41A481826835AB3582CBB924E6C4049D22323787E'
+$expectedFastOnlyProxy = '21BCAD5E1B954607335E15013FFC89FB76E9E772A8E36E2A151780DE4084F156'
 $expectedScrollSpriteOffFastProxy = '5E182D985B1835B3D4D9FF9C2581918AF635B84054B8453BAF17A25185779B6B'
 $expectedScrollSpriteOffIconOffProxy = 'C04AFDA290A467F237D69B923D00381209D497ECE78D7316DF76367408C783A1'
 $expectedScrollSpriteOffFastIconOffProxy = 'CA3289FA7D29C437A0A545EB4FB5A90EED224460AE1F34D193587A59BD49A67D'
-$expectedIconOnlyProxy = 'A95298ABBC213359432DB55B81EF2708616A998049575E1EF78AAC0FF74AC455'
-$expectedFastIconProxy = '99ACF3CDCC95225ECB7B50224969EABD838BEF86FCCD0999F86686D8C29A55AC'
+$expectedIconOnlyProxy = 'C7C19E7E23C1CC1339DC0C6149B98678B8DC1A7596FA8DBF7D9A64804A939B71'
+$expectedFastIconProxy = '814BB1F13A13AB246D621F22732580B9C66CAE66653B1E37A1B10012FAE6828D'
 
 foreach ($entry in $expected.GetEnumerator()) {
     $path = Join-Path $acceptedSource $entry.Key
@@ -397,14 +397,16 @@ if ($LASTEXITCODE -ne 0) { throw "Sprite-disabled proxy link failed: $LASTEXITCO
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','advapi32.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Scroll-and-sprite-disabled proxy link failed: $LASTEXITCODE" }
-& $clangCl @(
-    '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $fastOnlyDll),$creditsObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,
-    $fastOnlyPublicObj,$fastMovesObj,
-    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','advapi32.lib','user32.lib'
-)
-if ($LASTEXITCODE -ne 0) { throw "Fast feature-only proxy link failed: $LASTEXITCODE" }
+# Feature-only DLLs use MinGW's system msvcrt linkage. The current Visual
+# Studio CRT imports Vista APIs even when subsystem 5.1 is requested.
+$projectRoot = Split-Path -Parent (Split-Path -Parent $r185Root)
+$featureOutput = Join-Path $combined 'feature-runtime'
+$featureBuilder = Join-Path $projectRoot 'tools\build-feature-payloads.py'
+$featureClang = Join-Path (Split-Path -Parent $clangCl) 'clang.exe'
+& python.exe $featureBuilder --output $featureOutput --clang $featureClang --verify-packaged
+if ($LASTEXITCODE -ne 0) { throw "XP feature-only source build failed: $LASTEXITCODE" }
+$featureSuffix = if ($CreditsFlashFix) { '-credits' } else { '' }
+Copy-Item -LiteralPath (Join-Path $featureOutput ('payloads\D3D9-fast-only' + $featureSuffix + '.dll')) -Destination $fastOnlyDll -Force
 & $clangCl @(
     '/nologo','--target=i686-pc-windows-msvc','/LD',
     ('/Fe' + $scrollSpriteOffFastDll),$creditsObj,$acceptedObj,$dustBridgeObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastPublicObj,$fastMovesObj,$frontendScrollSpriteOffObj,$battleIconObj,$campaignPanObj,$frontendEpochObj,$presentationInputObj,$primaryOriginGuardObj,$resolutionFilterObj,$windowTransitionGuardObj,$shadowObj,$focusObj,$focusPlaneObj,$guardedCopyObj,$lockPatchObj,$mapperCloneObj,$mapperActivationObj,
@@ -426,20 +428,8 @@ if ($LASTEXITCODE -ne 0) { throw "Icon-disabled Terrain proxy link failed: $LAST
     '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','bcrypt.lib','advapi32.lib','user32.lib','d3d11.lib','d3dcompiler.lib'
 )
 if ($LASTEXITCODE -ne 0) { throw "Icon-disabled Fast Terrain proxy link failed: $LASTEXITCODE" }
-& $clangCl @(
-    '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $iconOnlyDll),$creditsObj,$iconOnlyPublicObj,$battleIconObj,
-    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','advapi32.lib','user32.lib'
-)
-if ($LASTEXITCODE -ne 0) { throw "Icon-only proxy link failed: $LASTEXITCODE" }
-& $clangCl @(
-    '/nologo','--target=i686-pc-windows-msvc','/LD',
-    ('/Fe' + $fastIconDll),$creditsObj,$minhookBufferObj,$minhookHookObj,$minhookTrampolineObj,$minhookHdeObj,$fastIconPublicObj,$fastMovesObj,$battleIconObj,
-    '/link',('/DEF:' + (Join-Path $PSScriptRoot 'combined_proxy.def')),
-    '/MACHINE:X86','/BREPRO','/INCREMENTAL:NO','advapi32.lib','user32.lib'
-)
-if ($LASTEXITCODE -ne 0) { throw "Fast-and-icon-only proxy link failed: $LASTEXITCODE" }
+Copy-Item -LiteralPath (Join-Path $featureOutput ('payloads\D3D9-icon-only' + $featureSuffix + '.dll')) -Destination $iconOnlyDll -Force
+Copy-Item -LiteralPath (Join-Path $featureOutput ('payloads\D3D9-fast-icon' + $featureSuffix + '.dll')) -Destination $fastIconDll -Force
 $combinedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $combinedDll).Hash
 $scrollOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scrollOffDll).Hash
 $spriteOffHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $spriteOffDll).Hash
@@ -746,6 +736,7 @@ $manifest = [ordered]@{
     scroll_sprite_off_fast_icon_off_sha256 = $scrollSpriteOffFastIconOffHash
     icon_only_sha256 = $iconOnlyHash
     fast_icon_sha256 = $fastIconHash
+    feature_runtime_manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $featureOutput 'feature-build-manifest.json')).Hash
     backend_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $combined 'dgVoodoo_D3D9.dll')).Hash
     smoke_loader_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $smokeExe).Hash
     smoke_loader_exit = 0

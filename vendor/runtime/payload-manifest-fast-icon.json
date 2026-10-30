@@ -1,7 +1,7 @@
 {
   "schema": "unofficial-medieval-total-war-patch-payload-v1",
   "component": "Fast Computer Moves Option",
-  "runtime_identity": "R293-key-text-fast-icon",
+  "runtime_identity": "R294-xp-fast-icon",
   "dgvoodoo_version": "none",
   "target_executable": {
     "name": "Medieval_TW.exe",
@@ -9,9 +9,9 @@
   },
   "files": {
     "D3D9.dll": {
-      "length": 162816,
-      "sha256": "7404A941F981005771B72BCE7D5A125A9D28B9A9CC3F4991F73BB4CCAACB0721",
-      "provenance": "Source-built R290-zoom-tooltip PE32 D3D9 proxy from vendor/r185/source with exact EXE, English locale and instruction identities for the selected campaign options."
+      "sha256": "814BB1F13A13AB246D621F22732580B9C66CAE66653B1E37A1B10012FAE6828D",
+      "length": 137216,
+      "provenance": "Source-built PE32 feature proxy using the bounded XP SP3 import surface, with exact supported game inputs and the selected hooks; forwards to Windows D3D9. XP execution is not established by the import audit."
     }
   },
   "locked_settings": null,

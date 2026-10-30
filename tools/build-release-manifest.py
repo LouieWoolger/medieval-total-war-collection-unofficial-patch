@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -11,6 +12,9 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_runtime_spec = importlib.util.spec_from_file_location("mtw_runtime_platform", ROOT / "tools/runtime_platform.py")
+_runtime_platform = importlib.util.module_from_spec(_runtime_spec)
+_runtime_spec.loader.exec_module(_runtime_platform)
 ASSET_NAMES = (
     "medieval.ico", "welcome-finish.bmp", "compatibility.bmp", "campaign-scrolling.bmp", "character-parchment.bmp",
     "name-and-title.bmp",
@@ -200,8 +204,9 @@ def r185_result(path: Path | None, variant_hashes: dict[str, str]) -> dict:
 
 
 def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
-    """Check pinned Credits-OFF bytes and source-built Credits-ON bytes separately."""
+    """Check every packaged proxy against its fresh source build and platform contract."""
     runtime = ROOT / "vendor" / "runtime"
+    platform = _runtime_platform.audit_packaged_features(runtime)
     for name in PROXY_VARIANTS:
         manifest = load_json(runtime / f"payload-manifest-{name}.json")
         packaged = file_record(runtime / f"D3D9-{name}.dll")
@@ -210,6 +215,8 @@ def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
         if manifest.get("credits_flash_fix_enabled", False):
             raise ValueError(f"Credits-OFF manifest enables the Credits hook: {name}")
     legacy = {"status": "pass", "variant_count": len(PROXY_VARIANTS),
+              "feature_platform": {"status": platform["status"], "variant_count": platform["variant_count"],
+                                   "policy": "XP SP3 static import audit; XP execution not run"},
               "verification": "Packaged Credits-OFF bytes match their pinned runtime manifests."}
     if credits_build is None:
         return legacy, {"status": "not-run", "reason": "No Credits-ON source build evidence was supplied."}
@@ -222,6 +229,7 @@ def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
         raise ValueError("Credits payload build evidence is incomplete.")
     source_inputs = evidence.get("source_inputs", {})
     required = {"tools/build-credits-payloads.ps1", "tools/build-zoom-payloads.ps1",
+                "tools/build-feature-payloads.py", "tools/runtime_platform.py", "tests/native_feature_proxy_smoke.c",
                 "vendor/r185/source/credits_flash_fix.c",
                 "vendor/r185/source/combined_proxy.c",
                 "vendor/r185/source/campaign_fast_moves_proxy.c",
@@ -235,6 +243,41 @@ def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
             raise ValueError(f"Credits build source differs from checkout: {relative}")
     if evidence.get("executable_variant_table_sha256") != sha256(ROOT / "include/mtw_exe_variants.h"):
         raise ValueError("Credits build executable identity table differs from checkout.")
+    off_variants = evidence.get("credits_off_variants", [])
+    if (len(off_variants) != len(PROXY_VARIANTS) or
+            {entry.get("name") for entry in off_variants} != set(PROXY_VARIANTS)):
+        raise ValueError("Credits-off source build evidence is incomplete.")
+    for entry in off_variants:
+        name = entry["name"]
+        if (entry["filename"] != f"D3D9-{name}.dll" or
+                file_record(runtime / entry["filename"]) != {key: entry[key] for key in ("sha256", "length")}):
+            raise ValueError(f"Credits-off source build differs from packaged runtime: {name}")
+    feature = evidence.get("feature_runtime", {})
+    feature_variants = feature.get("variants", [])
+    if (feature.get("schema") != "mtw-feature-runtime-build-v1" or feature.get("status") != "pass" or
+            feature.get("target") != "i686-w64-mingw32" or len(feature_variants) != 15 or
+            {entry.get("name") for entry in feature_variants} != set(_runtime_platform.FEATURE_VARIANTS) or
+            not feature.get("header_inputs") or not feature.get("compiler_support") or
+            not {"libgcc.a", "libmingw32.a", "libmingwex.a", "libmsvcrt.a"}.issubset(feature.get("libraries", {})) or
+            not {"-DMTW_XP_RUNTIME=1", "-D_WIN32_WINNT=0x0501"}.issubset(feature.get("compile_flags", []))):
+        raise ValueError("Feature-only source build evidence is incomplete.")
+    feature_sources = feature.get("source_inputs", {})
+    if not {"tools/build-feature-payloads.py", "tools/runtime_platform.py", "tests/native_feature_proxy_smoke.c",
+            "vendor/r185/source/campaign_fast_moves.c", "vendor/r185/source/credits_flash_fix.c",
+            "vendor/r185/source/campaign_fast_moves_proxy.c", "include/mtw_exe_variants.h"}.issubset(feature_sources):
+        raise ValueError("Feature-only source build identities are incomplete.")
+    for relative, recorded in feature_sources.items():
+        source = (ROOT / relative).resolve()
+        if Path(relative).is_absolute() or not source.is_relative_to(ROOT) or file_record(source) != recorded:
+            raise ValueError(f"Feature build source differs from checkout: {relative}")
+    for entry in feature_variants:
+        name = entry["name"]
+        expected = platform["variants"][name]
+        if (entry["filename"] != f"D3D9-{name}.dll" or entry.get("factory_smoke_exit") != 0 or
+                any(entry[key] != expected[key] for key in ("sha256", "length")) or
+                entry.get("platform") != {key: value for key, value in expected.items() if key not in ("sha256", "length")}):
+            raise ValueError(f"Feature source build/platform evidence differs from packaged runtime: {name}")
+    legacy["verification"] = "All Credits-OFF proxy hashes match their fresh source build and runtime manifests."
     for entry in variants:
         name = entry["name"]
         terrain = name.startswith("scroll-sprite-off")
@@ -269,6 +312,7 @@ def proxy_payload_result(credits_build: Path | None) -> tuple[dict, dict]:
             raise ValueError(f"Credits runtime backend scope differs: {name}")
     return legacy, {"status": "pass", "report": credits_build.name,
                     "report_sha256": sha256(credits_build), "variant_count": len(variants),
+                    "feature_only_source_variants": len(feature_variants),
                     "verification": "All Credits-ON proxy hashes, source inputs, and runtime manifests match."}
 
 
@@ -511,6 +555,7 @@ def main() -> int:
                              "include/credits_payload_r291_hashes.h",
                              "include/credits_payload_r292_hashes.h",
                              "include/runtime_proxy_hashes.h",
+                             "include/runtime_proxy_r293_hashes.h",
                              "include/mtw_exe_variants.h"})
     if set(native_build.get("source_inputs", {})) != required_sources:
         raise ValueError("Native helper provenance must identify all and only the C backend inputs.")
