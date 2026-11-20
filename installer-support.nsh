@@ -31,6 +31,9 @@ Var Utf8Overflow
 Var PatcherOutput
 Var DisplayLog
 Var NativeDirectory
+Var EnginePathInput
+Var EngineResolvedPath
+Var EnginePathDetail
 Var EnginePayloadDirectory
 Var EngineOperation
 Var EngineInstaller
@@ -43,16 +46,15 @@ Var ElevationArguments
 Var ElevatedProcess
 Var ElevatedExit
 
-!macro MEDIEVAL_ENGINE_FILES INCLUDE_RUNTIME
+!macro MEDIEVAL_ENGINE_FILES INCLUDE_RUNTIME PREFIX
     InitPluginsDir
-    ; NSIS may use an 8.3 TEMP alias. Pass the existing long path to the guarded
-    ; helper, while retaining declared PLUGINSDIR archive destinations.
-    System::Call 'kernel32::GetLongPathNameW(w "$PLUGINSDIR",w.r0,i ${NSIS_MAX_STRLEN}) i.r1'
-    ${If} $1 == 0
-    ${OrIf} $1 >= ${NSIS_MAX_STRLEN}
-        SetErrors
+    StrCpy $EnginePathInput "$PLUGINSDIR"
+    Call ${PREFIX}ResolveEnginePath
+    ${If} $EngineResolvedPath == ""
+        StrCpy $InstallError "error=engine_directory_resolution_failed $EnginePathDetail path=$EnginePathInput"
     ${Else}
-        StrCpy $NativeDirectory "$0"
+    StrCpy $NativeDirectory "$EngineResolvedPath"
+    ClearErrors
     SetOutPath "$PLUGINSDIR"
     File /oname=medieval_fix_patcher.exe "${NATIVE_HELPER}"
     File /oname=LICENSE.txt "${SOURCE_DIR}\LICENSE"
@@ -140,6 +142,9 @@ Var ElevatedExit
     File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-fast-icon-zoom.dll"
     !insertmacro MEDIEVAL_CREDITS_PAYLOAD_FILES
     !endif
+    ${If} ${Errors}
+        StrCpy $InstallError "error=engine_extraction_failed directory=$NativeDirectory"
+    ${EndIf}
     ${EndIf}
 !macroend
 ; Shared installer/uninstaller diagnostics and native process runner.
@@ -402,17 +407,84 @@ FunctionEnd
 !macroend
 
 !macro MEDIEVAL_ENGINE_REQUEST PREFIX
+Function ${PREFIX}ResolveEnginePath
+    StrCpy $EngineResolvedPath ""
+    StrCpy $1 ""
+    ClearErrors
+    System::Call 'kernel32::GetLongPathNameW(w "$EnginePathInput",w.r0,i ${NSIS_MAX_STRLEN}) i.r1 ?e'
+    ${If} ${Errors}
+        StrCpy $EnginePathDetail "api=GetLongPathNameW system_plugin_failed=1"
+        Return
+    ${EndIf}
+    Pop $2
+    ${If} $1 > 0
+    ${AndIf} $1 < ${NSIS_MAX_STRLEN}
+        StrCpy $EngineResolvedPath "$0"
+        Return
+    ${EndIf}
+    ${If} $1 != 0
+        StrCpy $EnginePathDetail "api=GetLongPathNameW result=$1 buffer_chars=${NSIS_MAX_STRLEN}"
+        Return
+    ${EndIf}
+    StrCpy $EnginePathDetail "api=GetLongPathNameW result=0 native_error=$2"
+    ${If} $2 != 5 ; ERROR_ACCESS_DENIED
+        Return
+    ${EndIf}
+    ; A traverse-only parent can contain an accessible NSIS workspace, but
+    ; GetLongPathNameW needs permission to look up the name in that parent.
+    ; Resolve the already-existing object by handle where Windows supports it.
+    StrCpy $3 0
+    System::Call 'kernel32::GetModuleHandleW(w "kernel32.dll") p.r0'
+    System::Call 'kernel32::GetProcAddress(p r0,m "GetFinalPathNameByHandleW") p.r3'
+    ${If} $3 == 0
+        Return
+    ${EndIf}
+    ; FILE_READ_ATTRIBUTES, OPEN_EXISTING, BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+    System::Call 'kernel32::CreateFileW(w "$EnginePathInput",i 0x80,i 7,p 0,i 3,i 0x02200000,p 0) p.s ?e'
+    Pop $1
+    Pop $2
+    ${If} $2 == -1
+        StrCpy $EnginePathDetail "api=CreateFileW native_error=$1 long_path_native_error=5"
+        Return
+    ${EndIf}
+    System::Call '::$3(p r2,w.r0,i ${NSIS_MAX_STRLEN},i 0) i.r1 ?e'
+    Pop $3
+    System::Call 'kernel32::CloseHandle(p r2)'
+    ${If} $1 == 0
+        StrCpy $EnginePathDetail "api=GetFinalPathNameByHandleW result=0 native_error=$3 long_path_native_error=5"
+        Return
+    ${ElseIf} $1 >= ${NSIS_MAX_STRLEN}
+        StrCpy $EnginePathDetail "api=GetFinalPathNameByHandleW result=$1 buffer_chars=${NSIS_MAX_STRLEN}"
+        Return
+    ${EndIf}
+    ; Keep the supplied spelling for the helper's ancestor checks. If the
+    ; handle resolves elsewhere, a junction or unresolved alias is possible.
+    StrCpy $3 "\\?\$EnginePathInput"
+    System::Call 'kernel32::CompareStringOrdinal(w r0,i -1,w r3,i -1,i 1) i.r2'
+    ${If} $2 != 2 ; CSTR_EQUAL
+        StrCpy $EnginePathDetail "api=GetFinalPathNameByHandleW final_path_mismatch=1 resolved=$0"
+        Return
+    ${EndIf}
+    StrCpy $EngineResolvedPath "$EnginePathInput"
+    StrCpy $LogLine "path_resolution=handle long_path_native_error=5 path=$EnginePathInput"
+    Call ${PREFIX}WriteDiagnostic
+FunctionEnd
+
 Function ${PREFIX}WriteEngineRequest
     StrCpy $RequestWriteFailed "0"
     ; The self-copied NSIS remover can have a short TEMP alias in EXEPATH.
     ; Normalize this supplied input before the helper applies its path guard.
-    System::Call 'kernel32::GetLongPathNameW(w "$EXEPATH",w.r0,i ${NSIS_MAX_STRLEN}) i.r1'
-    ${If} $1 == 0
-    ${OrIf} $1 >= ${NSIS_MAX_STRLEN}
-        StrCpy $InstallError "error=installer_path_resolution_failed"
+    StrCpy $EnginePathInput "$EXEPATH"
+    Call ${PREFIX}ResolveEnginePath
+    ${If} $EngineResolvedPath == ""
+        StrCpy $InstallError "error=installer_path_resolution_failed $EnginePathDetail path=$EnginePathInput"
         Return
     ${EndIf}
-    StrCpy $EngineInstaller "$0"
+    ${If} $DiagnosticWriteFailed == "1"
+        StrCpy $InstallError "error=diagnostic_write_failed native_error=$DiagnosticNativeError"
+        Return
+    ${EndIf}
+    StrCpy $EngineInstaller "$EngineResolvedPath"
     ClearErrors
     FileOpen $RequestHandle "$PLUGINSDIR\request.ini" w
     ${If} ${Errors}

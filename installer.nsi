@@ -205,10 +205,8 @@ Function .onInit
     ${EndIf}
     StrCpy $InstallPhase "extraction-engine"
     Call LogPhase
-    ClearErrors
-    !insertmacro MEDIEVAL_ENGINE_FILES 1
-    ${If} ${Errors}
-        StrCpy $InstallError "error=engine_extraction_failed"
+    !insertmacro MEDIEVAL_ENGINE_FILES 1 ""
+    ${If} $InstallError != ""
         Call FailInstallation
     ${EndIf}
 

@@ -20,7 +20,7 @@ from test_c_backend_state import state_exe, invoke, isolated_registry
 from test_legacy_migration import sandbox_snapshot, delete_sandbox
 from test_lifecycle import games, PAYLOAD, PRODUCT, STATE, TX, UNINSTALL, digest
 from test_lifecycle_adversarial import tree_snapshot
-from test_lifecycle_permissions import powershell, ps_literal
+from windows_acl import powershell, ps_literal
 
 
 @contextmanager

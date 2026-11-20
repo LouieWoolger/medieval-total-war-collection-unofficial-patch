@@ -19,6 +19,7 @@ from registry_isolation import (LEGACY_NAMES, read_registration, registration_na
                                 remove_test_registration, assert_empty_registration)
 from game_fixture_assets import copy_campaign_text, copy_character_text
 from native_helper import seal
+from windows_acl import deny_directory_right
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,7 +131,8 @@ def assert_registration(game: Path) -> None:
     assert values["UninstallString"][0] == f'"{game / "Uninstall Unofficial Medieval Patch.exe"}"'
 
 
-def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bool | None = None,
+def run_installer(game: Path, *, installer_path: Path | None = None, cwd: Path | None = None,
+                  terrain_fix: bool | None = None, scroll_fix: bool | None = None,
                   sprite_fix: bool | None = None,
                   tutorial_fix: bool | None = False,
                   parchment_fix: bool | None = False,
@@ -143,7 +145,7 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
                   battle_icon_fix: bool | None = None) -> subprocess.CompletedProcess[str]:
     logs = game.parent / "diagnostics" / uuid.uuid4().hex
     logs.mkdir(parents=True)
-    command = [str(game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
+    command = [str(installer_path or game / DIST_INSTALLER.name), "/S", f"/LOGDIR={logs}"]
     if terrain_fix is not None:
         command.append(f"/TERRAINFIX={int(terrain_fix)}")
     if scroll_fix is not None:
@@ -176,7 +178,7 @@ def run_installer(game: Path, *, terrain_fix: bool | None = None, scroll_fix: bo
     command = subprocess.list2cmdline(command) + f" /D={game}"
     result = subprocess.run(
         command,
-        cwd=game,
+        cwd=cwd or game,
         text=True,
         capture_output=True,
         timeout=180,
@@ -712,17 +714,21 @@ def run_uninstaller(game: Path, *, expect_removal: bool = True, cwd: Path | None
     return result
 
 
-def assert_round_trip(game: Path, before: dict[str, str | None]) -> None:
-    install = run_installer(game)
+def assert_round_trip(
+    game: Path, before: dict[str, str | None], *,
+    installer_path: Path | None = None, cwd: Path | None = None,
+) -> tuple[subprocess.CompletedProcess[str], subprocess.CompletedProcess[str]]:
+    install = run_installer(game, installer_path=installer_path, cwd=cwd)
     assert install.returncode == 0, (install.stdout, install.stderr)
     assert_runtime(game)
     assert_registration(game)
     assert (game / ".unofficial-medieval-total-war-patch" / "install-manifest.json").is_file()
-    restore = run_uninstaller(game)
+    restore = run_uninstaller(game, cwd=cwd)
     assert restore.returncode == 0, (restore.stdout, restore.stderr)
     assert snapshot(game) == before
     assert not (game / ".unofficial-medieval-total-war-patch").exists()
     assert_empty_registration(registration_name(game))
+    return install, restore
 
 
 def test_compiled_credits_only_default_installs_and_restores_clean_game(tmp_path: Path) -> None:
@@ -1332,6 +1338,44 @@ def test_compiled_short_temp_alias_round_trip(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setenv("TMP", buffer.value)
     game = new_game(tmp_path, "Short temporary path")
     assert_round_trip(game, snapshot(game))
+
+
+def test_compiled_restricted_temp_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install and remove when TEMP allows creation but denies directory listing."""
+    game = new_game(tmp_path, "Selected game")
+    downloads = tmp_path / "Downloaded installer"
+    downloads.mkdir()
+    installer = downloads / DIST_INSTALLER.name
+    (game / DIST_INSTALLER.name).rename(installer)
+    caller = tmp_path / "Unrelated working directory"
+    caller.mkdir()
+    sentinel = caller / "personal.txt"
+    sentinel.write_bytes(b"unrelated working directory")
+    temp = tmp_path / "Restricted temp"
+    temp.mkdir()
+    monkeypatch.setenv("TEMP", str(temp))
+    monkeypatch.setenv("TMP", str(temp))
+
+    with deny_directory_right(temp, "ListDirectory"):
+        # Exercise the same Win32 failure on a writable child created under the deny ACE.
+        probe = temp / "nsProbe.tmp"
+        probe.mkdir()
+        (probe / "created.txt").write_bytes(b"writable")
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        kernel.GetLongPathNameW.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        result = kernel.GetLongPathNameW(str(probe), buffer, len(buffer))
+        assert (result, ctypes.get_last_error()) == (0, 5)  # ERROR_ACCESS_DENIED.
+
+        install, restore = assert_round_trip(game, snapshot(game), installer_path=installer, cwd=caller)
+        verified_path = f"path_resolution=handle long_path_native_error=5 path={temp}\\"
+        assert verified_path in install.stdout
+        assert any(line.startswith(verified_path) and line.endswith(r"\Un.exe")
+                   for line in restore.stdout.splitlines())
+
+    assert not (game / "Uninstall Unofficial Medieval Patch.exe").exists()
+    assert sentinel.read_bytes() == b"unrelated working directory"
 
 
 def test_compiled_unicode_path_round_trip(tmp_path: Path) -> None:

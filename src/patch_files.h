@@ -130,7 +130,7 @@ static inline void patch_guard_close(PatchGuard *g)
     for(p=g->pins;p;p=p->next)if(p->handle&&p->handle!=INVALID_HANDLE_VALUE)CloseHandle(p->handle);
     patch_context_close(&g->context);g->pins=NULL;g->root=NULL;g->canonical=NULL;g->recovery_path=NULL;g->identity[0]=0;SetLastError(saved);
 }
-static inline int patch_pin_directory(PatchGuard *g, const wchar_t *path, int create, int absent, int *found, PatchError *e)
+static inline int patch_pin_directory(PatchGuard *g, const wchar_t *path, int ancestor, int create, int absent, int *found, PatchError *e)
 {
     PatchContext c;wchar_t *native=NULL,*copy=NULL;HANDLE h=INVALID_HANDLE_VALUE;BY_HANDLE_FILE_INFORMATION info;
     PatchPin *p,*pin=NULL;char identity[26];void *memory=NULL;int ok=0,equal;DWORD native_error;
@@ -138,6 +138,11 @@ static inline int patch_pin_directory(PatchGuard *g, const wchar_t *path, int cr
     if(!patch_native_path(&c,path,&native,e))goto done;
     h=CreateFileW(native,FILE_READ_ATTRIBUTES|FILE_LIST_DIRECTORY,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,
                   FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+    /* Known ancestors need a stable pin and verified final path, not an
+       enumeration handle. Keep the no-delete share and reparse checks. */
+    if(h==INVALID_HANDLE_VALUE&&ancestor&&g->platform.final_path&&GetLastError()==ERROR_ACCESS_DENIED)
+        h=CreateFileW(native,FILE_READ_ATTRIBUTES|FILE_TRAVERSE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,
+                      FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,NULL);
     if(h==INVALID_HANDLE_VALUE){native_error=GetLastError();
         if(patch_file_missing(native_error)&&create){
             if(!patch_mutation_capable(g,e))goto done;
@@ -168,11 +173,11 @@ static inline int patch_pin_chain(PatchGuard *g, const wchar_t *path, int create
     PatchContext c;wchar_t *part=NULL;size_t i,n;int ok=0;patch_local_context(&c,g);*found=0;
     if(!patch_wide_copy(&c,path,&part,e))goto done;
     n=wcslen(part);part[3]=0;
-    ok=patch_pin_directory(g,part,0,absent,found,e);
+    ok=patch_pin_directory(g,part,n>3,0,absent,found,e);
     if(!ok||!*found)goto done;
     wcscpy(part,path);
     for(i=3;i<=n;++i)if(i==n||part[i]==L'\\'){wchar_t saved=part[i];part[i]=0;
-        if(i>3){ok=patch_pin_directory(g,part,create,absent,found,e);if(!ok||!*found)goto done;}
+        if(i>3){ok=patch_pin_directory(g,part,i<n,create,absent,found,e);if(!ok||!*found)goto done;}
         part[i]=saved;
     }
     ok=1;

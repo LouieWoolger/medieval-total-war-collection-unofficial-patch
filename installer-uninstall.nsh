@@ -59,11 +59,9 @@ Function un.onInit
     ${EndIf}
     StrCpy $InstallPhase "extraction-engine"
     Call un.LogPhase
-    ClearErrors
     ; The helper restores from the installed receipt and originals.
-    !insertmacro MEDIEVAL_ENGINE_FILES 0
-    ${If} ${Errors}
-        StrCpy $InstallError "error=engine_extraction_failed"
+    !insertmacro MEDIEVAL_ENGINE_FILES 0 "un."
+    ${If} $InstallError != ""
         Call un.Fail
     ${EndIf}
     StrCpy $EnginePayloadDirectory "$NativeDirectory"
