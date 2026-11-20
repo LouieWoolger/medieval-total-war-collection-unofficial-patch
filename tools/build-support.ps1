@@ -22,10 +22,17 @@ function Resolve-NativeCompiler {
     throw 'Supply -GccPath or MTW_CC with an i686 MinGW-w64 GCC C99 compiler.'
 }
 
+function Get-NsisDataDirectory {
+    param([string]$CompilerPath)
+    $directory = Split-Path -Parent ([IO.Path]::GetFullPath($CompilerPath))
+    if ((Split-Path -Leaf $directory) -ieq 'Bin') { return (Split-Path -Parent $directory) }
+    return $directory
+}
+
 function Invoke-LoggedCommand {
     param([string]$Executable,[string[]]$Arguments,[string]$LogName)
     $commandEnvironment = [ordered]@{}
-    foreach ($name in @('MTW_CC','MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER',
+    foreach ($name in @('NSISDIR','MTW_CC','MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER',
                        'MTW_TEST_INSTALLER','MTW_TEST_C_BACKEND','MTW_RUN_LIFECYCLE_FAULTS',
                        'MTW_RUN_LEGACY_MIGRATION_TESTS','MTW_RUN_COMPILED_INSTALLER_TESTS',
                        'MTW_C_HISTORICAL_BULK','PSModulePath','TEMP','TMP','PYTHONDONTWRITEBYTECODE')) {
@@ -82,7 +89,7 @@ function Get-ToolIdentity {
 }
 
 function Write-Checksums {
-    $lines = foreach ($name in @([string]$product.output_filename,'RELEASE_MANIFEST.json','INSTALLER_AUDIT.json','LICENSE.txt')) {
+    $lines = foreach ($name in @([string]$product.output_filename,'RELEASE_MANIFEST.json','INSTALLER_AUDIT.json','LICENSE.txt','MinHook-LICENSE.txt')) {
         $path = Join-Path $OutputDirectory $name
         "$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash)  $name"
     }

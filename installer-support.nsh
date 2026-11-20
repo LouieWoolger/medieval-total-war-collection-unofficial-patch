@@ -43,7 +43,7 @@ Var ElevationArguments
 Var ElevatedProcess
 Var ElevatedExit
 
-!macro MEDIEVAL_ENGINE_FILES
+!macro MEDIEVAL_ENGINE_FILES INCLUDE_RUNTIME
     InitPluginsDir
     ; NSIS may use an 8.3 TEMP alias. Pass the existing long path to the guarded
     ; helper, while retaining declared PLUGINSDIR archive destinations.
@@ -57,6 +57,8 @@ Var ElevatedExit
     File /oname=medieval_fix_patcher.exe "${NATIVE_HELPER}"
     File /oname=LICENSE.txt "${SOURCE_DIR}\LICENSE"
     File /oname=MinGW-w64-runtime.txt "${SOURCE_DIR}\licenses\MinGW-w64-runtime.txt"
+    !if ${INCLUDE_RUNTIME} == 1
+    File /oname=MinHook-LICENSE.txt "${SOURCE_DIR}\vendor\dust-fidelity\minhook\LICENSE.txt"
     SetOutPath "$PLUGINSDIR\payload-scroll-sprite-off"
     File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-scroll-sprite-off.json"
     File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-scroll-sprite-off.dll"
@@ -137,6 +139,7 @@ Var ElevatedExit
     File /oname=payload-manifest.json "${SOURCE_DIR}\vendor\runtime\payload-manifest-fast-icon-zoom.json"
     File /oname=D3D9.dll "${SOURCE_DIR}\vendor\runtime\D3D9-fast-icon-zoom.dll"
     !insertmacro MEDIEVAL_CREDITS_PAYLOAD_FILES
+    !endif
     ${EndIf}
 !macroend
 ; Shared installer/uninstaller diagnostics and native process runner.

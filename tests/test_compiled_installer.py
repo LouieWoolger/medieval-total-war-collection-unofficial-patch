@@ -22,6 +22,7 @@ from native_helper import seal
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PRODUCT_VERSION = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))["version"]
 DIST_INSTALLER = Path(os.environ.get("MTW_TEST_INSTALLER", str(ROOT / "dist" / "Unofficial Medieval Total War Collection Patch.exe")))
 PAYLOAD = ROOT / "vendor" / "runtime"
 SUPPORTED_EXE_HASH = "23724B034F8C97094CECD5560F053864A475A88ADAD077C046B2BEB79331ACE5"
@@ -863,7 +864,7 @@ def test_compiled_normal_setup_retains_credits_through_pending_recovery(
     assert helper and Path(helper).is_file(), "Supply the source-built native helper"
     (game / ".umtwp-test-fixture").write_text("disposable packaged recovery test\n")
     command = [helper, "--operation", operation, "--target", str(game),
-               "--payload", str(payload), "--version", "2.0.0",
+               "--payload", str(payload), "--version", PRODUCT_VERSION,
                "--uninstaller", str(game / "Uninstall Unofficial Medieval Patch.exe"),
                "--terrain-fix", "1", "--scroll-fix", "0", "--sprite-fix", "0",
                "--tutorial-fix", "0", "--parchment-fix", "0", "--name-fix", "0",
@@ -953,7 +954,7 @@ def test_compiled_recovers_interruption_between_exe_rename_and_publication(
     source_uninstaller = os.environ.get("MTW_TEST_UNINSTALLER")
     assert source_uninstaller and Path(source_uninstaller).is_file()
     command = [str(native_exe_interruption_helper), "--operation", "Install", "--target", str(game),
-               "--payload", str(PAYLOAD), "--version", "2.0.0", "--uninstaller", source_uninstaller,
+               "--payload", str(PAYLOAD), "--version", PRODUCT_VERSION, "--uninstaller", source_uninstaller,
                "--terrain-fix", "1", "--scroll-fix", "1", "--sprite-fix", "0",
                "--tutorial-fix", "0", "--parchment-fix", "0", "--name-fix", "0",
                "--fast-moves-fix", "0", "--zoom-fix", "0", "--economy-fix", "0",
@@ -970,7 +971,7 @@ def test_compiled_recovers_interruption_between_exe_rename_and_publication(
     assert value["actions"][value["started"] - 1]["relative"] == "Medieval_TW.exe"
     # Inspect must validate the journal while leaving the rename gap untouched.
     inspection = subprocess.run([os.environ["MTW_TEST_NATIVE_HELPER"], "--operation", "Inspect",
-                                  "--target", str(game), "--payload", str(PAYLOAD), "--version", "2.0.0"],
+                                  "--target", str(game), "--payload", str(PAYLOAD), "--version", PRODUCT_VERSION],
                                  capture_output=True, text=True, timeout=90)
     assert not (game / "Medieval_TW.exe").exists() and journal.read_bytes() == saved_journal
 

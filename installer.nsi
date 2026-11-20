@@ -206,7 +206,7 @@ Function .onInit
     StrCpy $InstallPhase "extraction-engine"
     Call LogPhase
     ClearErrors
-    !insertmacro MEDIEVAL_ENGINE_FILES
+    !insertmacro MEDIEVAL_ENGINE_FILES 1
     ${If} ${Errors}
         StrCpy $InstallError "error=engine_extraction_failed"
         Call FailInstallation

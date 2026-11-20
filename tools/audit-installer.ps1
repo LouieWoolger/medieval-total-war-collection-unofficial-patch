@@ -3,6 +3,7 @@ param(
     [string]$InstallerPath = '',
     [string]$NativeHelperPath = '',
     [string]$UninstallerOutputPath = '',
+    [string]$NsisDirectory = '',
     [string]$PythonPath = '',
     [string]$SevenZipPath = '',
     [string]$OutputPath = '',
@@ -12,6 +13,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'build-support.ps1')
 if (-not $NativeHelperPath) { $NativeHelperPath = $env:MTW_TEST_NATIVE_HELPER }
 if (-not $NativeHelperPath) { $NativeHelperPath = Join-Path $root 'build\medieval_fix_patcher.exe' }
 if (-not $PythonPath) { $PythonPath = (Get-Command python.exe -ErrorAction Stop).Source }
@@ -26,6 +28,16 @@ if (-not $SevenZipPath) {
     $command = Get-Command 7z.exe -ErrorAction SilentlyContinue
     if ($command) { $SevenZipPath = $command.Source }
 }
+if (-not $NsisDirectory) {
+    if ($env:NSISDIR) { $NsisDirectory = $env:NSISDIR }
+    elseif ($env:MTW_TEST_MAKENSIS) { $NsisDirectory = Get-NsisDataDirectory $env:MTW_TEST_MAKENSIS }
+    elseif ($env:NSIS_HOME) { $NsisDirectory = $env:NSIS_HOME }
+    else {
+        $command = Get-Command makensis.exe -ErrorAction SilentlyContinue
+        if ($command) { $NsisDirectory = Get-NsisDataDirectory $command.Source }
+    }
+}
+if (-not $NsisDirectory) { throw 'Supply -NsisDirectory for the NSIS plugin inputs used to build this installer.' }
 foreach ($required in @($InstallerPath, $SevenZipPath, $NativeHelperPath, $PythonPath)) {
     if (-not $required -or -not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required installer-audit input is missing: $required"
@@ -68,11 +80,13 @@ foreach ($name in $creditsVariants) {
 $runtimeVariants['payload-credits-only'] = @('payload-manifest.json','D3D9.dll')
 $uiNames = @('compatibility.bmp','campaign-scrolling.bmp','character-parchment.bmp','name-and-title.bmp','sprite-clipping.bmp','campaign-tutorial-resolution.bmp','battle-unit-icons.bmp','fast-computer-moves.bmp','unit-balance.bmp','campaign-zoom-option.bmp','keybinding-customisation.bmp','credits-illustration.bmp','discord-badge.bmp','discord-badge-hover.bmp','kofi-badge.bmp','kofi-badge-hover.bmp')
 $documentation = [ordered]@{'LICENSE.txt'='LICENSE';'MinGW-w64-runtime.txt'='licenses\MinGW-w64-runtime.txt'}
-$common = @('modern-wizard.bmp','nsDialogs.dll','System.dll') + $engineNames + @($documentation.Keys)
-$common += @(foreach ($variant in $runtimeVariants.Keys) {
+$installerDocumentation = $documentation + @{'MinHook-LICENSE.txt'='vendor\dust-fidelity\minhook\LICENSE.txt'}
+$pluginNames = @('System.dll','nsDialogs.dll')
+$common = @('modern-wizard.bmp') + $pluginNames + $engineNames + @($documentation.Keys)
+$installPayloads = @(foreach ($variant in $runtimeVariants.Keys) {
     foreach ($name in $runtimeVariants[$variant]) { $variant + '\' + $name }
 })
-$requiredEntries = @($common + $uiNames + [string]$product.uninstaller_filename)
+$requiredEntries = @($common + 'MinHook-LICENSE.txt' + $installPayloads + $uiNames + [string]$product.uninstaller_filename)
 $forbiddenEntries = @('medieval_tw.exe','medieval.cfg','~tmp.vrp','.vrp','.pdb','worklog','capture','.ps1','.cs','powershell','mscoree','libstdc++','libgcc','libwinpthread')
 $privateFragments = @([IO.Path]::GetFullPath($root),[Environment]::GetFolderPath('UserProfile'))
 $byteEncoding = [Text.Encoding]::GetEncoding(28591)
@@ -108,7 +122,7 @@ function Read-ArchiveEntries {
         }
         $name
     }
-    if (@($relative | Select-Object -Unique).Count -ne $relative.Count) {
+    if (@($relative | ForEach-Object { $_.ToUpperInvariant() } | Select-Object -Unique).Count -ne $relative.Count) {
         throw "Duplicate $Label archive destinations are not allowed."
     }
     foreach ($name in $Expected) {
@@ -118,7 +132,8 @@ function Read-ArchiveEntries {
 }
 
 function Expand-And-Verify {
-    param([string]$Archive,[string]$Label)
+    param([string]$Archive,[string]$Label,[System.Collections.IDictionary]$Variants,
+          [System.Collections.IDictionary]$Documents)
     $destination = Join-Path $extractRoot $Label
     New-Item -ItemType Directory -Path $destination -ErrorAction Stop | Out-Null
     $output = @(& $SevenZipPath x $Archive ('-o' + $destination) -y 2>&1)
@@ -135,9 +150,9 @@ function Expand-And-Verify {
         }
         Assert-NoPrivatePaths $embedded
     }
-    foreach ($variant in $runtimeVariants.Keys) {
+    foreach ($variant in $Variants.Keys) {
         $variantSuffix = $variant.Substring('payload'.Length)
-        foreach ($name in $runtimeVariants[$variant]) {
+        foreach ($name in $Variants[$variant]) {
             $sourceName = $name
             if ($variantSuffix) {
                 if ($name -eq 'payload-manifest.json') { $sourceName = 'payload-manifest' + $variantSuffix + '.json' }
@@ -152,9 +167,9 @@ function Expand-And-Verify {
             Assert-NoPrivatePaths $embedded
         }
     }
-    foreach ($name in $documentation.Keys) {
+    foreach ($name in $Documents.Keys) {
         $embedded = Join-Path $pluginDirectory $name
-        $source = Join-Path $root $documentation[$name]
+        $source = Join-Path $root $Documents[$name]
         if ((Get-FileHash -LiteralPath $embedded -Algorithm SHA256).Hash -ne
             (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) {
             throw "Embedded $Label license or attribution differs from source: $name"
@@ -164,13 +179,32 @@ function Expand-And-Verify {
     return $pluginDirectory
 }
 
+function Assert-EmbeddedPlugins {
+    param([string]$EmbeddedDirectory,[string]$Label)
+    $records = [ordered]@{}
+    foreach ($name in $pluginNames) {
+        $embedded = Join-Path $EmbeddedDirectory $name
+        $source = Join-Path $NsisDirectory ('Plugins\x86-unicode\' + $name)
+        $length = (Get-Item -LiteralPath $embedded).Length
+        $digest = (Get-FileHash -LiteralPath $embedded -Algorithm SHA256).Hash
+        if ($length -ne (Get-Item -LiteralPath $source).Length -or
+            $digest -ne (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash) {
+            throw "Embedded $Label plugin differs from the selected NSIS input: $name"
+        }
+        $records[$name] = [ordered]@{sha256=$digest;length=$length}
+    }
+    return $records
+}
+
 $installerEntries = @(Read-ArchiveEntries $InstallerPath 'installer' $requiredEntries)
 Assert-NoPrivatePaths $InstallerPath
-$installerExtract = Expand-And-Verify $InstallerPath 'installer'
+$installerExtract = Expand-And-Verify $InstallerPath 'installer' $runtimeVariants $installerDocumentation
+$installerPlugins = Assert-EmbeddedPlugins $installerExtract 'installer'
 $uninstaller = Join-Path $installerExtract ([string]$product.uninstaller_filename)
 $uninstallerEntries = @(Read-ArchiveEntries $uninstaller 'uninstaller' $common)
 Assert-NoPrivatePaths $uninstaller
-$uninstallerExtract = Expand-And-Verify $uninstaller 'uninstaller'
+$uninstallerExtract = Expand-And-Verify $uninstaller 'uninstaller' @{} $documentation
+$uninstallerPlugins = Assert-EmbeddedPlugins $uninstallerExtract 'uninstaller'
 if ($UninstallerOutputPath) {
     if (Test-Path -LiteralPath $UninstallerOutputPath) { throw 'Refusing to replace an existing generated uninstaller.' }
     Copy-Item -LiteralPath $uninstaller -Destination $UninstallerOutputPath -ErrorAction Stop
@@ -180,9 +214,9 @@ if ($UninstallerOutputPath) {
     }
 }
 
-$sourceNames = @('installer.nsi','installer-support.nsh','installer-uninstall.nsh','include\product.nsh','include\ui.nsh','config\product.json')
+$sourceNames = @('installer.nsi','installer-support.nsh','installer-uninstall.nsh','installer-credits-payloads.nsh','include\product.nsh','include\ui.nsh','config\product.json')
 $sourceNames += @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -File | Where-Object { $_.Extension -in @('.c','.h','.rc','.manifest') } | ForEach-Object { 'src\' + $_.Name })
-$sourceNames += @($documentation.Values)
+$sourceNames += @($installerDocumentation.Values)
 $sourceHashes = [ordered]@{}
 foreach ($name in $sourceNames) {
     $path = Join-Path $root $name
@@ -216,11 +250,15 @@ $record = [ordered]@{
     }
     component=[string]$product.component_name
     native_helper=$nativePe
+    nsis_plugins=$installerPlugins
     uninstaller=[ordered]@{
         filename=[string]$product.uninstaller_filename; location='game-root'
         embedded_sha256=(Get-FileHash -LiteralPath $uninstaller -Algorithm SHA256).Hash
+        length=(Get-Item -LiteralPath $uninstaller).Length
+        authenticode=[string](Get-AuthenticodeSignature -LiteralPath $uninstaller).Status
         embedded_entry_count=$uninstallerEntries.Count; required_entries=$common
         native_helper=$uninstallerPe
+        nsis_plugins=$uninstallerPlugins
         engine_and_payload_match_source=$true
     }
     authenticode=[string]$signature.Status

@@ -143,6 +143,10 @@ function Build-NativeHelper {
 }
 
 $makeNsis = Resolve-MakeNsis
+$nsisRoot = Get-NsisDataDirectory $makeNsis
+$nsisDataDirectory = if ($env:NSISDIR) { [IO.Path]::GetFullPath($env:NSISDIR) } else { $nsisRoot }
+$nsisCompiler = Join-Path $nsisRoot 'Bin\makensis.exe'
+if (-not (Test-Path -LiteralPath $nsisCompiler -PathType Leaf)) { $nsisCompiler = $makeNsis }
 $sevenZip = Resolve-SevenZip
 $gcc = Resolve-NativeCompiler
 $compilerBin = Split-Path -Parent $gcc
@@ -169,7 +173,7 @@ $environmentNames = @('MTW_TEST_GAME_EXE','MTW_TEST_INSTALLER','MTW_RUN_COMPILED
     'MTW_RUN_LIFECYCLE_FAULTS','MTW_ENABLE_LIFECYCLE_FAULTS','MTW_RELEASE_DIRECTORY',
     'MTW_TEST_REPORT_DIRECTORY','MTW_TEST_NATIVE_HELPER','MTW_TEST_NATIVE_UNSTRIPPED','MTW_TEST_UNINSTALLER','MTW_TEST_C_BACKEND','MTW_TEST_MAKENSIS',
     'MTW_CC','MTW_RUN_LEGACY_MIGRATION_TESTS','MTW_C_HISTORICAL_BULK','MTW_LEGACY_CPP_HELPER',
-    'SEVENZIP_EXE','PYTHONDONTWRITEBYTECODE','TEMP','TMP','PATH')
+    'SEVENZIP_EXE','NSISDIR','PYTHONDONTWRITEBYTECODE','TEMP','TMP','PATH')
 $priorEnvironment = @{}
 foreach ($name in $environmentNames) { $priorEnvironment[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 Push-Location $root
@@ -220,11 +224,24 @@ try {
         $path = Join-Path $OutputDirectory $name
         if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
     }
-    Invoke-LoggedCommand $makeNsis @('/V3',('/DOUTPUT_FILE=' + $installer),('/DNATIVE_HELPER=' + $nativeHelper),(Join-Path $root 'installer.nsi')) 'makensis.log'
+    $env:NSISDIR = $nsisDataDirectory
+    $nsisVersion = [string](& $makeNsis /VERSION)
+    if ($LASTEXITCODE -ne 0) { throw 'NSIS version probe failed.' }
+    $nsisTools = @(
+        (Get-ToolIdentity 'nsis' $makeNsis $nsisVersion),
+        (Get-ToolIdentity 'nsis-compiler' $nsisCompiler $nsisVersion),
+        (Get-ToolIdentity 'nsis-stub' (Join-Path $nsisDataDirectory 'Stubs\lzma_solid-x86-unicode'))
+    )
+    foreach ($name in @('System.dll','nsDialogs.dll')) {
+        $nsisTools += Get-ToolIdentity ('nsis-plugin-' + $name) (Join-Path $nsisDataDirectory ('Plugins\x86-unicode\' + $name))
+    }
+    # Use the selected distribution's defaults and the repository script.
+    Invoke-LoggedCommand $makeNsis @('/NOCONFIG','/V3',('/DOUTPUT_FILE=' + $installer),('/DNATIVE_HELPER=' + $nativeHelper),(Join-Path $root 'installer.nsi')) 'makensis.log'
     if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'makensis did not produce the requested installer.' }
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $OutputDirectory 'LICENSE.txt') -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $root 'vendor\dust-fidelity\minhook\LICENSE.txt') -Destination (Join-Path $OutputDirectory 'MinHook-LICENSE.txt') -ErrorAction Stop
     $env:MTW_TEST_UNINSTALLER = Join-Path $BuildDirectory ([string]$product.uninstaller_filename)
-    & (Join-Path $root 'tools\audit-installer.ps1') -InstallerPath $installer -NativeHelperPath $nativeHelper -UninstallerOutputPath $env:MTW_TEST_UNINSTALLER -PythonPath $python -SevenZipPath $sevenZip -OutputPath $audit -ArtifactDirectory (Join-Path $BuildDirectory ('audit-' + $runId))
+    & (Join-Path $root 'tools\audit-installer.ps1') -InstallerPath $installer -NativeHelperPath $nativeHelper -UninstallerOutputPath $env:MTW_TEST_UNINSTALLER -NsisDirectory $nsisDataDirectory -PythonPath $python -SevenZipPath $sevenZip -OutputPath $audit -ArtifactDirectory (Join-Path $BuildDirectory ('audit-' + $runId))
     Copy-Item -LiteralPath $audit -Destination (Join-Path $ArtifactDirectory 'INSTALLER_AUDIT.json') -ErrorAction Stop
 
     $reports['project_contracts'] = Invoke-PytestStage 'project_contracts' @(
@@ -238,7 +255,6 @@ try {
     $reports['native_guard'] = Invoke-PytestStage 'native_guard' $selection.native_guard
     $toolIdentities = @(
         (Get-ToolIdentity 'python' $python ([string](& $python --version))),
-        (Get-ToolIdentity 'nsis' $makeNsis ([string](& $makeNsis /VERSION))),
         (Get-ToolIdentity '7zip' $sevenZip),
         (Get-ToolIdentity 'native-gcc' $gcc ([string](& $gcc -dumpfullversion -dumpversion))),
         (Get-ToolIdentity 'native-windres' $windres),
@@ -254,10 +270,7 @@ try {
         $command = Get-Command $name -ErrorAction SilentlyContinue
         if ($command) { $toolIdentities += Get-ToolIdentity $name $command.Source }
     }
-    foreach ($name in @('System.dll','nsDialogs.dll')) {
-        $path = Join-Path (Split-Path -Parent $makeNsis) ('Plugins\x86-unicode\' + $name)
-        if (Test-Path -LiteralPath $path -PathType Leaf) { $toolIdentities += Get-ToolIdentity ('nsis-plugin-' + $name) $path }
-    }
+    $toolIdentities += $nsisTools
     $packages = & $python -c "import importlib.metadata,json; print(json.dumps({n:importlib.metadata.version(n) for n in ('pytest','pefile','Pillow')}))"
     if ($LASTEXITCODE -ne 0) { throw 'Python dependency identity collection failed.' }
     [ordered]@{schema='unofficial-medieval-build-tools-v1';executables=$toolIdentities;python_packages=($packages | ConvertFrom-Json)} |

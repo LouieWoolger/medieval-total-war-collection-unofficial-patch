@@ -1234,8 +1234,14 @@ static inline int mtw_initialize(MedievalEngine *m, PatchError *e) {
     if (!m->mutex_owned) return mtw_fail(m, e, "operation_in_progress", "Another patch operation is using this game folder. Wait for it to finish and retry.");
     {
         PatchError payload_error = {0};
-        if (!patch_guard_open(&m->payload_guard, m->options.payload, &payload_error) ||
-            !mtw_read_json(m, &m->payload_guard, mtw_path(m, m->payload_guard.canonical, "payload-manifest.json", &payload_error), &m->payload, NULL, &payload_error)) {
+        if (!patch_guard_open(&m->payload_guard, m->options.payload, &payload_error)) {
+            patch_error_set(e, "invalid_payload", "The embedded engine directory is missing or invalid.", payload_error.win32); return 0;
+        }
+        /* Removal uses the installed receipt and retained originals. Keep the
+           private engine directory guarded for diagnostics. */
+        if (mtw_is(m->options.operation, "Restore"))
+            return mtw_initialize_log(m, e) && mtw_log(m, m->options.operation, e);
+        if (!mtw_read_json(m, &m->payload_guard, mtw_path(m, m->payload_guard.canonical, "payload-manifest.json", &payload_error), &m->payload, NULL, &payload_error)) {
             patch_error_set(e, "invalid_payload", "The embedded compatibility payload is missing or invalid.", payload_error.win32); return 0;
         }
     }

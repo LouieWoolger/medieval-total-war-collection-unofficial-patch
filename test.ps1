@@ -92,7 +92,7 @@ try {
     $env:TMP = $tempDirectory
     $env:PATH = $compilerBin + ';' + $env:PATH
     Invoke-LoggedCommand $python @($manifestScript,'--verify-source-snapshot',$sourceSnapshot) 'source-before-tests.log'
-    foreach ($name in @([string]$product.output_filename,'LICENSE.txt','INSTALLER_AUDIT.json')) {
+    foreach ($name in @([string]$product.output_filename,'LICENSE.txt','MinHook-LICENSE.txt','INSTALLER_AUDIT.json')) {
         Copy-Item -LiteralPath (Join-Path $distributionDirectory $name) -Destination (Join-Path $OutputDirectory $name) -ErrorAction Stop
     }
     Write-Output "Testing existing installer: $installer"

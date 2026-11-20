@@ -15,6 +15,7 @@ from test_game_data_patch import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PRODUCT = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
 DIST = Path(os.environ.get("MTW_RELEASE_DIRECTORY", str(ROOT / "dist")))
 INSTALLER = DIST / "Unofficial Medieval Total War Collection Patch.exe"
 LEGACY_UNRELEASED_INSTALLER = DIST / "Unofficial Medieval Total War Patch.exe"
@@ -75,8 +76,8 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     checksums_path = DIST / "SHA256SUMS.txt"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema"] == "unofficial-medieval-total-war-patch-release-v2"
-    product = json.loads((ROOT / "config" / "product.json").read_text(encoding="utf-8"))
-    assert manifest["product"]["version"] == product["version"] == "2.0.0"
+    product = PRODUCT
+    assert manifest["product"]["version"] == product["version"]
     assert manifest["product"]["sprite_component"] == product["sprite_component_name"]
     assert manifest["product"]["tutorial_component"] == product["tutorial_component_name"]
     assert manifest["product"]["parchment_component"] == product["parchment_component_name"]
@@ -129,6 +130,13 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     assert audit["native_helper"]["sha256"] == helper["helper"]["sha256"]
     assert audit["uninstaller"]["native_helper"]["sha256"] == helper["helper"]["sha256"]
     assert manifest["uninstaller"]["sha256"] == audit["uninstaller"]["embedded_sha256"]
+    nsis_tools = {record["role"]: record for record in manifest["tools"]["executables"]}
+    assert nsis_tools["nsis-compiler"]["filename"] == "makensis.exe"
+    assert nsis_tools["nsis-stub"]["filename"] == "lzma_solid-x86-unicode"
+    for name in ("System.dll", "nsDialogs.dll"):
+        tool = nsis_tools["nsis-plugin-" + name]
+        assert audit["nsis_plugins"][name] == {"sha256": tool["sha256"], "length": tool["length"]}
+    assert audit["uninstaller"]["nsis_plugins"] == audit["nsis_plugins"]
     assert helper["helper"]["subsystem_version"] == [5, 1]
     assert helper["helper"]["named_imports"] and helper["helper"]["delay_imports"] == {}
     assert "src/medieval_fix_patcher.c" in helper["source_inputs"]
@@ -237,6 +245,10 @@ def test_release_manifest_and_checksums_match_dist() -> None:
     parsed = {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in sums if "  " in line}
     assert parsed[INSTALLER.name] == sha256(INSTALLER)
     assert parsed["RELEASE_MANIFEST.json"] == sha256(manifest_path)
+    minhook_license = DIST / "MinHook-LICENSE.txt"
+    expected_license = sha256(ROOT / "vendor/dust-fidelity/minhook/LICENSE.txt")
+    assert parsed[minhook_license.name] == sha256(minhook_license) == expected_license
+    assert manifest["documentation"][minhook_license.name]["sha256"] == expected_license
 
 
 def version_strings(path: Path) -> dict[str, str]:
@@ -255,8 +267,7 @@ def test_installer_pe_metadata_is_complete() -> None:
     assert values["ProductName"] == "Unofficial Medieval: Total War Collection Patch"
     assert values["FileDescription"] == "Unofficial Medieval: Total War Collection Patch Setup"
     assert values["CompanyName"] == "Louie Woolger"
-    assert values["FileVersion"] == "2.0.0"
-    assert values["ProductVersion"] == "2.0.0"
+    assert values["FileVersion"] == values["ProductVersion"] == PRODUCT["version"]
     assert values["LegalCopyright"] == "Copyright 2026 Louie Woolger"
 
 
@@ -412,15 +423,20 @@ def test_setup_and_uninstaller_embed_exact_selfcontained_native_helper(tmp_path:
                    capture_output=True, text=True, check=True, timeout=60)
     plugins = setup_root / "$PLUGINSDIR"
     uninstaller = plugins / "Uninstall Unofficial Medieval Patch.exe"
+    uninstaller_versions = version_strings(uninstaller)
+    assert uninstaller_versions["FileVersion"] == uninstaller_versions["ProductVersion"] == PRODUCT["version"]
     removal_root = tmp_path / "removal"
     subprocess.run([seven_zip, "x", str(uninstaller), "-o" + str(removal_root), "-y"],
                    capture_output=True, text=True, check=True, timeout=60)
+    assert (plugins / "payload-scroll-sprite-off" / "D3D9.dll").is_file()
+    assert sha256(plugins / "MinHook-LICENSE.txt") == sha256(ROOT / "vendor/dust-fidelity/minhook/LICENSE.txt")
+    assert not any(entry.is_dir() for entry in (removal_root / "$PLUGINSDIR").iterdir())
     for directory in (plugins, removal_root / "$PLUGINSDIR"):
         native = directory / "medieval_fix_patcher.exe"
         assert sha256(native) == expected
         report = module.audit_native_helper(native)
         assert report["execution_level"] == "asInvoker"
-        assert report["file_version"] == "2.0.0"
+        assert report["file_version"] == PRODUCT["version"]
         assert report["clr_header_absent"] and not report["external_runtime_required"]
         assert report["subsystem_version"] == [5, 1]
         assert report["named_imports"] and report["delay_imports"] == {}

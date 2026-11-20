@@ -56,3 +56,22 @@ def test_junit_keeps_c_fixture_counts_separate_from_test_totals(manifest_tool, t
     assert result.get("c_fixture_assertions") == {"c_native_assertions": 52, "c_platform_modern_assertions": 120}
     assert result.get("c_python_hash_vectors") == 13
     assert "native_assertions" not in result
+
+
+def test_plugin_provenance_rejects_unlinked_archive_and_tool_inputs(manifest_tool):
+    system = {"sha256": "A" * 64, "length": 100}
+    dialogs = {"sha256": "B" * 64, "length": 120}
+    plugins = {"System.dll": system, "nsDialogs.dll": dialogs}
+    audit = {"nsis_plugins": plugins, "uninstaller": {"nsis_plugins": plugins}}
+    tools = {"executables": [
+        {"role": "nsis-plugin-" + name, "filename": name, **record}
+        for name, record in plugins.items()
+    ]}
+    manifest_tool.verify_nsis_plugin_provenance(audit, tools)
+    with pytest.raises(ValueError, match="Both installer archives"):
+        manifest_tool.verify_nsis_plugin_provenance({**audit, "uninstaller": {}}, tools)
+    altered = {**audit, "uninstaller": {"nsis_plugins": {**plugins, "nsDialogs.dll": system}}}
+    with pytest.raises(ValueError, match=r"differs.*nsDialogs\.dll"):
+        manifest_tool.verify_nsis_plugin_provenance(altered, tools)
+    with pytest.raises(ValueError, match=r"one NSIS tool input for System\.dll"):
+        manifest_tool.verify_nsis_plugin_provenance(audit, {"executables": tools["executables"][1:]})

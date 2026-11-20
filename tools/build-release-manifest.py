@@ -418,6 +418,20 @@ def audit_native_helper(path: Path) -> dict:
         return record
 
 
+def verify_nsis_plugin_provenance(audit: dict, tools: dict) -> None:
+    names = {"System.dll", "nsDialogs.dll"}
+    archives = (audit.get("nsis_plugins", {}), audit.get("uninstaller", {}).get("nsis_plugins", {}))
+    if any(not isinstance(archive, dict) or archive.keys() != names for archive in archives):
+        raise ValueError("Both installer archives must identify all NSIS plugin bytes.")
+    for name in sorted(names):
+        inputs = [tool for tool in tools["executables"] if tool.get("role") == f"nsis-plugin-{name}"]
+        if len(inputs) != 1 or inputs[0].get("filename") != name:
+            raise ValueError(f"Expected one NSIS tool input for {name}.")
+        identity = {key: inputs[0][key] for key in ("sha256", "length")}
+        if any(archive[name] != identity for archive in archives):
+            raise ValueError(f"Packaged NSIS plugin differs from the recorded build input: {name}.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a path-neutral manifest from actual build evidence.")
     parser.add_argument("--installer", type=Path, default=ROOT / "dist/Unofficial Medieval Total War Collection Patch.exe")
@@ -566,10 +580,14 @@ def main() -> int:
         raise ValueError("Native helper compiler or runtime inputs violate the C build contract.")
     if not audit or audit.get("native_helper", {}).get("sha256") != native_build.get("helper", {}).get("sha256"):
         raise ValueError("Packaged native helper does not match its build provenance.")
+    verify_nsis_plugin_provenance(audit, tools)
     for name, record in native_build.get("source_inputs", {}).items():
         if current["files"].get(name) != record:
             raise ValueError("Native helper build sources differ from the release snapshot.")
-    documentation = {"LICENSE.txt": ROOT / "LICENSE"}
+    documentation = {
+        "LICENSE.txt": ROOT / "LICENSE",
+        "MinHook-LICENSE.txt": ROOT / "vendor/dust-fidelity/minhook/LICENSE.txt",
+    }
     for name, source in documentation.items():
         if sha256(args.output.parent / name) != sha256(source):
             raise ValueError(f"Distributed documentation differs from source: {name}")
@@ -592,6 +610,8 @@ def main() -> int:
                       "signature": audit["authenticode"] if audit else "not-verified"},
         "uninstaller": {"filename": product["uninstaller_filename"], "location": "game-root",
                         "sha256": audit["uninstaller"]["embedded_sha256"],
+                        "length": audit["uninstaller"]["length"],
+                        "signature": audit["uninstaller"]["authenticode"],
                         "helper_sha256": audit["uninstaller"]["native_helper"]["sha256"],
                         "bundled_engine": list(ENGINE_NAMES), "requires_original_installer": False},
         "supported_executable": payload["target_executable"]["name"],

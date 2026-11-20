@@ -105,7 +105,8 @@ def test_wizard_matches_reference_structure_and_atomic_component_model() -> None
     assert product["product_name"] == "Unofficial Medieval: Total War Collection Patch"
     assert product["setup_caption"] == "Unofficial Medieval: Total War Collection Patch Setup"
     assert product["output_filename"] == "Unofficial Medieval Total War Collection Patch.exe"
-    assert product["version"] == "2.0.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", product["version"])
+    assert product["version_quad"] == f'{product["version"]}.0'
     assert product["uninstaller_filename"] == "Uninstall Unofficial Medieval Patch.exe"
     assert product["component_name"] == "Terrain Movement Fix"
     assert '${NSD_CreateCheckbox} 12 94 295 24 "${PRODUCT_COMPONENT_NAME}"' in text
@@ -192,7 +193,8 @@ def test_payload_and_engine_are_embedded_without_forbidden_game_files() -> None:
         assert not (ROOT / "src" / dependency).exists(), "Superseded production runtime must remain retired"
     assert "powershell.exe" not in text.lower()
     assert "-ExecutionPolicy" not in text
-    assert text.count("!insertmacro MEDIEVAL_ENGINE_FILES") >= 2
+    assert "!insertmacro MEDIEVAL_ENGINE_FILES 1" in text
+    assert "!insertmacro MEDIEVAL_ENGINE_FILES 0" in text
     for forbidden in ("Medieval.Cfg", "~tmp.vrp", "D3D8.dll", ".pdb"):
         assert f'File "{forbidden}"' not in text
     assert "Medieval_TW.exe" not in "\n".join(
@@ -485,10 +487,14 @@ def test_native_helper_resources_and_source_build_are_explicit() -> None:
         assert required in build
     for obsolete in ("CxxPath", "MTW_CXX", "cc1plus", "libstdc++", "-std=c++17", "medieval_fix_patcher.cpp"):
         assert obsolete not in build
+    product = json.loads((ROOT / "config/product.json").read_text(encoding="utf-8"))
+    version_quad = product["version_quad"]
     manifest = (ROOT / "src/medieval_fix_patcher.manifest").read_text(encoding="utf-8")
     assert 'level="asInvoker"' in manifest
-    assert 'version="2.0.0.0"' in manifest
+    assert f'version="{version_quad}"' in manifest
     resource = (ROOT / "src/medieval_fix_patcher.rc").read_text(encoding="utf-8")
-    assert 'FILEVERSION 2,0,0,0' in resource
+    resource_version = version_quad.replace(".", ",")
+    assert f"FILEVERSION {resource_version}" in resource
+    assert f"PRODUCTVERSION {resource_version}" in resource
     assert 'Unofficial Medieval: Total War Collection Patch' in resource
     assert 'medieval_fix_patcher.manifest' in resource

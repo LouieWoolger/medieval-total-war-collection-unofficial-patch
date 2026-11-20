@@ -60,14 +60,13 @@ Function un.onInit
     StrCpy $InstallPhase "extraction-engine"
     Call un.LogPhase
     ClearErrors
-    ; All restoration code and payload identity data remain available even when
-    ; the original setup download is gone.
-    !insertmacro MEDIEVAL_ENGINE_FILES
+    ; The helper restores from the installed receipt and originals.
+    !insertmacro MEDIEVAL_ENGINE_FILES 0
     ${If} ${Errors}
         StrCpy $InstallError "error=engine_extraction_failed"
         Call un.Fail
     ${EndIf}
-    StrCpy $EnginePayloadDirectory "$NativeDirectory\payload-scroll-sprite-off"
+    StrCpy $EnginePayloadDirectory "$NativeDirectory"
 FunctionEnd
 
 Section "Uninstall"

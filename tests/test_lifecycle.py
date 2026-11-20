@@ -88,7 +88,8 @@ def games(tmp_path: Path):
 def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None = None,
         terrain_fix: bool | None = None, scroll_fix: bool | None = None,
         sprite_fix: bool | None = None, parchment_fix: bool | None = False,
-        name_fix: bool | None = None, economy_fix: bool | None = None):
+        name_fix: bool | None = None, economy_fix: bool | None = None,
+        payload: Path = PAYLOAD, log: Path | None = None):
     # This models a supplied package artifact, not a functional NSIS executable.
     # The compiled suite uses WriteUninstaller's actual output instead.
     source = uninstaller or game.parent / "synthetic-uninstaller.bin"
@@ -96,8 +97,10 @@ def run(operation: str, game: Path, *, fault: str = "", uninstaller: Path | None
         source.write_bytes(b"synthetic package uninstaller for lifecycle-only tests\x00\xff")
     command = [str(ENGINE),
                "-Operation", operation, "-Target", str(game),
-               "-PayloadDirectory", str(PAYLOAD), "-InstallerVersion", PRODUCT["version"],
+               "-PayloadDirectory", str(payload), "-InstallerVersion", PRODUCT["version"],
                "-UninstallerSource", str(source)]
+    if log is not None:
+        command.extend(("-LogPath", str(log)))
     for option, selected in (("TerrainFix", terrain_fix), ("ScrollFix", scroll_fix),
                              ("SpriteFix", sprite_fix), ("ParchmentFix", parchment_fix),
                              ("NameFix", name_fix), ("EconomyFix", economy_fix)):
@@ -425,6 +428,35 @@ def test_unit_balance_selection_repairs_toggles_and_restores(games):
     assert digest(personal) == personal_hash
     assert digest(long_save) == long_hash
     assert relevant(game) == before
+
+
+@pytest.mark.parametrize("missing", ["payload-manifest.json", "D3D9.dll"])
+def test_missing_install_payload_blocks_install_but_allows_restore(games, missing):
+    game = games("Missing temporary payload")
+    before = relevant(game)
+    installed, report = run("Install", game)
+    assert installed.returncode == 0, (installed.stdout, installed.stderr)
+    installed_files = relevant(game)
+    installed_registration = registry(game)
+    assert installed_registration
+
+    payload = game.parent / "private-engine-inputs"
+    payload.mkdir()
+    for name in (*NAMES, "payload-manifest.json"):
+        if name != missing:
+            shutil.copy2(PAYLOAD / name, payload / name)
+
+    repair, report = run("Install", game, payload=payload)
+    assert repair.returncode == 2 and report["code"] == "invalid_payload", (repair.stdout, repair.stderr)
+    assert relevant(game) == installed_files
+    assert registry(game) == installed_registration
+
+    log = game.parent / "removal.log"
+    restored, report = run("Restore", game, payload=payload, log=log)
+    assert restored.returncode == 0, (restored.stdout, restored.stderr)
+    assert log.is_file()
+    assert relevant(game) == before
+    assert not registry(game)
 
 
 def test_missing_exe_restore_with_existing_save(games):
